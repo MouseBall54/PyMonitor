@@ -15,3 +15,10 @@ Phase 0 methods are `session.detach`, `runtime.getInfo`, `threads.list`,
 `objects.release`, `classes.describe`, `arrays.describe`, `arrays.preview`, and
 `arrays.pixel`. Collections accept zero-based `offset` and `pageSize` (default
 100, maximum 1000).
+
+For Phase 1, NumPy object summaries also include `shape`, `dtype`, and
+`payloadSizeBytes`. `arrays.preview` accepts `layout`, `colorOrder`,
+`enabledChannels`, `sliceAxis`, and `sliceIndex`; its metadata includes source
+sampling steps so preview coordinates can be mapped back to exact array pixels.
+Managed Launch reports `attachMode: managed` from `runtime.getInfo`; cooperative
+connections continue to report `attachMode: cooperative`.

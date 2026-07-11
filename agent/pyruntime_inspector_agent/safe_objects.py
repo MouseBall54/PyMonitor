@@ -18,7 +18,7 @@ class SafeObjectInspector:
         type_name = type.__getattribute__(cls, "__name__")
         module_name = type.__getattribute__(cls, "__module__")
         adapter = "numpy.ndarray" if arrays.is_exact_ndarray(value) else None
-        return {
+        summary = {
             "handleId": self._handles.put(value),
             "typeName": type_name,
             "moduleName": module_name,
@@ -31,6 +31,13 @@ class SafeObjectInspector:
             "changeToken": f"identity:{id(value):x}",
             "snapshotTimestamp": timestamp(),
         }
+        if adapter == "numpy.ndarray":
+            summary.update({
+                "shape": [int(part) for part in value.shape],
+                "dtype": str(value.dtype),
+                "payloadSizeBytes": int(value.nbytes),
+            })
+        return summary
 
     def describe(self, handle):
         return self.summarize(self._handles.get(handle))

@@ -11,6 +11,8 @@ from .runtime_info import get_runtime_info
 from .safe_objects import SafeObjectInspector
 
 AGENT_VERSION = "0.1.0"
+_active_agent = None
+_active_agent_lock = threading.Lock()
 
 
 class InspectorAgent:
@@ -35,6 +37,10 @@ class InspectorAgent:
 
     def wait(self, timeout=None):
         return self._stopped.wait(timeout)
+
+    @property
+    def is_stopped(self):
+        return self._stopped.is_set()
 
     def _run(self):
         try:
@@ -92,7 +98,7 @@ class InspectorAgent:
         if method == "session.detach":
             return {"detached": True}, b"", True
         if method == "runtime.getInfo":
-            return get_runtime_info(AGENT_VERSION), b"", False
+            return get_runtime_info(AGENT_VERSION, os.environ.get("PY_INSPECTOR_ATTACH_MODE", "cooperative")), b"", False
         if method == "threads.list":
             return list_threads(self._thread.ident), b"", False
         if method == "frames.list":
@@ -110,10 +116,25 @@ class InspectorAgent:
         if method == "arrays.describe":
             return arrays.describe(self._handles.get(params["handleId"]), self._objects.summarize), b"", False
         if method == "arrays.preview":
-            metadata, binary = arrays.preview(self._handles.get(params["handleId"]), params.get("maxWidth", 1024), params.get("maxHeight", 1024), params.get("layout"))
+            metadata, binary = arrays.preview(
+                self._handles.get(params["handleId"]),
+                params.get("maxWidth", 1024),
+                params.get("maxHeight", 1024),
+                params.get("layout"),
+                params.get("colorOrder", "RGB"),
+                params.get("enabledChannels"),
+                params.get("sliceAxis"),
+                params.get("sliceIndex"),
+            )
             return metadata, binary, False
         if method == "arrays.pixel":
-            return arrays.pixel(self._handles.get(params["handleId"]), params["coordinates"], params.get("layout")), b"", False
+            return arrays.pixel(
+                self._handles.get(params["handleId"]),
+                params["coordinates"],
+                params.get("layout"),
+                params.get("sliceAxis"),
+                params.get("sliceIndex"),
+            ), b"", False
         raise ValueError(f"Unknown method: {method}")
 
     @staticmethod
@@ -126,9 +147,14 @@ class InspectorAgent:
 
 
 def start_inspector(host=None, port=None, token=None):
+    global _active_agent
     selected_host = host or os.environ.get("PY_INSPECTOR_HOST", "127.0.0.1")
     raw_port = port if port is not None else os.environ.get("PY_INSPECTOR_PORT")
     selected_token = token or os.environ.get("PY_INSPECTOR_TOKEN")
     if raw_port is None or selected_token is None:
         raise ValueError("PY_INSPECTOR_PORT and PY_INSPECTOR_TOKEN are required.")
-    return InspectorAgent(selected_host, int(raw_port), selected_token).start()
+    with _active_agent_lock:
+        if _active_agent is not None and not _active_agent.is_stopped:
+            return _active_agent
+        _active_agent = InspectorAgent(selected_host, int(raw_port), selected_token).start()
+        return _active_agent

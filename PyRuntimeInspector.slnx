@@ -1,9 +1,11 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/PyRuntimeInspector.App/PyRuntimeInspector.App.csproj" />
     <Project Path="src/PyRuntimeInspector.Cli/PyRuntimeInspector.Cli.csproj" />
     <Project Path="src/PyRuntimeInspector.Protocol/PyRuntimeInspector.Protocol.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/PyRuntimeInspector.App.Tests/PyRuntimeInspector.App.Tests.csproj" />
     <Project Path="tests/PyRuntimeInspector.IntegrationTests/PyRuntimeInspector.IntegrationTests.csproj" />
     <Project Path="tests/PyRuntimeInspector.Protocol.Tests/PyRuntimeInspector.Protocol.Tests.csproj" />
   </Folder>
