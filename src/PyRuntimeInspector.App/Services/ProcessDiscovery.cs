@@ -7,10 +7,16 @@ public sealed record ProcessItem(int Id, string Name, string? ExecutablePath)
     public string DisplayName => $"{Name} ({Id})";
 }
 
+public sealed record ProcessMemoryInfo(
+    long WorkingSetBytes,
+    long PrivateBytes,
+    long VirtualBytes,
+    long PeakWorkingSetBytes);
+
 public interface IProcessDiscovery
 {
     IReadOnlyList<ProcessItem> GetPythonProcesses();
-    long? GetPrivateBytes(int pid);
+    ProcessMemoryInfo? GetMemoryInfo(int pid);
 }
 
 public sealed class ProcessDiscovery : IProcessDiscovery
@@ -38,12 +44,16 @@ public sealed class ProcessDiscovery : IProcessDiscovery
         return result.OrderBy(item => item.Id).ToArray();
     }
 
-    public long? GetPrivateBytes(int pid)
+    public ProcessMemoryInfo? GetMemoryInfo(int pid)
     {
         try
         {
             using var process = Process.GetProcessById(pid);
-            return process.PrivateMemorySize64;
+            return new ProcessMemoryInfo(
+                process.WorkingSet64,
+                process.PrivateMemorySize64,
+                process.VirtualMemorySize64,
+                process.PeakWorkingSet64);
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {

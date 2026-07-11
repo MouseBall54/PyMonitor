@@ -22,7 +22,7 @@
                 <StackPanel Grid.Row="0" Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="PyRuntime Inspector" FontSize="19" FontWeight="SemiBold" Margin="0,0,18,0" VerticalAlignment="Center" />
                     <TextBlock Text="Process" Foreground="{StaticResource SecondaryText}" VerticalAlignment="Center" Margin="0,0,5,0" />
-                    <ComboBox Width="190" ItemsSource="{Binding Processes}" SelectedItem="{Binding SelectedProcess}" DisplayMemberPath="DisplayName" ToolTip="Optional PID validation. Leave empty to accept any cooperative target." />
+                    <ComboBox Width="190" ItemsSource="{Binding Processes}" SelectedItem="{Binding SelectedProcess}" DisplayMemberPath="DisplayName" ToolTip="Select a process for CPython 3.14+ Live Attach, or optionally validate a cooperative PID." />
                     <Button Content="↻" Command="{Binding RefreshProcessesCommand}" ToolTip="Refresh Python processes" />
                     <TextBlock Text="PID" Foreground="{StaticResource SecondaryText}" Margin="12,0,4,0" VerticalAlignment="Center" />
                     <TextBlock Text="{Binding TargetPid, TargetNullValue=—}" FontFamily="Cascadia Mono" VerticalAlignment="Center" />
@@ -30,6 +30,7 @@
                     <TextBlock Text="{Binding PythonVersion}" MaxWidth="210" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
                     <TextBlock Text="{Binding Architecture}" Foreground="{StaticResource SecondaryText}" Margin="8,0,12,0" VerticalAlignment="Center" />
                     <Button Content="Attach" Command="{Binding AttachCommand}" Background="#1F6FEB" BorderBrush="#388BFD" FontWeight="SemiBold" />
+                    <Button Content="Live Attach" Command="{Binding LiveAttachCommand}" Background="#8250DF" BorderBrush="#A371F7" FontWeight="SemiBold" ToolTip="Inject the agent into a running CPython 3.14+ process." />
                     <Button Content="Launch" Command="{Binding LaunchCommand}" Background="#238636" BorderBrush="#2EA043" FontWeight="SemiBold" />
                     <Button Content="Stop" Command="{Binding StopCommand}" />
                     <Button Content="Restart" Command="{Binding RestartCommand}" />
@@ -42,6 +43,7 @@
                     <TextBlock Text="Token" Foreground="{StaticResource SecondaryText}" VerticalAlignment="Center" />
                     <TextBox Text="{Binding Token, UpdateSourceTrigger=PropertyChanged}" Width="260" FontFamily="Cascadia Mono" Margin="5,0,2,0" />
                     <Button Content="Copy environment" Command="{Binding CopyEnvironmentCommand}" ToolTip="Copy the cooperative target environment to the clipboard." />
+                    <CheckBox Content="Elevate live helper" IsChecked="{Binding ElevateLiveAttach}" Margin="12,0,0,0" VerticalAlignment="Center" ToolTip="Run only the CPython 3.14 live-attach helper as administrator." />
                     <Ellipse Width="9" Height="9" Margin="14,0,6,0">
                         <Ellipse.Style>
                             <Style TargetType="Ellipse">
@@ -258,16 +260,25 @@
                     <TabItem Header="Array / Image">
                         <Grid Margin="8">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="180" />
+                                <ColumnDefinition Width="220" />
                                 <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="190" />
+                                <ColumnDefinition Width="280" />
                             </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                            <ScrollViewer Grid.Column="0" Margin="0,0,8,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel>
                                 <TextBlock Text="VIEW" Foreground="{StaticResource SecondaryText}" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,7" />
                                 <TextBlock Text="Layout" />
                                 <ComboBox ItemsSource="{Binding Layouts}" SelectedItem="{Binding ArrayLayout}" />
                                 <TextBlock Text="Color order" Margin="0,8,0,0" />
                                 <ComboBox ItemsSource="{Binding ColorOrders}" SelectedItem="{Binding ColorOrder}" />
+                                <TextBlock Text="Normalization" Margin="0,8,0,0" />
+                                <ComboBox ItemsSource="{Binding NormalizationModes}" SelectedItem="{Binding NormalizationMode}" />
+                                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                    <TextBlock Text="Percentile" VerticalAlignment="Center" Margin="0,0,4,0" />
+                                    <TextBox Text="{Binding PercentileLow, UpdateSourceTrigger=PropertyChanged}" Width="42" />
+                                    <TextBlock Text="–" VerticalAlignment="Center" Margin="4,0" />
+                                    <TextBox Text="{Binding PercentileHigh, UpdateSourceTrigger=PropertyChanged}" Width="42" />
+                                </StackPanel>
                                 <TextBlock Text="Channels" Margin="0,8,0,2" />
                                 <StackPanel Orientation="Horizontal">
                                     <CheckBox Content="R" IsChecked="{Binding ChannelR}" Margin="0,0,10,0" />
@@ -286,8 +297,27 @@
                                 <TextBlock Text="Zoom" Margin="0,8,0,0" />
                                 <Slider Minimum="0.05" Maximum="32" Value="{Binding Zoom}" />
                                 <TextBlock Text="{Binding Zoom, StringFormat={}{0:F2}×}" HorizontalAlignment="Right" />
-                                <TextBlock Text="Histogram is scheduled for the advanced viewer phase." Foreground="{StaticResource SecondaryText}" TextWrapping="Wrap" Margin="0,12,0,0" />
+                                <Separator Margin="0,10" />
+                                <TextBlock Text="Source tile (x, y, width, height)" Foreground="{StaticResource SecondaryText}" />
+                                <UniformGrid Columns="4" Margin="0,3,0,0">
+                                    <TextBox Text="{Binding TileX, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBox Text="{Binding TileY, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBox Text="{Binding TileWidth, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBox Text="{Binding TileHeight, UpdateSourceTrigger=PropertyChanged}" />
+                                </UniformGrid>
+                                <Button Content="Load source tile" Command="{Binding LoadTileCommand}" Margin="0,4,0,0" />
+                                <TextBlock Margin="0,3,0,0" Foreground="{StaticResource SecondaryText}">
+                                    <Run Text="Source " /><Run Text="{Binding SourceImageWidth, Mode=OneWay}" /><Run Text=" × " /><Run Text="{Binding SourceImageHeight, Mode=OneWay}" />
+                                </TextBlock>
+                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                    <TextBlock Text="Histogram bins" VerticalAlignment="Center" />
+                                    <TextBox Text="{Binding HistogramBinCount, UpdateSourceTrigger=PropertyChanged}" Width="48" Margin="5,0,8,0" />
+                                    <TextBlock Text="Channel" VerticalAlignment="Center" />
+                                    <TextBox Text="{Binding HistogramChannel, UpdateSourceTrigger=PropertyChanged}" Width="34" Margin="5,0,0,0" />
+                                </StackPanel>
+                                <Button Content="Load histogram" Command="{Binding LoadHistogramCommand}" Margin="0,4,0,0" />
                             </StackPanel>
+                            </ScrollViewer>
                             <Border Grid.Column="1" Background="#05070A" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
                                 <ScrollViewer x:Name="ImageViewerScroll" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
                                               SizeChanged="ImageViewerScroll_SizeChanged" PreviewMouseWheel="ImageViewerScroll_PreviewMouseWheel"
@@ -302,7 +332,8 @@
                                     </Grid>
                                 </ScrollViewer>
                             </Border>
-                            <StackPanel Grid.Column="2" Margin="10,0,0,0">
+                            <ScrollViewer Grid.Column="2" Margin="10,0,0,0" VerticalScrollBarVisibility="Auto">
+                            <StackPanel>
                                 <TextBlock Text="PIXEL" Foreground="{StaticResource SecondaryText}" FontSize="11" FontWeight="SemiBold" />
                                 <TextBlock Text="{Binding CursorCoordinate}" FontFamily="Cascadia Mono" Margin="0,7,0,10" />
                                 <TextBlock Text="Raw value" Foreground="{StaticResource SecondaryText}" />
@@ -316,18 +347,127 @@
                                     <Run Text="{Binding PreviewWidth, Mode=OneWay}" /><Run Text=" × " /><Run Text="{Binding PreviewHeight, Mode=OneWay}" />
                                 </TextBlock>
                                 <TextBlock Text="Click a pixel to request its exact source value." Foreground="{StaticResource SecondaryText}" TextWrapping="Wrap" Margin="0,12,0,0" />
+                                <Separator Margin="0,12" />
+                                <TextBlock Text="HISTOGRAM" Foreground="{StaticResource SecondaryText}" FontSize="11" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding HistogramSummary}" TextWrapping="Wrap" Margin="0,5,0,7" />
+                                <DataGrid ItemsSource="{Binding HistogramBins}" AutoGenerateColumns="False" IsReadOnly="True" Height="260" EnableRowVirtualization="True">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Range start" Binding="{Binding Start, StringFormat={}{0:G5}}" Width="*" />
+                                        <DataGridTextColumn Header="End" Binding="{Binding End, StringFormat={}{0:G5}}" Width="*" />
+                                        <DataGridTextColumn Header="Count" Binding="{Binding Count, StringFormat={}{0:N0}}" Width="75" />
+                                    </DataGrid.Columns>
+                                </DataGrid>
                             </StackPanel>
+                            </ScrollViewer>
                         </Grid>
                     </TabItem>
                     <TabItem Header="Memory">
-                        <StackPanel Margin="24">
-                            <TextBlock Text="OS process memory" FontSize="17" FontWeight="SemiBold" />
-                            <TextBlock Text="{Binding PrivateBytes, StringFormat=Private bytes: {0}}" Margin="0,8,0,0" />
-                            <TextBlock Text="tracemalloc controls and snapshot diff are Phase 4." Foreground="{StaticResource SecondaryText}" Margin="0,12,0,0" />
-                        </StackPanel>
+                        <Grid Margin="16">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="150" />
+                            </Grid.RowDefinitions>
+                            <UniformGrid Grid.Row="0" Columns="4" Margin="0,0,0,12">
+                                <StackPanel><TextBlock Text="Working set" Foreground="{StaticResource SecondaryText}" /><TextBlock Text="{Binding WorkingSet}" FontSize="16" FontWeight="SemiBold" /></StackPanel>
+                                <StackPanel><TextBlock Text="Private bytes" Foreground="{StaticResource SecondaryText}" /><TextBlock Text="{Binding PrivateBytes}" FontSize="16" FontWeight="SemiBold" /></StackPanel>
+                                <StackPanel><TextBlock Text="Virtual size" Foreground="{StaticResource SecondaryText}" /><TextBlock Text="{Binding VirtualSize}" FontSize="16" FontWeight="SemiBold" /></StackPanel>
+                                <StackPanel><TextBlock Text="Peak working set" Foreground="{StaticResource SecondaryText}" /><TextBlock Text="{Binding PeakWorkingSet}" FontSize="16" FontWeight="SemiBold" /></StackPanel>
+                            </UniformGrid>
+                            <Grid Grid.Row="1" Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <Button Grid.Column="0" Content="Start tracemalloc" Command="{Binding StartTracingCommand}" Background="#238636" BorderBrush="#2EA043" />
+                                <Button Grid.Column="1" Content="Stop" Command="{Binding StopTracingCommand}" />
+                                <TextBlock Grid.Column="2" Text="Depth" Foreground="{StaticResource SecondaryText}" VerticalAlignment="Center" Margin="12,0,4,0" />
+                                <TextBox Grid.Column="3" Text="{Binding TracebackDepth, UpdateSourceTrigger=PropertyChanged}" Width="42" />
+                                <Button Grid.Column="4" Content="Refresh" Command="{Binding RefreshMemoryCommand}" Margin="8,0,0,0" />
+                                <StackPanel Grid.Column="5" Orientation="Horizontal" HorizontalAlignment="Right">
+                                    <TextBlock Text="{Binding TracemallocStatus}" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,14,0" />
+                                    <TextBlock Text="{Binding PythonCurrentMemory, StringFormat=Current: {0}}" VerticalAlignment="Center" Margin="0,0,14,0" />
+                                    <TextBlock Text="{Binding PythonPeakMemory, StringFormat=Peak: {0}}" VerticalAlignment="Center" Margin="0,0,14,0" />
+                                    <TextBlock Text="{Binding TracemallocOverhead, StringFormat=Overhead: {0}}" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Grid>
+                            <StackPanel Grid.Row="2" Margin="0,0,0,10">
+                                <TextBlock Text="{Binding TracemallocCoverage}" Foreground="{StaticResource SecondaryText}" TextWrapping="Wrap" Margin="0,0,0,7" />
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="Take snapshot" Command="{Binding TakeMemorySnapshotCommand}" />
+                                    <TextBlock Text="Before" VerticalAlignment="Center" Margin="12,0,4,0" />
+                                    <ComboBox ItemsSource="{Binding MemorySnapshots}" SelectedItem="{Binding BeforeMemorySnapshot}" DisplayMemberPath="Display" Width="240" />
+                                    <TextBlock Text="After" VerticalAlignment="Center" Margin="12,0,4,0" />
+                                    <ComboBox ItemsSource="{Binding MemorySnapshots}" SelectedItem="{Binding AfterMemorySnapshot}" DisplayMemberPath="Display" Width="240" />
+                                    <Button Content="Compare" Command="{Binding CompareMemorySnapshotsCommand}" Margin="8,0,0,0" />
+                                </StackPanel>
+                            </StackPanel>
+                            <DataGrid Grid.Row="3" ItemsSource="{Binding MemoryStatistics}" IsReadOnly="True" AutoGenerateColumns="False" EnableRowVirtualization="True">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Allocation location" Binding="{Binding Location}" Width="*" />
+                                    <DataGridTextColumn Header="Size" Binding="{Binding SizeBytes, StringFormat={}{0:N0}}" Width="110" />
+                                    <DataGridTextColumn Header="Count" Binding="{Binding Count, StringFormat={}{0:N0}}" Width="90" />
+                                    <DataGridTextColumn Header="Size Δ" Binding="{Binding SizeDiffBytes, StringFormat={}{0:+#,#;-#,#;0}}" Width="110" />
+                                    <DataGridTextColumn Header="Count Δ" Binding="{Binding CountDiff, StringFormat={}{0:+#,#;-#,#;0}}" Width="90" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <DataGrid Grid.Row="4" ItemsSource="{Binding MemoryTimeline}" IsReadOnly="True" AutoGenerateColumns="False" EnableRowVirtualization="True" Margin="0,10,0,0">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Time" Binding="{Binding Timestamp, StringFormat={}{0:HH:mm:ss}}" Width="90" />
+                                    <DataGridTextColumn Header="Working set" Binding="{Binding WorkingSetBytes, StringFormat={}{0:N0}}" Width="*" />
+                                    <DataGridTextColumn Header="Private" Binding="{Binding PrivateBytes, StringFormat={}{0:N0}}" Width="*" />
+                                    <DataGridTextColumn Header="Virtual" Binding="{Binding VirtualBytes, StringFormat={}{0:N0}}" Width="*" />
+                                    <DataGridTextColumn Header="Python current" Binding="{Binding PythonCurrentBytes, StringFormat={}{0:N0}}" Width="*" />
+                                    <DataGridTextColumn Header="Python peak" Binding="{Binding PythonPeakBytes, StringFormat={}{0:N0}}" Width="*" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Grid>
                     </TabItem>
                     <TabItem Header="Execution Events">
-                        <TextBlock Text="Bounded sys.monitoring events are Phase 6." Foreground="{StaticResource SecondaryText}" Margin="24" />
+                        <Grid Margin="16">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <StackPanel Grid.Row="0" Orientation="Horizontal">
+                                <Button Content="Start monitoring" Command="{Binding StartExecutionMonitoringCommand}" Background="#238636" BorderBrush="#2EA043" />
+                                <Button Content="Stop" Command="{Binding StopExecutionMonitoringCommand}" />
+                                <Button Content="Refresh" Command="{Binding RefreshExecutionEventsCommand}" />
+                                <Button Content="Clear" Command="{Binding ClearExecutionEventsCommand}" />
+                                <TextBlock Text="Capacity" Foreground="{StaticResource SecondaryText}" VerticalAlignment="Center" Margin="14,0,4,0" />
+                                <TextBox Text="{Binding ExecutionBufferCapacity, UpdateSourceTrigger=PropertyChanged}" Width="65" />
+                                <TextBlock Text="{Binding ExecutionStatus}" VerticalAlignment="Center" Margin="16,0,0,0" />
+                            </StackPanel>
+                            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,9,0,0">
+                                <TextBlock Text="Events" Foreground="{StaticResource SecondaryText}" VerticalAlignment="Center" Margin="0,0,7,0" />
+                                <CheckBox Content="Start" IsChecked="{Binding MonitorPyStart}" Margin="0,0,10,0" />
+                                <CheckBox Content="Return" IsChecked="{Binding MonitorPyReturn}" Margin="0,0,10,0" />
+                                <CheckBox Content="Yield" IsChecked="{Binding MonitorPyYield}" Margin="0,0,10,0" />
+                                <CheckBox Content="Unwind" IsChecked="{Binding MonitorPyUnwind}" Margin="0,0,10,0" />
+                                <CheckBox Content="Raise" IsChecked="{Binding MonitorRaise}" Margin="0,0,10,0" />
+                                <CheckBox Content="Line" IsChecked="{Binding MonitorLine}" Margin="0,0,10,0" />
+                                <CheckBox Content="Call" IsChecked="{Binding MonitorCall}" />
+                            </StackPanel>
+                            <Grid Grid.Row="2" Margin="0,8,0,9">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Include path prefix" Foreground="{StaticResource SecondaryText}" VerticalAlignment="Center" Margin="0,0,7,0" />
+                                <TextBox Grid.Column="1" Text="{Binding ExecutionPathPrefix, UpdateSourceTrigger=PropertyChanged}" FontFamily="Cascadia Mono" />
+                            </Grid>
+                            <DataGrid Grid.Row="3" ItemsSource="{Binding ExecutionEvents}" AutoGenerateColumns="False" IsReadOnly="True"
+                                      EnableRowVirtualization="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="#" Binding="{Binding Sequence}" Width="70" />
+                                    <DataGridTextColumn Header="Time" Binding="{Binding Timestamp, StringFormat={}{0:HH:mm:ss.fff}}" Width="105" />
+                                    <DataGridTextColumn Header="Event" Binding="{Binding EventName}" Width="95" />
+                                    <DataGridTextColumn Header="Thread" Binding="{Binding ThreadId}" Width="110" />
+                                    <DataGridTextColumn Header="Function" Binding="{Binding FunctionName}" Width="*" />
+                                    <DataGridTextColumn Header="Location" Binding="{Binding Location}" Width="190" />
+                                    <DataGridTextColumn Header="Offset" Binding="{Binding InstructionOffset}" Width="70" />
+                                    <DataGridTextColumn Header="Detail" Binding="{Binding Detail}" Width="120" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Grid>
                     </TabItem>
                 </TabControl>
             </Border>

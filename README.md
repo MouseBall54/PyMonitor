@@ -4,11 +4,15 @@ PyRuntime Inspector는 Windows에서 실행되는 사용자의 CPython 프로그
 
 이 프로젝트는 외부 프로세스가 CPython 메모리 레이아웃을 직접 해석하지 않습니다. 대신 대상 Python 프로세스 안에서 경량 agent가 Python API로 객체를 해석하고, WPF controller와 인증된 loopback TCP로 통신합니다. 따라서 Python 버전별 비공개 객체 레이아웃에 덜 의존하며 property나 임의 사용자 코드를 실행하지 않는 안전한 Inspector를 만들 수 있습니다.
 
-현재 **Phase 0, Phase 1, Phase 2**가 구현되어 있습니다.
+현재 **Phase 0~6**가 구현되어 있습니다.
 
 - Phase 0: Python agent와 C# headless protocol POC
 - Phase 1: WPF Runtime/Object/Class/Array Inspector
 - Phase 2: WPF에서 Python 프로그램을 직접 시작하는 Managed Launch
+- Phase 3: 실행 중인 CPython 3.14+ 프로세스에 `sys.remote_exec`로 Live Attach
+- Phase 4: OS 메모리, `tracemalloc`, snapshot diff와 bounded timeline
+- Phase 5: source tile, histogram, bool/int/float normalization과 고급 volume view
+- Phase 6: CPython 3.12+ `sys.monitoring` 기반 bounded execution events
 
 ## 핵심 원칙
 
@@ -49,6 +53,9 @@ flowchart LR
 - Object/Class 정적 Inspector
 - NumPy WriteableBitmap 렌더링
 - OS Private Bytes 조회
+- Working Set/Private/Virtual/Peak 및 Python allocation timeline
+- `tracemalloc` 제어, snapshot과 allocation diff
+- 선택적 execution event와 path filter, bounded ring buffer
 
 ### Python Agent의 역할
 
@@ -58,7 +65,7 @@ flowchart LR
 - 안전한 객체 preview와 bounded opaque handle 관리
 - 클래스 dictionary와 MRO 기반 정적 멤버 분류
 - 이미 로드된 NumPy의 exact `ndarray`만 검사
-- uint8 image/volume preview 및 정확한 원본 pixel 조회
+- bool/uint/int/float image·volume preview, source tile, histogram 및 정확한 원본 pixel 조회
 
 ## 지원 환경
 
@@ -70,7 +77,7 @@ flowchart LR
 - 한 번에 하나의 inspector 연결
 - NumPy는 선택 사항이며 대상에서 이미 import된 경우에만 adapter 활성화
 
-현재 자동 및 실제 실행 검증 환경은 CPython 3.12와 NumPy 2.x입니다.
+자동 검증은 CPython 3.11/3.12와 NumPy 2.x를 사용하며, Live Attach는 공식 CPython 3.14.6 Windows x64 배포본에서 실제 검증했습니다.
 
 초기 비지원 범위:
 
@@ -92,6 +99,18 @@ src\PyRuntimeInspector.App\bin\Release\net10.0-windows\win-x64\PyRuntimeInspecto
 ```
 
 이 실행 파일은 .NET runtime을 함께 배포하는 self-contained 빌드입니다. 실행만 하는 컴퓨터에는 별도 .NET 10 runtime 설치가 필요하지 않습니다.
+
+## CPython 3.14+ Live Attach
+
+실행 중인 CPython 3.14 이상 프로세스는 대상 소스 수정이나 재시작 없이 연결할 수 있습니다.
+
+1. 상단 Process 목록을 새로 고치고 대상을 선택합니다.
+2. 필요하면 **Elevate live helper**를 켭니다. GUI 자체는 승격되지 않습니다.
+3. **Live Attach**를 누릅니다.
+4. helper는 선택한 프로세스의 실제 `python.exe`를 사용하므로 major/minor 버전이 일치합니다.
+5. 대상이 다음 Python safe execution point에 도달하면 Agent가 역방향으로 연결합니다.
+
+권한 부족, 이미 종료된 PID, 비활성화된 remote debugging과 helper 오류는 구조화된 오류로 표시됩니다. 다만 `sys.remote_exec()`가 예약된 뒤 대상이 blocking system call에서 Python safe point로 돌아오지 않으면 완료 여부를 알 수 없어 30초 후 timeout됩니다. Detach는 주입된 Agent 연결만 종료하며 대상 프로세스는 계속 실행됩니다.
 
 아직 Release 결과물이 없다면 저장소 루트에서 다음을 실행합니다.
 
@@ -304,6 +323,10 @@ wrapper는 다음 순서로 동작합니다.
 - [Security](docs/security.md)
 - [Limitations](docs/limitations.md)
 - [Phase 1 UI](docs/phase1-ui.md)
+- [Phase 3 Live Attach](docs/phase3-live-attach.md)
+- [Phase 4 Memory](docs/phase4-memory.md)
+- [Phase 5 Advanced Arrays](docs/phase5-arrays.md)
+- [Phase 6 Execution Monitoring](docs/phase6-execution-monitoring.md)
 
 ## 프로젝트 구조
 
@@ -322,7 +345,9 @@ agent/
     handles.py                   # bounded opaque handle store
     safe_objects.py              # side-effect-free object summaries
     classes.py                   # static class/member inspection
-    arrays.py                    # NumPy metadata/preview/pixel adapter
+    arrays.py                    # NumPy preview/tile/histogram/pixel adapter
+    memory.py                    # tracemalloc status/snapshots/diff
+    monitoring.py                # bounded sys.monitoring event ring
 
 tests/
   agent_tests/                   # Python unit tests
@@ -369,6 +394,10 @@ dotnet build src\PyRuntimeInspector.App\PyRuntimeInspector.App.csproj -c Release
 - Managed Launch command와 Detach/Stop 의미
 - 실제 Python subprocess의 interpreter, argv, cwd, env
 - stdout/stderr와 exit code
+- CPython 3.14 실제 프로세스 Live Attach와 Detach 후 대상 생존
+- tracemalloc start/stop, bounded snapshot, allocation diff와 timeline
+- uint16/int/float/bool normalization, NaN/Inf, label map, tile와 histogram
+- Python 3.12+ execution events, tool ID 충돌과 bounded drop 처리
 
 ## 제한과 주의 사항
 
@@ -379,12 +408,11 @@ dotnet build src\PyRuntimeInspector.App\PyRuntimeInspector.App.csproj -c Release
 - 대형 배열 전체 checksum 또는 전체 원본 전송은 수행하지 않습니다.
 - Managed Launch 창을 닫으면 orphan process와 redirect pipe 문제를 방지하기 위해 managed target도 종료합니다.
 - 사용자가 직접 Detach한 경우에는 대상이 계속 실행됩니다.
-- process selector는 cooperative PID 검증용이며 live injection 기능이 아닙니다.
+- Python 3.10~3.13 process selector는 cooperative PID 검증용이며 무수정 Live Attach 기능이 아닙니다.
+- `tracemalloc`은 시작 이후의 Python allocator 블록만 추적하며 native/GPU 메모리를 포함하지 않습니다.
+- array preview와 tile은 최대 1024×1024이며 histogram은 최대 1,000,000개 sampled element를 사용합니다.
+- execution monitoring은 Python 3.12+ 전용이며 활성 이벤트 수에 따라 대상 CPU overhead가 증가합니다.
 
 ## 로드맵
 
-- Phase 3: CPython 3.14+ `sys.remote_exec` 기반 live attach
-- Phase 4: OS memory, tracemalloc, snapshot diff와 timeline
-- Phase 5: tile, histogram, uint16/int/float normalization, 고급 volume viewer
-- Phase 6: `sys.monitoring` 기반 bounded execution events
 - 후속 배포: MSI, code signing, crash reporting

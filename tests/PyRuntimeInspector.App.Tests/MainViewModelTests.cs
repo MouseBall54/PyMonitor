@@ -87,6 +87,131 @@ public sealed class MainViewModelTests
         Assert.False(launcher.IsRunning);
     }
 
+    [Fact]
+    public async Task LiveAttachUsesSelectedInterpreterAndConnectsExpectedPid()
+    {
+        var session = new FakeSession { DelayAttach = true };
+        var liveAttach = new FakeLiveAttachService(session.CompleteAttach);
+        await using var viewModel = new MainViewModel(
+            session,
+            new FakeProcessDiscovery(),
+            liveAttachService: liveAttach)
+        {
+            SelectedProcess = new ProcessItem(1234, "python", Environment.ProcessPath),
+        };
+
+        await viewModel.LiveAttachCommand.ExecuteAsync();
+
+        Assert.True(viewModel.IsConnected);
+        Assert.Equal("Connected (live attach)", viewModel.Status);
+        Assert.Equal(1234, liveAttach.Options!.ProcessId);
+        Assert.Equal(Environment.ProcessPath, liveAttach.Options.PythonExecutable);
+        Assert.Equal(64, liveAttach.Options.InspectorToken.Length);
+
+        await viewModel.DetachCommand.ExecuteAsync();
+        Assert.False(viewModel.IsConnected);
+        Assert.True(liveAttach.LeaseDisposed);
+    }
+
+    [Fact]
+    public async Task MemoryCommandsTrackSnapshotsDiffAndBoundedTimeline()
+    {
+        var session = new FakeSession();
+        await using var viewModel = new MainViewModel(session, new FakeProcessDiscovery());
+        await viewModel.AttachCommand.ExecuteAsync();
+
+        await viewModel.StartTracingCommand.ExecuteAsync();
+        Assert.True(viewModel.IsTracemallocTracing);
+        Assert.Contains("Running", viewModel.TracemallocStatus);
+        Assert.NotEmpty(viewModel.MemoryTimeline);
+        for (var index = 0; index < 305; index++)
+            await viewModel.RefreshMemoryCommand.ExecuteAsync();
+        Assert.Equal(300, viewModel.MemoryTimeline.Count);
+
+        await viewModel.TakeMemorySnapshotCommand.ExecuteAsync();
+        await viewModel.TakeMemorySnapshotCommand.ExecuteAsync();
+        Assert.Equal(2, viewModel.MemorySnapshots.Count);
+        viewModel.BeforeMemorySnapshot = viewModel.MemorySnapshots[0];
+        viewModel.AfterMemorySnapshot = viewModel.MemorySnapshots[1];
+        await viewModel.CompareMemorySnapshotsCommand.ExecuteAsync();
+        Assert.Single(viewModel.MemoryStatistics);
+        Assert.Equal(512, viewModel.MemoryStatistics[0].SizeDiffBytes);
+
+        await viewModel.StopTracingCommand.ExecuteAsync();
+        Assert.False(viewModel.IsTracemallocTracing);
+        Assert.Empty(viewModel.MemorySnapshots);
+    }
+
+    [Fact]
+    public async Task AdvancedArrayCommandsRenderTileHistogramAndNonFinitePixel()
+    {
+        var session = new FakeSession();
+        await using var viewModel = new MainViewModel(session, new FakeProcessDiscovery());
+        await viewModel.AttachCommand.ExecuteAsync();
+        viewModel.SelectedVariable = new VariableRow
+        {
+            Name = "image",
+            Scope = "globals",
+            HandleId = "array-handle",
+            TypeName = "ndarray",
+            ModuleName = "numpy",
+            QualifiedTypeName = "numpy.ndarray",
+            SafePreview = "ndarray(shape=(10, 10), dtype=float32)",
+            Address = "0x1",
+            ShallowSize = 128,
+            AdapterKind = "numpy.ndarray",
+            ChangeToken = "array",
+            Expandable = true,
+        };
+        await EventuallyAsync(() => viewModel.ArrayPreview is not null);
+
+        viewModel.NormalizationMode = "MINMAX";
+        await viewModel.ReloadPreviewCommand.ExecuteAsync();
+        Assert.Contains("MINMAX", viewModel.Normalization);
+
+        viewModel.TileX = 3;
+        viewModel.TileY = 4;
+        await viewModel.LoadTileCommand.ExecuteAsync();
+        viewModel.UpdateCursor(0, 0);
+        Assert.Equal("x=3, y=4", viewModel.CursorCoordinate);
+
+        viewModel.HistogramBinCount = 2;
+        await viewModel.LoadHistogramCommand.ExecuteAsync();
+        Assert.Equal(2, viewModel.HistogramBins.Count);
+        Assert.Contains("NaN 1", viewModel.HistogramSummary);
+
+        await viewModel.LoadPixelAsync(0, 0);
+        Assert.Contains("NaN", viewModel.RawPixelValue);
+        Assert.Equal("0", viewModel.DisplayPixelValue);
+
+        await viewModel.DetachCommand.ExecuteAsync();
+        Assert.Null(viewModel.ArrayPreview);
+        Assert.Equal(0, viewModel.PreviewWidth);
+        Assert.Null(viewModel.TargetPid);
+        Assert.Equal("—", viewModel.PrivateBytes);
+    }
+
+    [Fact]
+    public async Task ExecutionMonitoringCommandsStreamAndClearBoundedEvents()
+    {
+        var session = new FakeSession();
+        await using var viewModel = new MainViewModel(session, new FakeProcessDiscovery());
+        await viewModel.AttachCommand.ExecuteAsync();
+        Assert.True(viewModel.ExecutionMonitoringAvailable);
+
+        viewModel.MonitorLine = true;
+        await viewModel.StartExecutionMonitoringCommand.ExecuteAsync();
+        Assert.True(viewModel.ExecutionMonitoringActive);
+        await viewModel.RefreshExecutionEventsCommand.ExecuteAsync();
+        Assert.Single(viewModel.ExecutionEvents);
+        Assert.Equal("LINE", viewModel.ExecutionEvents[0].EventName);
+
+        await viewModel.StopExecutionMonitoringCommand.ExecuteAsync();
+        Assert.False(viewModel.ExecutionMonitoringActive);
+        await viewModel.ClearExecutionEventsCommand.ExecuteAsync();
+        Assert.Empty(viewModel.ExecutionEvents);
+    }
+
     private static async Task EventuallyAsync(Func<bool> predicate)
     {
         var timeout = DateTime.UtcNow.AddSeconds(2);
@@ -98,13 +223,21 @@ public sealed class MainViewModelTests
     private sealed class FakeProcessDiscovery : IProcessDiscovery
     {
         public IReadOnlyList<ProcessItem> GetPythonProcesses() => [];
-        public long? GetPrivateBytes(int pid) => 16 * 1024 * 1024;
+        public ProcessMemoryInfo? GetMemoryInfo(int pid) => new(
+            24 * 1024 * 1024,
+            16 * 1024 * 1024,
+            64 * 1024 * 1024,
+            32 * 1024 * 1024);
     }
 
     private sealed class FakeSession : IInspectorSession
     {
         private readonly TaskCompletionSource<JsonObject> _attach = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly Dictionary<string, TaskCompletionSource<ProtocolFrame>> _scopes = [];
+        private bool _tracing;
+        private int _snapshotNumber;
+        private bool _monitoring;
+        private bool _executionEventCleared;
         public event EventHandler<string>? Disconnected;
         public bool IsConnected { get; private set; }
         public bool DelayAttach { get; init; }
@@ -123,6 +256,142 @@ public sealed class MainViewModelTests
                 return Frame(new JsonObject { ["items"] = new JsonArray() });
             if (method == "runtime.getInfo")
                 return Frame(Runtime());
+            if (method == "memory.status")
+                return Frame(MemoryStatus());
+            if (method == "memory.start")
+            {
+                _tracing = true;
+                return Frame(MemoryStatus());
+            }
+            if (method == "memory.stop")
+            {
+                _tracing = false;
+                return Frame(MemoryStatus());
+            }
+            if (method == "memory.snapshot")
+            {
+                _snapshotNumber++;
+                return Frame(new JsonObject
+                {
+                    ["snapshotId"] = $"snapshot-{_snapshotNumber}",
+                    ["label"] = parameters?["label"]?.GetValue<string>() ?? "snapshot",
+                    ["createdAt"] = DateTime.UtcNow.ToString("O"),
+                    ["traceCount"] = 10L,
+                    ["totalBytes"] = 2048L * _snapshotNumber,
+                });
+            }
+            if (method == "memory.statistics" || method == "memory.diff")
+                return Frame(new JsonObject
+                {
+                    ["items"] = new JsonArray(new JsonObject
+                    {
+                        ["filename"] = "sample.py",
+                        ["lineNumber"] = 12,
+                        ["sizeBytes"] = 2048L,
+                        ["count"] = 2L,
+                        ["sizeDiffBytes"] = 512L,
+                        ["countDiff"] = 1L,
+                    }),
+                });
+            if (method == "objects.listChildren")
+                return Frame(new JsonObject { ["items"] = new JsonArray() });
+            if (method == "classes.describe")
+                return Frame(new JsonObject { ["members"] = new JsonArray() });
+            if (method == "arrays.describe")
+                return Frame(new JsonObject
+                {
+                    ["shape"] = new JsonArray(10, 10),
+                    ["dtype"] = "float32",
+                    ["strides"] = new JsonArray(40, 4),
+                    ["dataAddressHex"] = "0x2",
+                    ["ownsData"] = true,
+                    ["layoutGuess"] = "GRAY",
+                    ["layoutConfidence"] = "certain",
+                });
+            if (method == "arrays.preview" || method == "arrays.tile")
+            {
+                var originX = method == "arrays.tile" ? parameters!["x"]!.GetValue<int>() : 0;
+                var originY = method == "arrays.tile" ? parameters!["y"]!.GetValue<int>() : 0;
+                var mode = parameters?["normalization"]?.GetValue<string>() ?? "AUTO";
+                return Frame(new JsonObject
+                {
+                    ["width"] = 2,
+                    ["height"] = 2,
+                    ["stride"] = 2,
+                    ["pixelFormat"] = "Gray8",
+                    ["rowStep"] = 1,
+                    ["columnStep"] = 1,
+                    ["originX"] = originX,
+                    ["originY"] = originY,
+                    ["sourceWidth"] = 10,
+                    ["sourceHeight"] = 10,
+                    ["normalization"] = new JsonObject
+                    {
+                        ["mode"] = mode,
+                        ["displayMinimum"] = -1.0,
+                        ["displayMaximum"] = 1.0,
+                        ["nanCount"] = 1,
+                        ["positiveInfinityCount"] = 1,
+                        ["negativeInfinityCount"] = 0,
+                    },
+                }, [0, 64, 128, 255]);
+            }
+            if (method == "arrays.histogram")
+                return Frame(new JsonObject
+                {
+                    ["counts"] = new JsonArray(4L, 5L),
+                    ["binEdges"] = new JsonArray(-1.0, 0.0, 1.0),
+                    ["sampleCount"] = 10,
+                    ["nanCount"] = 1,
+                    ["positiveInfinityCount"] = 1,
+                    ["negativeInfinityCount"] = 0,
+                });
+            if (method == "arrays.pixel")
+                return Frame(new JsonObject { ["value"] = new JsonObject { ["kind"] = "NaN" } });
+            if (method == "execution.status")
+                return Frame(ExecutionStatus());
+            if (method == "execution.start")
+            {
+                _monitoring = true;
+                _executionEventCleared = false;
+                return Frame(ExecutionStatus());
+            }
+            if (method == "execution.stop")
+            {
+                _monitoring = false;
+                return Frame(ExecutionStatus());
+            }
+            if (method == "execution.clear")
+            {
+                _executionEventCleared = true;
+                return Frame(ExecutionStatus());
+            }
+            if (method == "execution.list")
+            {
+                var after = parameters?["afterSequence"]?.GetValue<long>() ?? 0;
+                var items = !_executionEventCleared && after < 1
+                    ? new JsonArray(new JsonObject
+                    {
+                        ["sequence"] = 1L,
+                        ["timestampUnixNanoseconds"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1_000_000,
+                        ["threadId"] = 42L,
+                        ["eventName"] = "LINE",
+                        ["functionName"] = "worker",
+                        ["qualifiedName"] = "worker",
+                        ["filename"] = "sample.py",
+                        ["lineNumber"] = 12,
+                        ["instructionOffset"] = null,
+                        ["detail"] = null,
+                    })
+                    : new JsonArray();
+                return Frame(new JsonObject
+                {
+                    ["items"] = items,
+                    ["nextSequence"] = items.Count == 0 ? after : 1L,
+                    ["droppedCount"] = 0L,
+                    ["bufferCapacity"] = 100,
+                });
+            }
             if (method == "scopes.list")
             {
                 var handle = parameters!["frameHandle"]!.GetValue<string>();
@@ -186,11 +455,32 @@ public sealed class MainViewModelTests
             ["executable"] = "python.exe",
         };
 
-        private static ProtocolFrame Frame(JsonObject result) => new(new JsonObject
+        private JsonObject MemoryStatus() => new()
+        {
+            ["tracing"] = _tracing,
+            ["startedAt"] = _tracing ? DateTime.UtcNow.ToString("O") : null,
+            ["startedByInspector"] = _tracing,
+            ["tracebackDepth"] = _tracing ? 1 : 0,
+            ["currentBytes"] = _tracing ? 1024L : 0L,
+            ["peakBytes"] = _tracing ? 4096L : 0L,
+            ["overheadBytes"] = _tracing ? 256L : 0L,
+        };
+
+        private JsonObject ExecutionStatus() => new()
+        {
+            ["available"] = true,
+            ["active"] = _monitoring,
+            ["toolId"] = _monitoring ? 3 : null,
+            ["bufferedCount"] = _executionEventCleared ? 0 : 1,
+            ["bufferCapacity"] = 100,
+            ["droppedCount"] = 0L,
+        };
+
+        private static ProtocolFrame Frame(JsonObject result, byte[]? binary = null) => new(new JsonObject
         {
             ["ok"] = true,
             ["result"] = result,
-        }, []);
+        }, binary ?? []);
     }
 
     private sealed class FakeManagedLauncher : IManagedPythonLauncher
@@ -224,5 +514,27 @@ public sealed class MainViewModelTests
             OutputReceived?.Invoke(this, new ProcessOutputEventArgs(kind, text));
 
         public async ValueTask DisposeAsync() => await StopAsync();
+    }
+
+    private sealed class FakeLiveAttachService(Action connected) : ILiveAttachService
+    {
+        public LiveAttachOptions? Options { get; private set; }
+        public bool LeaseDisposed { get; private set; }
+
+        public Task<IAsyncDisposable> StartAsync(LiveAttachOptions options, CancellationToken cancellationToken = default)
+        {
+            Options = options;
+            connected();
+            return Task.FromResult<IAsyncDisposable>(new CallbackAsyncDisposable(() => LeaseDisposed = true));
+        }
+    }
+
+    private sealed class CallbackAsyncDisposable(Action dispose) : IAsyncDisposable
+    {
+        public ValueTask DisposeAsync()
+        {
+            dispose();
+            return ValueTask.CompletedTask;
+        }
     }
 }

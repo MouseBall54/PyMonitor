@@ -16,8 +16,8 @@ The minimal projects are:
 - `pyruntime_inspector_agent`: runtime, frame, scope, safe object, class, and
   NumPy inspection.
 
-Managed launch, WPF, Win32 memory APIs, live attach, tracing, and native helpers
-are later phases.
+Win32 memory APIs, tracing, and native protocol reimplementations are later
+phases.
 
 ## Phase 1 WPF shell
 
@@ -51,3 +51,51 @@ separate asynchronous line pumps, and preserves the user script's exit code.
 Detach closes only the inspector connection; Stop terminates the managed process
 tree. Closing the WPF application also stops a managed target to avoid orphaned
 redirected processes.
+
+## Phase 3 live attach
+
+The WPF app starts its loopback listener before invoking a short-lived helper
+with the selected target's own `python.exe`. The helper calls
+`sys.remote_exec(pid, bootstrap.py)`, while the bootstrap path and one-time token
+remain in a randomly named user temporary directory until the agent connects.
+The bootstrap adds only the shipped agent directory to `sys.path` and starts the
+agent with `attachMode: live`.
+
+The helper can optionally run with the Windows `runas` verb. This elevates only
+the helper, not the WPF process. The target must be CPython 3.14+ and must reach
+a safe Python execution point before the bootstrap runs.
+
+## Phase 4 memory and timeline
+
+The WPF process service samples Working Set, Private Bytes, Virtual Size, and
+Peak Working Set from Windows. The ViewModel keeps at most 300 timestamped OS
+and Python allocation samples.
+
+The agent exposes explicit `tracemalloc` controls and retains at most eight
+session-scoped snapshots. Statistics and diffs are bounded to 200 rows per
+request. Tracing started by the Inspector is stopped on detach; tracing that
+was already active in the target is preserved.
+
+## Phase 5 advanced arrays
+
+Array selection is separated from bounded rendering. A 2D plane is selected
+from GRAY, HWC, CHW, or a volume slice, then only a sampled preview or a source
+tile up to 1024 by 1024 is copied. Bool and integer arrays, float16/32/64, and
+uint8 color arrays are rendered to Gray8, RGB24, or BGRA32 with explicit NONE,
+MINMAX, PERCENTILE, or LABEL normalization.
+
+Histograms sample at most one million values and return at most 512 bins. Raw
+pixel queries remain separate from display normalization and encode NaN and
+infinities as structured JSON values.
+
+## Phase 6 execution monitoring
+
+On CPython 3.12+, the agent claims only monitoring tool ID 3 or 4 and refuses to
+start if both are occupied. User-selected events are recorded into a deque of
+100 to 10,000 entries. Callbacks store code location, event kind, timestamp,
+and thread ID but never inspect return values, call arguments, callable values,
+or exception messages.
+
+An optional normalized path prefix limits target overhead and noise. Agent code
+locations are always excluded. The WPF client requests events incrementally by
+sequence number and mirrors the target's bounded capacity.

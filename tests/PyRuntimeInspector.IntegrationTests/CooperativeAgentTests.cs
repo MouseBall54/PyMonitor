@@ -48,6 +48,91 @@ public sealed class CooperativeAgentTests
         var preview = await client.RequestAsync("arrays.preview", new JsonObject { ["handleId"] = handle, ["maxWidth"] = 64, ["maxHeight"] = 48, ["layout"] = "HWC" });
         Assert.Equal("RGB24", Result(preview)["pixelFormat"]!.GetValue<string>());
         Assert.Equal(64 * 48 * 3, preview.Binary.Length);
+        var tile = await client.RequestAsync("arrays.tile", new JsonObject
+        {
+            ["handleId"] = handle,
+            ["x"] = 190,
+            ["y"] = 90,
+            ["width"] = 20,
+            ["height"] = 20,
+            ["layout"] = "HWC",
+        });
+        Assert.Equal(20 * 20 * 3, tile.Binary.Length);
+        Assert.Equal(190, Result(tile)["originX"]!.GetValue<int>());
+        var histogram = Result(await client.RequestAsync("arrays.histogram", new JsonObject
+        {
+            ["handleId"] = handle,
+            ["channel"] = 0,
+            ["bins"] = 16,
+            ["layout"] = "HWC",
+        }));
+        Assert.Equal(16, histogram["counts"]!.AsArray().Count);
+
+        var floatImage = FindValue(globals, "GLOBAL_FLOAT_IMAGE");
+        var floatHandle = floatImage["handleId"]!.GetValue<string>();
+        var floatPreview = await client.RequestAsync("arrays.preview", new JsonObject
+        {
+            ["handleId"] = floatHandle,
+            ["maxWidth"] = 10,
+            ["maxHeight"] = 10,
+            ["layout"] = "GRAY",
+            ["normalization"] = "PERCENTILE",
+        });
+        Assert.Equal("PERCENTILE", Result(floatPreview)["normalization"]!["mode"]!.GetValue<string>());
+        Assert.Equal(100, floatPreview.Binary.Length);
+        var nonFinitePixel = Result(await client.RequestAsync("arrays.pixel", new JsonObject
+        {
+            ["handleId"] = floatHandle,
+            ["coordinates"] = new JsonArray(0, 0),
+            ["layout"] = "GRAY",
+        }));
+        Assert.Equal("NaN", nonFinitePixel["value"]!["kind"]!.GetValue<string>());
+
+        var labels = FindValue(globals, "GLOBAL_LABELS");
+        var labelPreview = await client.RequestAsync("arrays.preview", new JsonObject
+        {
+            ["handleId"] = labels["handleId"]!.GetValue<string>(),
+            ["maxWidth"] = 10,
+            ["maxHeight"] = 10,
+            ["layout"] = "GRAY",
+            ["normalization"] = "LABEL",
+        });
+        Assert.Equal("RGB24", Result(labelPreview)["pixelFormat"]!.GetValue<string>());
+
+        var memoryStarted = Result(await client.RequestAsync("memory.start", new JsonObject { ["tracebackDepth"] = 2 }));
+        Assert.True(memoryStarted["tracing"]!.GetValue<bool>());
+        var before = Result(await client.RequestAsync("memory.snapshot", new JsonObject { ["label"] = "before" }));
+        for (var index = 0; index < 5; index++)
+            await client.RequestAsync("runtime.getInfo");
+        var after = Result(await client.RequestAsync("memory.snapshot", new JsonObject { ["label"] = "after" }));
+        var difference = Result(await client.RequestAsync("memory.diff", new JsonObject
+        {
+            ["beforeSnapshotId"] = before["snapshotId"]!.GetValue<string>(),
+            ["afterSnapshotId"] = after["snapshotId"]!.GetValue<string>(),
+            ["limit"] = 20,
+        }));
+        Assert.NotEmpty(difference["items"]!.AsArray());
+        var memoryStopped = Result(await client.RequestAsync("memory.stop"));
+        Assert.False(memoryStopped["tracing"]!.GetValue<bool>());
+
+        if (versionInfo[1]!.GetValue<int>() >= 12)
+        {
+            var monitoringStarted = Result(await client.RequestAsync("execution.start", new JsonObject
+            {
+                ["eventNames"] = new JsonArray("LINE"),
+                ["bufferCapacity"] = 1000,
+            }));
+            Assert.True(monitoringStarted["active"]!.GetValue<bool>());
+            Assert.InRange(monitoringStarted["toolId"]!.GetValue<int>(), 3, 4);
+            await Task.Delay(250);
+            await client.RequestAsync("execution.stop");
+            var executionEvents = Result(await client.RequestAsync("execution.list", new JsonObject
+            {
+                ["limit"] = 1000,
+            }));
+            Assert.Contains(executionEvents["items"]!.AsArray(), item =>
+                Path.GetFileName(item!["filename"]!.GetValue<string>()) == "target_sample.py");
+        }
 
         await client.RequestAsync("session.detach");
         await Task.Delay(200);

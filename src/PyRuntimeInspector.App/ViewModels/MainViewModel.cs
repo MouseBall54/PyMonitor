@@ -18,6 +18,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private readonly IInspectorSession _session;
     private readonly IProcessDiscovery _processDiscovery;
     private readonly IManagedPythonLauncher _launcher;
+    private readonly ILiveAttachService _liveAttachService;
     private readonly SynchronizationContext? _uiContext;
     private readonly Dictionary<string, string> _changeTokens = [];
     private CancellationTokenSource? _connectionCts;
@@ -47,6 +48,22 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private string _executable = "—";
     private int? _targetPid;
     private string _privateBytes = "—";
+    private string _workingSet = "—";
+    private string _virtualSize = "—";
+    private string _peakWorkingSet = "—";
+    private string _tracemallocStatus = "Stopped";
+    private string _pythonCurrentMemory = "—";
+    private string _pythonPeakMemory = "—";
+    private string _tracemallocOverhead = "—";
+    private string _tracemallocCoverage = "Not tracing";
+    private int _tracebackDepth = 1;
+    private bool _isTracemallocTracing;
+    private MemorySnapshotRow? _beforeMemorySnapshot;
+    private MemorySnapshotRow? _afterMemorySnapshot;
+    private int _snapshotSequence;
+    private ProcessMemoryInfo? _lastProcessMemory;
+    private long? _pythonCurrentBytes;
+    private long? _pythonPeakBytes;
     private double _refreshIntervalSeconds = 1;
     private string _breadcrumb = "Select a frame scope";
     private string _searchText = "";
@@ -80,6 +97,36 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private string _rawPixelValue = "—";
     private string _displayPixelValue = "—";
     private string _normalization = "None (uint8)";
+    private string _normalizationMode = "AUTO";
+    private double _percentileLow = 1;
+    private double _percentileHigh = 99;
+    private int _histogramBins = 256;
+    private int _histogramChannel;
+    private int _tileX;
+    private int _tileY;
+    private int _tileWidth = 512;
+    private int _tileHeight = 512;
+    private int _previewOriginX;
+    private int _previewOriginY;
+    private int _sourceImageWidth;
+    private int _sourceImageHeight;
+    private double? _displayMinimum;
+    private double? _displayMaximum;
+    private string _histogramSummary = "Not loaded";
+    private bool _executionMonitoringAvailable;
+    private bool _executionMonitoringActive;
+    private string _executionStatus = "Unavailable until connected";
+    private string _executionPathPrefix;
+    private int _executionBufferCapacity = 5000;
+    private long _executionDroppedCount;
+    private long _lastExecutionSequence;
+    private bool _monitorPyStart = true;
+    private bool _monitorPyReturn = true;
+    private bool _monitorPyYield;
+    private bool _monitorPyUnwind = true;
+    private bool _monitorRaise = true;
+    private bool _monitorLine;
+    private bool _monitorCall;
     private string? _arrayHandle;
     private int[] _arrayDimensions = [];
     private int _previewRowStep = 1;
@@ -93,21 +140,28 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private string _managedExitCode = "—";
     private int? _managedProcessId;
     private bool _isManagedRunning;
+    private bool _elevateLiveAttach;
 
-    public MainViewModel() : this(new InspectorSession(), new ProcessDiscovery(), new ManagedPythonLauncher())
+    public MainViewModel() : this(new InspectorSession(), new ProcessDiscovery(), new ManagedPythonLauncher(), new LiveAttachService())
     {
     }
 
-    public MainViewModel(IInspectorSession session, IProcessDiscovery processDiscovery, IManagedPythonLauncher? launcher = null)
+    public MainViewModel(
+        IInspectorSession session,
+        IProcessDiscovery processDiscovery,
+        IManagedPythonLauncher? launcher = null,
+        ILiveAttachService? liveAttachService = null)
     {
         _session = session;
         _processDiscovery = processDiscovery;
         _launcher = launcher ?? new ManagedPythonLauncher();
+        _liveAttachService = liveAttachService ?? new LiveAttachService();
         _uiContext = SynchronizationContext.Current;
         var repositoryRoot = FindRepositoryRoot();
         _pythonExecutable = Environment.GetEnvironmentVariable("PYTHON_EXECUTABLE") ?? "python";
         _scriptPath = Path.Combine(repositoryRoot, "samples", "target_managed.py");
         _workingDirectory = repositoryRoot;
+        _executionPathPrefix = Path.Combine(repositoryRoot, "samples");
         _portText = Environment.GetEnvironmentVariable("PY_INSPECTOR_PORT") ?? "49152";
         _token = Environment.GetEnvironmentVariable("PY_INSPECTOR_TOKEN")
             ?? Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
@@ -116,11 +170,23 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _launcher.Exited += OnManagedExited;
 
         AttachCommand = new AsyncCommand(AttachAsync, () => !IsConnected && !IsBusy);
+        LiveAttachCommand = new AsyncCommand(LiveAttachAsync, () => !IsConnected && !IsBusy && SelectedProcess?.ExecutablePath is not null);
         DetachCommand = new AsyncCommand(DetachAsync, () => IsConnected || IsBusy);
         RefreshCommand = new AsyncCommand(RefreshAsync, () => IsConnected);
         PreviousPageCommand = new AsyncCommand(PreviousPageAsync, () => IsConnected && _pageOffset > 0);
         NextPageCommand = new AsyncCommand(NextPageAsync, () => IsConnected && _pageOffset + PageSize < _pageTotal);
         ReloadPreviewCommand = new AsyncCommand(ReloadArrayPreviewAsync, () => IsConnected && _arrayHandle is not null);
+        LoadTileCommand = new AsyncCommand(LoadArrayTileAsync, () => IsConnected && _arrayHandle is not null);
+        LoadHistogramCommand = new AsyncCommand(LoadHistogramAsync, () => IsConnected && _arrayHandle is not null);
+        StartTracingCommand = new AsyncCommand(StartTracingAsync, () => IsConnected && !IsTracemallocTracing);
+        StopTracingCommand = new AsyncCommand(StopTracingAsync, () => IsConnected && IsTracemallocTracing);
+        TakeMemorySnapshotCommand = new AsyncCommand(TakeMemorySnapshotAsync, () => IsConnected && IsTracemallocTracing);
+        CompareMemorySnapshotsCommand = new AsyncCommand(CompareMemorySnapshotsAsync, () => IsConnected && BeforeMemorySnapshot is not null && AfterMemorySnapshot is not null && BeforeMemorySnapshot != AfterMemorySnapshot);
+        RefreshMemoryCommand = new AsyncCommand(() => RefreshMemoryAsync(_connectionCts?.Token ?? CancellationToken.None, includeStatistics: true), () => IsConnected);
+        StartExecutionMonitoringCommand = new AsyncCommand(StartExecutionMonitoringAsync, () => IsConnected && ExecutionMonitoringAvailable && !ExecutionMonitoringActive);
+        StopExecutionMonitoringCommand = new AsyncCommand(StopExecutionMonitoringAsync, () => IsConnected && ExecutionMonitoringActive);
+        RefreshExecutionEventsCommand = new AsyncCommand(RefreshExecutionEventsAsync, () => IsConnected && ExecutionMonitoringAvailable);
+        ClearExecutionEventsCommand = new AsyncCommand(ClearExecutionEventsAsync, () => IsConnected && ExecutionMonitoringAvailable);
         LaunchCommand = new AsyncCommand(LaunchAsync, () => !IsConnected && !IsBusy && !IsManagedRunning);
         StopCommand = new AsyncCommand(StopManagedAsync, () => IsManagedRunning);
         RestartCommand = new AsyncCommand(RestartManagedAsync, () => !IsBusy && (!IsConnected || IsManagedRunning));
@@ -143,19 +209,37 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public ObservableCollection<VariableRow> FilteredVariables { get; } = [];
     public ObservableCollection<ObjectChildRow> ObjectChildren { get; } = [];
     public ObservableCollection<ClassMemberRow> ClassMembers { get; } = [];
+    public ObservableCollection<MemorySnapshotRow> MemorySnapshots { get; } = [];
+    public ObservableCollection<MemoryStatisticRow> MemoryStatistics { get; } = [];
+    public ObservableCollection<MemorySampleRow> MemoryTimeline { get; } = [];
+    public ObservableCollection<HistogramBinRow> HistogramBins { get; } = [];
+    public ObservableCollection<ExecutionEventRow> ExecutionEvents { get; } = [];
     public ObservableCollection<EnvironmentVariableRow> LaunchEnvironment { get; } = [];
     public ObservableCollection<LaunchOutputLine> LaunchOutput { get; } = [];
     public IReadOnlyList<double> RefreshIntervals { get; } = [1, 2, 5, 10];
     public IReadOnlyList<string> Layouts { get; } = ["GRAY", "HWC", "CHW", "VOLUME"];
     public IReadOnlyList<string> ColorOrders { get; } = ["RGB", "BGR"];
+    public IReadOnlyList<string> NormalizationModes { get; } = ["AUTO", "NONE", "MINMAX", "PERCENTILE", "LABEL"];
     public IReadOnlyList<int> SliceAxes { get; } = [0, 1, 2];
 
     public AsyncCommand AttachCommand { get; }
+    public AsyncCommand LiveAttachCommand { get; }
     public AsyncCommand DetachCommand { get; }
     public AsyncCommand RefreshCommand { get; }
     public AsyncCommand PreviousPageCommand { get; }
     public AsyncCommand NextPageCommand { get; }
     public AsyncCommand ReloadPreviewCommand { get; }
+    public AsyncCommand LoadTileCommand { get; }
+    public AsyncCommand LoadHistogramCommand { get; }
+    public AsyncCommand StartTracingCommand { get; }
+    public AsyncCommand StopTracingCommand { get; }
+    public AsyncCommand TakeMemorySnapshotCommand { get; }
+    public AsyncCommand CompareMemorySnapshotsCommand { get; }
+    public AsyncCommand RefreshMemoryCommand { get; }
+    public AsyncCommand StartExecutionMonitoringCommand { get; }
+    public AsyncCommand StopExecutionMonitoringCommand { get; }
+    public AsyncCommand RefreshExecutionEventsCommand { get; }
+    public AsyncCommand ClearExecutionEventsCommand { get; }
     public AsyncCommand LaunchCommand { get; }
     public AsyncCommand StopCommand { get; }
     public AsyncCommand RestartCommand { get; }
@@ -170,7 +254,15 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public RelayCommand FitCommand { get; }
     public RelayCommand OneToOneCommand { get; }
 
-    public ProcessItem? SelectedProcess { get => _selectedProcess; set => SetProperty(ref _selectedProcess, value); }
+    public ProcessItem? SelectedProcess
+    {
+        get => _selectedProcess;
+        set
+        {
+            if (SetProperty(ref _selectedProcess, value))
+                UpdateCommandStates();
+        }
+    }
     public string PortText { get => _portText; set => SetProperty(ref _portText, value); }
     public string Token { get => _token; set => SetProperty(ref _token, value); }
     public string PythonExecutable { get => _pythonExecutable; set => SetProperty(ref _pythonExecutable, value); }
@@ -198,6 +290,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                 UpdateCommandStates();
         }
     }
+    public bool ElevateLiveAttach { get => _elevateLiveAttach; set => SetProperty(ref _elevateLiveAttach, value); }
     public string Status { get => _status; private set => SetProperty(ref _status, value); }
     public string ErrorMessage { get => _errorMessage; private set => SetProperty(ref _errorMessage, value); }
     public bool IsConnected
@@ -223,6 +316,42 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public string Executable { get => _executable; private set => SetProperty(ref _executable, value); }
     public int? TargetPid { get => _targetPid; private set => SetProperty(ref _targetPid, value); }
     public string PrivateBytes { get => _privateBytes; private set => SetProperty(ref _privateBytes, value); }
+    public string WorkingSet { get => _workingSet; private set => SetProperty(ref _workingSet, value); }
+    public string VirtualSize { get => _virtualSize; private set => SetProperty(ref _virtualSize, value); }
+    public string PeakWorkingSet { get => _peakWorkingSet; private set => SetProperty(ref _peakWorkingSet, value); }
+    public string TracemallocStatus { get => _tracemallocStatus; private set => SetProperty(ref _tracemallocStatus, value); }
+    public string PythonCurrentMemory { get => _pythonCurrentMemory; private set => SetProperty(ref _pythonCurrentMemory, value); }
+    public string PythonPeakMemory { get => _pythonPeakMemory; private set => SetProperty(ref _pythonPeakMemory, value); }
+    public string TracemallocOverhead { get => _tracemallocOverhead; private set => SetProperty(ref _tracemallocOverhead, value); }
+    public string TracemallocCoverage { get => _tracemallocCoverage; private set => SetProperty(ref _tracemallocCoverage, value); }
+    public int TracebackDepth { get => _tracebackDepth; set => SetProperty(ref _tracebackDepth, Math.Clamp(value, 1, 25)); }
+    public bool IsTracemallocTracing
+    {
+        get => _isTracemallocTracing;
+        private set
+        {
+            if (SetProperty(ref _isTracemallocTracing, value))
+                UpdateCommandStates();
+        }
+    }
+    public MemorySnapshotRow? BeforeMemorySnapshot
+    {
+        get => _beforeMemorySnapshot;
+        set
+        {
+            if (SetProperty(ref _beforeMemorySnapshot, value))
+                CompareMemorySnapshotsCommand.RaiseCanExecuteChanged();
+        }
+    }
+    public MemorySnapshotRow? AfterMemorySnapshot
+    {
+        get => _afterMemorySnapshot;
+        set
+        {
+            if (SetProperty(ref _afterMemorySnapshot, value))
+                CompareMemorySnapshotsCommand.RaiseCanExecuteChanged();
+        }
+    }
     public double RefreshIntervalSeconds { get => _refreshIntervalSeconds; set => SetProperty(ref _refreshIntervalSeconds, Math.Max(1, value)); }
     public string Breadcrumb { get => _breadcrumb; private set => SetProperty(ref _breadcrumb, value); }
     public string SearchText
@@ -293,6 +422,47 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public string RawPixelValue { get => _rawPixelValue; private set => SetProperty(ref _rawPixelValue, value); }
     public string DisplayPixelValue { get => _displayPixelValue; private set => SetProperty(ref _displayPixelValue, value); }
     public string Normalization { get => _normalization; private set => SetProperty(ref _normalization, value); }
+    public string NormalizationMode { get => _normalizationMode; set => SetProperty(ref _normalizationMode, value); }
+    public double PercentileLow { get => _percentileLow; set => SetProperty(ref _percentileLow, Math.Clamp(value, 0, 100)); }
+    public double PercentileHigh { get => _percentileHigh; set => SetProperty(ref _percentileHigh, Math.Clamp(value, 0, 100)); }
+    public int HistogramBinCount { get => _histogramBins; set => SetProperty(ref _histogramBins, Math.Clamp(value, 2, 512)); }
+    public int HistogramChannel { get => _histogramChannel; set => SetProperty(ref _histogramChannel, Math.Max(0, value)); }
+    public int TileX { get => _tileX; set => SetProperty(ref _tileX, Math.Max(0, value)); }
+    public int TileY { get => _tileY; set => SetProperty(ref _tileY, Math.Max(0, value)); }
+    public int TileWidth { get => _tileWidth; set => SetProperty(ref _tileWidth, Math.Clamp(value, 1, 1024)); }
+    public int TileHeight { get => _tileHeight; set => SetProperty(ref _tileHeight, Math.Clamp(value, 1, 1024)); }
+    public int SourceImageWidth { get => _sourceImageWidth; private set => SetProperty(ref _sourceImageWidth, value); }
+    public int SourceImageHeight { get => _sourceImageHeight; private set => SetProperty(ref _sourceImageHeight, value); }
+    public string HistogramSummary { get => _histogramSummary; private set => SetProperty(ref _histogramSummary, value); }
+    public bool ExecutionMonitoringAvailable
+    {
+        get => _executionMonitoringAvailable;
+        private set
+        {
+            if (SetProperty(ref _executionMonitoringAvailable, value))
+                UpdateCommandStates();
+        }
+    }
+    public bool ExecutionMonitoringActive
+    {
+        get => _executionMonitoringActive;
+        private set
+        {
+            if (SetProperty(ref _executionMonitoringActive, value))
+                UpdateCommandStates();
+        }
+    }
+    public string ExecutionStatus { get => _executionStatus; private set => SetProperty(ref _executionStatus, value); }
+    public string ExecutionPathPrefix { get => _executionPathPrefix; set => SetProperty(ref _executionPathPrefix, value); }
+    public int ExecutionBufferCapacity { get => _executionBufferCapacity; set => SetProperty(ref _executionBufferCapacity, Math.Clamp(value, 100, 10000)); }
+    public long ExecutionDroppedCount { get => _executionDroppedCount; private set => SetProperty(ref _executionDroppedCount, value); }
+    public bool MonitorPyStart { get => _monitorPyStart; set => SetProperty(ref _monitorPyStart, value); }
+    public bool MonitorPyReturn { get => _monitorPyReturn; set => SetProperty(ref _monitorPyReturn, value); }
+    public bool MonitorPyYield { get => _monitorPyYield; set => SetProperty(ref _monitorPyYield, value); }
+    public bool MonitorPyUnwind { get => _monitorPyUnwind; set => SetProperty(ref _monitorPyUnwind, value); }
+    public bool MonitorRaise { get => _monitorRaise; set => SetProperty(ref _monitorRaise, value); }
+    public bool MonitorLine { get => _monitorLine; set => SetProperty(ref _monitorLine, value); }
+    public bool MonitorCall { get => _monitorCall; set => SetProperty(ref _monitorCall, value); }
 
     public async Task SelectTreeNodeAsync(RuntimeTreeNode? node)
     {
@@ -353,8 +523,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     {
         if (PreviewWidth == 0 || PreviewHeight == 0)
             return;
-        x = Math.Clamp(x, 0, PreviewWidth - 1) * _previewColumnStep;
-        y = Math.Clamp(y, 0, PreviewHeight - 1) * _previewRowStep;
+        x = _previewOriginX + Math.Clamp(x, 0, PreviewWidth - 1) * _previewColumnStep;
+        y = _previewOriginY + Math.Clamp(y, 0, PreviewHeight - 1) * _previewRowStep;
         CursorCoordinate = $"x={x}, y={y}";
     }
 
@@ -364,8 +534,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             return;
         x = Math.Clamp(x, 0, PreviewWidth - 1);
         y = Math.Clamp(y, 0, PreviewHeight - 1);
-        x = Math.Clamp(x, 0, PreviewWidth - 1) * _previewColumnStep;
-        y = Math.Clamp(y, 0, PreviewHeight - 1) * _previewRowStep;
+        x = _previewOriginX + Math.Clamp(x, 0, PreviewWidth - 1) * _previewColumnStep;
+        y = _previewOriginY + Math.Clamp(y, 0, PreviewHeight - 1) * _previewRowStep;
         CursorCoordinate = $"x={x}, y={y}";
         try
         {
@@ -557,6 +727,82 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
+    private async Task LiveAttachAsync()
+    {
+        if (IsConnected || IsBusy)
+            return;
+        if (SelectedProcess is null)
+        {
+            ErrorMessage = "Select a running Python process.";
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(SelectedProcess.ExecutablePath) || !File.Exists(SelectedProcess.ExecutablePath))
+        {
+            ErrorMessage = "The selected process executable is unavailable. Try running PyRuntime Inspector with sufficient permission.";
+            return;
+        }
+
+        Token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+        if (!TryGetConnectionSettings(out var port))
+            return;
+
+        ErrorMessage = "";
+        IsBusy = true;
+        Status = $"Scheduling live attach to PID {SelectedProcess.Id}";
+        _connectionCts = new CancellationTokenSource();
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(_connectionCts.Token);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
+        Task<JsonObject>? attachTask = null;
+        try
+        {
+            attachTask = _session.AttachAsync(port, Token, SelectedProcess.Id, timeoutCts.Token);
+            if (attachTask.IsFaulted)
+                await attachTask;
+
+            await using var lease = await _liveAttachService.StartAsync(new LiveAttachOptions(
+                SelectedProcess.Id,
+                SelectedProcess.ExecutablePath,
+                Path.Combine(FindRepositoryRoot(), "agent"),
+                port,
+                Token,
+                ElevateLiveAttach), timeoutCts.Token);
+
+            Status = "Live attach scheduled; waiting for the target safe point";
+            var runtime = await attachTask;
+            ApplyRuntime(runtime);
+            IsConnected = true;
+            Status = "Connected (live attach)";
+            await LoadRuntimeTreeAsync(_connectionCts.Token);
+            StartRefreshLoop();
+        }
+        catch (OperationCanceledException)
+        {
+            if (_connectionCts.IsCancellationRequested)
+                Status = "Live attach cancelled";
+            else
+            {
+                Status = "Live attach timed out";
+                ErrorMessage = "The target did not reach a Python safe execution point within 30 seconds.";
+            }
+            _connectionCts.Cancel();
+        }
+        catch (Exception exception)
+        {
+            Status = "Live attach failed";
+            SetError(exception);
+            _connectionCts.Cancel();
+        }
+        finally
+        {
+            if (!IsConnected && attachTask is not null)
+            {
+                try { await attachTask; } catch { }
+            }
+            IsBusy = false;
+            UpdateCommandStates();
+        }
+    }
+
     private async Task DetachAsync()
     {
         _connectionCts?.Cancel();
@@ -587,6 +833,301 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
+    private async Task StartTracingAsync()
+    {
+        try
+        {
+            var response = await RequestAsync("memory.start", new JsonObject
+            {
+                ["tracebackDepth"] = TracebackDepth,
+            }, _connectionCts?.Token ?? CancellationToken.None);
+            ApplyMemoryStatus(response.Header["result"]!.AsObject());
+            MemorySnapshots.Clear();
+            MemoryStatistics.Clear();
+            BeforeMemorySnapshot = null;
+            AfterMemorySnapshot = null;
+            await RefreshMemoryAsync(_connectionCts?.Token ?? CancellationToken.None, includeStatistics: true);
+        }
+        catch (Exception exception)
+        {
+            SetError(exception);
+        }
+    }
+
+    private async Task StopTracingAsync()
+    {
+        try
+        {
+            var response = await RequestAsync("memory.stop", cancellationToken: _connectionCts?.Token ?? CancellationToken.None);
+            ApplyMemoryStatus(response.Header["result"]!.AsObject());
+            MemorySnapshots.Clear();
+            MemoryStatistics.Clear();
+            BeforeMemorySnapshot = null;
+            AfterMemorySnapshot = null;
+        }
+        catch (Exception exception)
+        {
+            SetError(exception);
+        }
+    }
+
+    private async Task TakeMemorySnapshotAsync()
+    {
+        try
+        {
+            var response = await RequestAsync("memory.snapshot", new JsonObject
+            {
+                ["label"] = $"Snapshot {++_snapshotSequence}",
+            }, _connectionCts?.Token ?? CancellationToken.None);
+            var row = ParseMemorySnapshot(response.Header["result"]!.AsObject());
+            MemorySnapshots.Add(row);
+            while (MemorySnapshots.Count > 8)
+                MemorySnapshots.RemoveAt(0);
+            BeforeMemorySnapshot ??= row;
+            AfterMemorySnapshot = row;
+            await LoadMemoryStatisticsAsync(_connectionCts?.Token ?? CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            SetError(exception);
+        }
+    }
+
+    private async Task CompareMemorySnapshotsAsync()
+    {
+        if (BeforeMemorySnapshot is null || AfterMemorySnapshot is null)
+            return;
+        try
+        {
+            var response = await RequestAsync("memory.diff", new JsonObject
+            {
+                ["beforeSnapshotId"] = BeforeMemorySnapshot.SnapshotId,
+                ["afterSnapshotId"] = AfterMemorySnapshot.SnapshotId,
+                ["limit"] = 100,
+                ["groupBy"] = "lineno",
+            }, _connectionCts?.Token ?? CancellationToken.None);
+            ApplyMemoryStatistics(response.Header["result"]!["items"]!.AsArray(), includeDiff: true);
+        }
+        catch (Exception exception)
+        {
+            SetError(exception);
+        }
+    }
+
+    private async Task RefreshMemoryAsync(CancellationToken token, bool includeStatistics = false)
+    {
+        RefreshProcessMemory();
+        if (!IsConnected)
+            return;
+        var response = await RequestAsync("memory.status", cancellationToken: token);
+        ApplyMemoryStatus(response.Header["result"]!.AsObject());
+        if (IsTracemallocTracing && includeStatistics)
+            await LoadMemoryStatisticsAsync(token);
+        AddMemoryTimelineSample();
+    }
+
+    private async Task LoadMemoryStatisticsAsync(CancellationToken token)
+    {
+        var response = await RequestAsync("memory.statistics", new JsonObject
+        {
+            ["limit"] = 100,
+            ["groupBy"] = "lineno",
+        }, token);
+        ApplyMemoryStatistics(response.Header["result"]!["items"]!.AsArray(), includeDiff: false);
+    }
+
+    private void ApplyMemoryStatus(JsonObject status)
+    {
+        var tracing = status["tracing"]?.GetValue<bool>() ?? false;
+        IsTracemallocTracing = tracing;
+        var depth = status["tracebackDepth"]?.GetValue<int>() ?? 0;
+        TracemallocStatus = tracing ? $"Running (depth {depth})" : "Stopped";
+        _pythonCurrentBytes = tracing ? status["currentBytes"]?.GetValue<long>() ?? 0 : null;
+        _pythonPeakBytes = tracing ? status["peakBytes"]?.GetValue<long>() ?? 0 : null;
+        PythonCurrentMemory = _pythonCurrentBytes is long current ? FormatBytes(current) : "—";
+        PythonPeakMemory = _pythonPeakBytes is long peak ? FormatBytes(peak) : "—";
+        TracemallocOverhead = tracing ? FormatBytes(status["overheadBytes"]?.GetValue<long>() ?? 0) : "—";
+        var startedAt = status["startedAt"]?.GetValue<string>();
+        var startedByInspector = status["startedByInspector"]?.GetValue<bool>() ?? false;
+        TracemallocCoverage = !tracing
+            ? "Not tracing"
+            : startedAt is not null
+                ? $"Allocations after {startedAt} ({(startedByInspector ? "started by Inspector" : "pre-existing")})"
+                : "Tracing was already active before Inspector; exact start time is unknown.";
+        if (!tracing)
+            MemoryStatistics.Clear();
+    }
+
+    private void ApplyMemoryStatistics(JsonArray items, bool includeDiff)
+    {
+        var rows = items.Select(item => new MemoryStatisticRow(
+            item!["filename"]?.GetValue<string>() ?? "<unknown>",
+            item["lineNumber"]?.GetValue<int>() ?? 0,
+            item["sizeBytes"]?.GetValue<long>() ?? 0,
+            item["count"]?.GetValue<long>() ?? 0,
+            includeDiff ? item["sizeDiffBytes"]?.GetValue<long>() : null,
+            includeDiff ? item["countDiff"]?.GetValue<long>() : null));
+        Replace(MemoryStatistics, rows);
+    }
+
+    private static MemorySnapshotRow ParseMemorySnapshot(JsonObject snapshot)
+    {
+        var createdAt = DateTime.TryParse(snapshot["createdAt"]?.GetValue<string>(), out var parsed)
+            ? parsed.ToLocalTime()
+            : DateTime.Now;
+        return new MemorySnapshotRow(
+            snapshot["snapshotId"]!.GetValue<string>(),
+            snapshot["label"]?.GetValue<string>() ?? "Snapshot",
+            createdAt,
+            snapshot["traceCount"]?.GetValue<long>() ?? 0,
+            snapshot["totalBytes"]?.GetValue<long>() ?? 0);
+    }
+
+    private void AddMemoryTimelineSample()
+    {
+        MemoryTimeline.Add(new MemorySampleRow(
+            DateTime.Now,
+            _lastProcessMemory?.WorkingSetBytes,
+            _lastProcessMemory?.PrivateBytes,
+            _lastProcessMemory?.VirtualBytes,
+            _pythonCurrentBytes,
+            _pythonPeakBytes));
+        while (MemoryTimeline.Count > 300)
+            MemoryTimeline.RemoveAt(0);
+    }
+
+    private async Task StartExecutionMonitoringAsync()
+    {
+        var names = new JsonArray();
+        if (MonitorPyStart) names.Add("PY_START");
+        if (MonitorPyReturn) names.Add("PY_RETURN");
+        if (MonitorPyYield) names.Add("PY_YIELD");
+        if (MonitorPyUnwind) names.Add("PY_UNWIND");
+        if (MonitorRaise) names.Add("RAISE");
+        if (MonitorLine) names.Add("LINE");
+        if (MonitorCall) names.Add("CALL");
+        if (names.Count == 0)
+        {
+            ErrorMessage = "Select at least one execution event.";
+            return;
+        }
+        try
+        {
+            var response = await RequestAsync("execution.start", new JsonObject
+            {
+                ["eventNames"] = names,
+                ["bufferCapacity"] = ExecutionBufferCapacity,
+                ["includePathPrefix"] = ExecutionPathPrefix,
+            }, _connectionCts?.Token ?? CancellationToken.None);
+            ExecutionEvents.Clear();
+            _lastExecutionSequence = 0;
+            ApplyExecutionStatus(response.Header["result"]!.AsObject());
+        }
+        catch (Exception exception)
+        {
+            SetError(exception);
+        }
+    }
+
+    private async Task StopExecutionMonitoringAsync()
+    {
+        try
+        {
+            var response = await RequestAsync("execution.stop", cancellationToken: _connectionCts?.Token ?? CancellationToken.None);
+            ApplyExecutionStatus(response.Header["result"]!.AsObject());
+            await LoadExecutionEventsAsync(_connectionCts?.Token ?? CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            SetError(exception);
+        }
+    }
+
+    private async Task RefreshExecutionEventsAsync()
+    {
+        try
+        {
+            await RefreshExecutionStatusAsync(_connectionCts?.Token ?? CancellationToken.None);
+            if (ExecutionMonitoringAvailable)
+                await LoadExecutionEventsAsync(_connectionCts?.Token ?? CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            SetError(exception);
+        }
+    }
+
+    private async Task ClearExecutionEventsAsync()
+    {
+        try
+        {
+            var response = await RequestAsync("execution.clear", cancellationToken: _connectionCts?.Token ?? CancellationToken.None);
+            ExecutionEvents.Clear();
+            ExecutionDroppedCount = 0;
+            ApplyExecutionStatus(response.Header["result"]!.AsObject());
+        }
+        catch (Exception exception)
+        {
+            SetError(exception);
+        }
+    }
+
+    private async Task RefreshExecutionStatusAsync(CancellationToken token)
+    {
+        var response = await RequestAsync("execution.status", cancellationToken: token);
+        ApplyExecutionStatus(response.Header["result"]!.AsObject());
+    }
+
+    private async Task LoadExecutionEventsAsync(CancellationToken token)
+    {
+        var response = await RequestAsync("execution.list", new JsonObject
+        {
+            ["afterSequence"] = _lastExecutionSequence,
+            ["limit"] = 1000,
+        }, token);
+        var result = response.Header["result"]!.AsObject();
+        foreach (var item in result["items"]!.AsArray())
+        {
+            var nanoseconds = item!["timestampUnixNanoseconds"]!.GetValue<long>();
+            var timestamp = DateTimeOffset.FromUnixTimeMilliseconds(nanoseconds / 1_000_000).LocalDateTime;
+            ExecutionEvents.Add(new ExecutionEventRow(
+                item["sequence"]!.GetValue<long>(),
+                timestamp,
+                item["threadId"]!.GetValue<long>(),
+                item["eventName"]!.GetValue<string>(),
+                item["qualifiedName"]?.GetValue<string>() ?? item["functionName"]!.GetValue<string>(),
+                item["filename"]!.GetValue<string>(),
+                item["lineNumber"]!.GetValue<int>(),
+                item["instructionOffset"]?.GetValue<int>(),
+                item["detail"]?.GetValue<string>()));
+        }
+        _lastExecutionSequence = result["nextSequence"]?.GetValue<long>() ?? _lastExecutionSequence;
+        ExecutionDroppedCount = result["droppedCount"]?.GetValue<long>() ?? 0;
+        var capacity = result["bufferCapacity"]?.GetValue<int>() ?? ExecutionBufferCapacity;
+        while (ExecutionEvents.Count > capacity)
+            ExecutionEvents.RemoveAt(0);
+        ExecutionStatus = $"{(ExecutionMonitoringActive ? "Active" : "Stopped")} · "
+            + $"{ExecutionEvents.Count:N0}/{capacity:N0} buffered · {ExecutionDroppedCount:N0} dropped";
+    }
+
+    private void ApplyExecutionStatus(JsonObject status)
+    {
+        ExecutionMonitoringAvailable = status["available"]?.GetValue<bool>() ?? false;
+        ExecutionMonitoringActive = status["active"]?.GetValue<bool>() ?? false;
+        ExecutionDroppedCount = status["droppedCount"]?.GetValue<long>() ?? ExecutionDroppedCount;
+        if (!ExecutionMonitoringAvailable)
+        {
+            ExecutionStatus = "Unavailable: Python 3.12 or newer is required.";
+            return;
+        }
+        var toolId = status["toolId"]?.GetValue<int>();
+        var buffered = status["bufferedCount"]?.GetValue<int>() ?? ExecutionEvents.Count;
+        var capacity = status["bufferCapacity"]?.GetValue<int>() ?? ExecutionBufferCapacity;
+        ExecutionStatus = ExecutionMonitoringActive
+            ? $"Active on tool ID {toolId} · {buffered:N0}/{capacity:N0} buffered · {ExecutionDroppedCount:N0} dropped"
+            : $"Stopped · {buffered:N0}/{capacity:N0} buffered · {ExecutionDroppedCount:N0} dropped";
+    }
+
     private async Task PreviousPageAsync()
     {
         if (_currentScope is null || _pageOffset == 0)
@@ -605,6 +1146,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
     private async Task LoadRuntimeTreeAsync(CancellationToken token)
     {
+        RefreshProcessMemory();
         var threadsFrame = await RequestAsync("threads.list", cancellationToken: token);
         var framesFrame = await RequestAsync("frames.list", cancellationToken: token);
         var threads = threadsFrame.Header["result"]!["items"]!.AsArray();
@@ -639,7 +1181,10 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             PlaceholderRoot("Classes", "Select a variable to inspect its class."),
             PlaceholderRoot("GC-tracked objects", "Heap scanning is intentionally not enabled."),
         ]);
-        RefreshPrivateBytes();
+        await RefreshMemoryAsync(token);
+        await RefreshExecutionStatusAsync(token);
+        if (ExecutionMonitoringActive)
+            await LoadExecutionEventsAsync(token);
     }
 
     private void ApplyRuntime(JsonObject runtime)
@@ -648,7 +1193,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         PythonVersion = runtime["version"]!.GetValue<string>().Split('\n')[0];
         Architecture = runtime["processArchitecture"]?.GetValue<string>() ?? "—";
         Executable = runtime["executable"]?.GetValue<string>() ?? "—";
-        RefreshPrivateBytes();
+        RefreshProcessMemory();
     }
 
     private void ApplyScopeResult(JsonObject result, RuntimeTreeNode node)
@@ -794,7 +1339,81 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
+    private async Task LoadArrayTileAsync()
+    {
+        if (_arrayHandle is null || !IsConnected)
+            return;
+        try
+        {
+            var parameters = BuildArrayViewParameters();
+            parameters["x"] = TileX;
+            parameters["y"] = TileY;
+            parameters["width"] = TileWidth;
+            parameters["height"] = TileHeight;
+            var frame = await RequestAsync("arrays.tile", parameters, _detailCts?.Token ?? _connectionCts?.Token ?? CancellationToken.None);
+            ApplyArrayBitmap(frame);
+            _fitMode = false;
+            SetZoom(1);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            SetError(exception);
+        }
+    }
+
+    private async Task LoadHistogramAsync()
+    {
+        if (_arrayHandle is null || !IsConnected)
+            return;
+        try
+        {
+            var frame = await RequestAsync("arrays.histogram", new JsonObject
+            {
+                ["handleId"] = _arrayHandle,
+                ["channel"] = HistogramChannel,
+                ["bins"] = HistogramBinCount,
+                ["layout"] = ArrayLayout,
+                ["sliceAxis"] = SliceAxis,
+                ["sliceIndex"] = SliceIndex,
+            }, _detailCts?.Token ?? _connectionCts?.Token ?? CancellationToken.None);
+            var result = frame.Header["result"]!.AsObject();
+            var counts = result["counts"]!.AsArray();
+            var edges = result["binEdges"]!.AsArray();
+            var rows = Enumerable.Range(0, counts.Count).Select(index => new HistogramBinRow(
+                index,
+                edges[index]!.GetValue<double>(),
+                edges[index + 1]!.GetValue<double>(),
+                counts[index]!.GetValue<long>()));
+            Replace(HistogramBins, rows);
+            HistogramSummary = $"{result["sampleCount"]!.GetValue<int>():N0} sampled, "
+                + $"NaN {result["nanCount"]!.GetValue<int>():N0}, "
+                + $"+Inf {result["positiveInfinityCount"]!.GetValue<int>():N0}, "
+                + $"-Inf {result["negativeInfinityCount"]!.GetValue<int>():N0}";
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            SetError(exception);
+        }
+    }
+
     private async Task LoadArrayPreviewAsync(CancellationToken token)
+    {
+        var parameters = BuildArrayViewParameters();
+        parameters["maxWidth"] = 1024;
+        parameters["maxHeight"] = 1024;
+        var frame = await RequestAsync("arrays.preview", parameters, token);
+        ApplyArrayBitmap(frame);
+        if (_fitMode)
+            ApplyFitZoom();
+    }
+
+    private JsonObject BuildArrayViewParameters()
     {
         var channelCount = ArrayLayout switch
         {
@@ -808,17 +1427,22 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             : channelCount == 4
                 ? new JsonArray(ChannelR, ChannelG, ChannelB, true)
                 : new JsonArray(ChannelR, ChannelG, ChannelB);
-        var frame = await RequestAsync("arrays.preview", new JsonObject
+        return new JsonObject
         {
             ["handleId"] = _arrayHandle,
-            ["maxWidth"] = 1024,
-            ["maxHeight"] = 1024,
             ["layout"] = ArrayLayout,
             ["colorOrder"] = ColorOrder,
             ["enabledChannels"] = enabled,
             ["sliceAxis"] = SliceAxis,
             ["sliceIndex"] = SliceIndex,
-        }, token);
+            ["normalization"] = NormalizationMode,
+            ["percentileLow"] = PercentileLow,
+            ["percentileHigh"] = PercentileHigh,
+        };
+    }
+
+    private void ApplyArrayBitmap(ProtocolFrame frame)
+    {
         var metadata = frame.Header["result"]!.AsObject();
         var width = metadata["width"]!.GetValue<int>();
         var height = metadata["height"]!.GetValue<int>();
@@ -838,10 +1462,27 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         PreviewHeight = height;
         _previewRowStep = metadata["rowStep"]?.GetValue<int>() ?? 1;
         _previewColumnStep = metadata["columnStep"]?.GetValue<int>() ?? 1;
+        _previewOriginX = metadata["originX"]?.GetValue<int>() ?? 0;
+        _previewOriginY = metadata["originY"]?.GetValue<int>() ?? 0;
+        SourceImageWidth = metadata["sourceWidth"]?.GetValue<int>() ?? width;
+        SourceImageHeight = metadata["sourceHeight"]?.GetValue<int>() ?? height;
         ArrayPreview = bitmap;
-        Normalization = metadata["normalization"] is null ? "None (uint8)" : metadata["normalization"]!.ToJsonString();
-        if (_fitMode)
-            ApplyFitZoom();
+        if (metadata["normalization"] is JsonObject normalization)
+        {
+            _displayMinimum = normalization["displayMinimum"]?.GetValue<double>();
+            _displayMaximum = normalization["displayMaximum"]?.GetValue<double>();
+            var mode = normalization["mode"]?.GetValue<string>() ?? "NONE";
+            Normalization = $"{mode} [{FormatNumber(_displayMinimum)}, {FormatNumber(_displayMaximum)}] · "
+                + $"NaN {normalization["nanCount"]?.GetValue<int>() ?? 0}, "
+                + $"+Inf {normalization["positiveInfinityCount"]?.GetValue<int>() ?? 0}, "
+                + $"-Inf {normalization["negativeInfinityCount"]?.GetValue<int>() ?? 0}";
+        }
+        else
+        {
+            _displayMinimum = 0;
+            _displayMaximum = 255;
+            Normalization = "NONE [0, 255]";
+        }
     }
 
     private async Task RefreshLoopAsync(CancellationToken token)
@@ -855,7 +1496,9 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                     await LoadScopeAsync(_currentScope);
                 else if (IsConnected)
                     await RequestAsync("runtime.getInfo", cancellationToken: token);
-                RefreshPrivateBytes();
+                await RefreshMemoryAsync(token);
+                if (ExecutionMonitoringActive)
+                    await LoadExecutionEventsAsync(token);
             }
             catch (OperationCanceledException)
             {
@@ -898,15 +1541,24 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         SelectedProcess = Processes.FirstOrDefault(item => item.Id == selectedId);
     }
 
-    private void RefreshPrivateBytes()
+    private void RefreshProcessMemory()
     {
         if (TargetPid is not int pid)
         {
-            PrivateBytes = "—";
+            _lastProcessMemory = null;
+            PrivateBytes = WorkingSet = VirtualSize = PeakWorkingSet = "—";
             return;
         }
-        var value = _processDiscovery.GetPrivateBytes(pid);
-        PrivateBytes = value is long bytes ? FormatBytes(bytes) : "Unavailable";
+        _lastProcessMemory = _processDiscovery.GetMemoryInfo(pid);
+        if (_lastProcessMemory is null)
+        {
+            PrivateBytes = WorkingSet = VirtualSize = PeakWorkingSet = "Unavailable";
+            return;
+        }
+        PrivateBytes = FormatBytes(_lastProcessMemory.PrivateBytes);
+        WorkingSet = FormatBytes(_lastProcessMemory.WorkingSetBytes);
+        VirtualSize = FormatBytes(_lastProcessMemory.VirtualBytes);
+        PeakWorkingSet = FormatBytes(_lastProcessMemory.PeakWorkingSetBytes);
     }
 
     private void ApplyFilter()
@@ -1054,10 +1706,33 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         FilteredVariables.Clear();
         ObjectChildren.Clear();
         ClassMembers.Clear();
+        MemorySnapshots.Clear();
+        MemoryStatistics.Clear();
+        MemoryTimeline.Clear();
+        ExecutionEvents.Clear();
+        BeforeMemorySnapshot = null;
+        AfterMemorySnapshot = null;
+        IsTracemallocTracing = false;
+        _pythonCurrentBytes = _pythonPeakBytes = null;
+        TracemallocStatus = "Stopped";
+        PythonCurrentMemory = PythonPeakMemory = TracemallocOverhead = "—";
+        TracemallocCoverage = "Not tracing";
+        ExecutionMonitoringAvailable = false;
+        ExecutionMonitoringActive = false;
+        ExecutionDroppedCount = 0;
+        ExecutionStatus = "Unavailable until connected";
+        _lastExecutionSequence = 0;
+        TargetPid = null;
+        PythonVersion = Architecture = Executable = "—";
+        PrivateBytes = WorkingSet = VirtualSize = PeakWorkingSet = "—";
+        _lastProcessMemory = null;
+        SelectedType = SelectedModule = SelectedQualifiedName = SelectedAddress = "—";
+        SelectedShallowSize = SelectedPayloadSize = "—";
+        SelectedVariable = null;
         _currentScope = null;
         _arrayHandle = null;
         UpdateCommandStates();
-        ArrayPreview = null;
+        ClearArrayDetails();
     }
 
     private void ClearArrayDetails()
@@ -1065,6 +1740,13 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         ArrayShape = ArrayDType = ArrayStrides = ArrayDataAddress = ArrayOwner = "—";
         ArrayPreview = null;
         PreviewWidth = PreviewHeight = 0;
+        SourceImageWidth = SourceImageHeight = 0;
+        _previewOriginX = _previewOriginY = 0;
+        _displayMinimum = _displayMaximum = null;
+        CursorCoordinate = RawPixelValue = DisplayPixelValue = "—";
+        Normalization = "—";
+        HistogramBins.Clear();
+        HistogramSummary = "Not loaded";
         _arrayDimensions = [];
     }
 
@@ -1098,34 +1780,69 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private string FormatDisplayValue(JsonNode? value)
     {
         if (value is not JsonArray channels)
-            return value?.ToJsonString() ?? "null";
-        var values = channels.Select(node => node!.GetValue<int>()).ToArray();
+            return FormatDisplayedScalar(value);
+        var values = channels.Select(FormatDisplayedScalar).ToArray();
         if (values.Length >= 3 && ColorOrder == "BGR")
             (values[0], values[2]) = (values[2], values[0]);
         if (values.Length >= 3)
         {
-            if (!ChannelR) values[0] = 0;
-            if (!ChannelG) values[1] = 0;
-            if (!ChannelB) values[2] = 0;
+            if (!ChannelR) values[0] = "0";
+            if (!ChannelG) values[1] = "0";
+            if (!ChannelB) values[2] = "0";
         }
         return "[" + string.Join(", ", values) + "]";
     }
 
+    private string FormatDisplayedScalar(JsonNode? value)
+    {
+        if (value is JsonObject special)
+            return special["kind"]?.GetValue<string>() switch
+            {
+                "+Infinity" => "255",
+                _ => "0",
+            };
+        if (value is JsonValue booleanValue && booleanValue.TryGetValue<bool>(out var boolean))
+            return boolean ? "255" : "0";
+        if (value is not JsonValue scalar || !scalar.TryGetValue<double>(out var number))
+            return value?.ToJsonString() ?? "null";
+        if (_displayMinimum is not double minimum || _displayMaximum is not double maximum)
+            return $"{number:G6}";
+        if (maximum <= minimum)
+            return "0";
+        var displayed = (int)Math.Round(Math.Clamp((number - minimum) / (maximum - minimum), 0, 1) * 255);
+        return displayed.ToString();
+    }
+
     private void SetError(Exception exception)
     {
-        ErrorMessage = exception is RemoteInspectionException remote
-            ? $"{remote.Code}: {remote.Message}"
-            : exception.Message;
+        ErrorMessage = exception switch
+        {
+            RemoteInspectionException remote => $"{remote.Code}: {remote.Message}",
+            LiveAttachException live => $"{live.Code}: {live.Message}",
+            _ => exception.Message,
+        };
     }
 
     private void UpdateCommandStates()
     {
         AttachCommand?.RaiseCanExecuteChanged();
+        LiveAttachCommand?.RaiseCanExecuteChanged();
         DetachCommand?.RaiseCanExecuteChanged();
         RefreshCommand?.RaiseCanExecuteChanged();
         PreviousPageCommand?.RaiseCanExecuteChanged();
         NextPageCommand?.RaiseCanExecuteChanged();
         ReloadPreviewCommand?.RaiseCanExecuteChanged();
+        LoadTileCommand?.RaiseCanExecuteChanged();
+        LoadHistogramCommand?.RaiseCanExecuteChanged();
+        StartTracingCommand?.RaiseCanExecuteChanged();
+        StopTracingCommand?.RaiseCanExecuteChanged();
+        TakeMemorySnapshotCommand?.RaiseCanExecuteChanged();
+        CompareMemorySnapshotsCommand?.RaiseCanExecuteChanged();
+        RefreshMemoryCommand?.RaiseCanExecuteChanged();
+        StartExecutionMonitoringCommand?.RaiseCanExecuteChanged();
+        StopExecutionMonitoringCommand?.RaiseCanExecuteChanged();
+        RefreshExecutionEventsCommand?.RaiseCanExecuteChanged();
+        ClearExecutionEventsCommand?.RaiseCanExecuteChanged();
         LaunchCommand?.RaiseCanExecuteChanged();
         StopCommand?.RaiseCanExecuteChanged();
         RestartCommand?.RaiseCanExecuteChanged();
@@ -1150,6 +1867,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
         return $"{value:F2} {units[unit]}";
     }
+
+    private static string FormatNumber(double? value) => value is double number ? $"{number:G6}" : "—";
 
     private static string FindRepositoryRoot()
     {

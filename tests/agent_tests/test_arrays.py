@@ -54,3 +54,43 @@ class ArrayTests(unittest.TestCase):
         self.assertEqual("Gray8", volume_metadata["pixelFormat"])
         self.assertEqual(volume[1].tobytes(), volume_binary)
         self.assertEqual(int(volume[1, 2, 3]), arrays.pixel(volume, [2, 3], "VOLUME", 0, 1)["value"])
+
+    def test_uint16_float_bool_and_label_normalization(self):
+        uint16_image = np.array([[0, 32768, 65535]], dtype=np.uint16)
+        metadata, binary = arrays.preview(uint16_image, 3, 1, "GRAY", normalization="MINMAX")
+        self.assertEqual(bytes([0, 127, 255]), binary)
+        self.assertEqual("MINMAX", metadata["normalization"]["mode"])
+
+        float_image = np.array([[np.nan, -np.inf, 0.0, 1.0, np.inf]], dtype=np.float32)
+        metadata, binary = arrays.preview(float_image, 5, 1, "GRAY", normalization="MINMAX")
+        self.assertEqual(bytes([0, 0, 0, 255, 255]), binary)
+        self.assertEqual(1, metadata["normalization"]["nanCount"])
+        self.assertEqual({"kind": "NaN"}, arrays.pixel(float_image, [0, 0], "GRAY")["value"])
+        self.assertEqual({"kind": "+Infinity"}, arrays.pixel(float_image, [0, 4], "GRAY")["value"])
+
+        bool_image = np.array([[False, True]], dtype=np.bool_)
+        self.assertEqual(bytes([0, 255]), arrays.preview(bool_image, 2, 1, "GRAY")[1])
+
+        labels = np.array([[0, 1], [2, 3]], dtype=np.int32)
+        label_metadata, label_binary = arrays.preview(labels, 2, 2, "GRAY", normalization="LABEL")
+        self.assertEqual("RGB24", label_metadata["pixelFormat"])
+        self.assertEqual(bytes([0, 0, 0]), label_binary[:3])
+        self.assertNotEqual(bytes([0, 0, 0]), label_binary[3:6])
+
+    def test_source_tile_and_histogram_are_bounded_and_exact(self):
+        image = np.arange(100, dtype=np.uint8).reshape(10, 10)
+        metadata, binary = arrays.tile(image, 3, 4, 4, 3, "GRAY")
+        self.assertEqual((3, 4), (metadata["originX"], metadata["originY"]))
+        self.assertEqual((4, 3), (metadata["width"], metadata["height"]))
+        self.assertEqual(image[4:7, 3:7].tobytes(), binary)
+
+        histogram = arrays.histogram(image, bins=10, layout="GRAY")
+        self.assertEqual(100, sum(histogram["counts"]))
+        self.assertEqual(11, len(histogram["binEdges"]))
+        self.assertEqual(0.0, histogram["minimum"])
+        self.assertEqual(99.0, histogram["maximum"])
+
+        large = np.broadcast_to(np.zeros(1, dtype=np.uint16), (4096, 4096, 4))
+        metadata, binary = arrays.preview(large, 1024, 1024, "HWC", normalization="MINMAX")
+        self.assertLessEqual(len(binary), 1024 * 1024 * 4)
+        self.assertEqual(4, metadata["rowStep"])

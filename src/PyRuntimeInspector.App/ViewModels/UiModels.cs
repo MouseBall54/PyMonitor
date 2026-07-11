@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using PyRuntimeInspector.App.Infrastructure;
 using PyRuntimeInspector.App.Services;
 
@@ -44,6 +45,45 @@ public sealed class VariableRow : ObservableObject
 
 public sealed record ObjectChildRow(string Name, string Origin, string Type, string Preview, string Address);
 public sealed record ClassMemberRow(string Name, string Kind, string DeclaredBy, string Signature);
+public sealed record MemorySnapshotRow(string SnapshotId, string Label, DateTime CreatedAt, long TraceCount, long TotalBytes)
+{
+    public string Display => $"{CreatedAt:HH:mm:ss}  {Label}  ({TotalBytes:N0} B)";
+}
+
+public sealed record MemoryStatisticRow(
+    string Filename,
+    int LineNumber,
+    long SizeBytes,
+    long Count,
+    long? SizeDiffBytes,
+    long? CountDiff)
+{
+    public string Location => LineNumber > 0 ? $"{Filename}:{LineNumber}" : Filename;
+}
+
+public sealed record MemorySampleRow(
+    DateTime Timestamp,
+    long? WorkingSetBytes,
+    long? PrivateBytes,
+    long? VirtualBytes,
+    long? PythonCurrentBytes,
+    long? PythonPeakBytes);
+
+public sealed record HistogramBinRow(int Index, double Start, double End, long Count);
+
+public sealed record ExecutionEventRow(
+    long Sequence,
+    DateTime Timestamp,
+    long ThreadId,
+    string EventName,
+    string FunctionName,
+    string Filename,
+    int LineNumber,
+    int? InstructionOffset,
+    string? Detail)
+{
+    public string Location => $"{Path.GetFileName(Filename)}:{LineNumber}";
+}
 
 public sealed class EnvironmentVariableRow : ObservableObject
 {
