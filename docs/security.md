@@ -14,6 +14,10 @@
 - Module discovery snapshots `sys.modules` and accepts only exact already-loaded
   `ModuleType` objects. Namespace inspection reads the module's direct
   dictionary without importing modules or invoking module attributes.
+- GC discovery runs only on explicit UI actions, never calls `gc.collect()`,
+  and inspects at most 100,000 objects from the snapshot in the default UI.
+  Filtering reads exact type metadata and addresses only; arbitrary previews
+  are created only for the requested page.
 
 ## Quick Attach bootstrap
 
@@ -81,3 +85,15 @@
 - Agent frames are excluded, the optional path prefix reduces unrelated events,
   and the ring buffer is capped at 10,000 entries.
 - Detach disables callbacks, releases the tool ID, and clears retained events.
+
+## GC-tracked objects
+
+- The UI names the feature `GC-tracked objects`; it does not claim to enumerate
+  every allocated Python or native object.
+- Search does not call arbitrary `repr`, `str`, attribute access, descriptors,
+  or properties. It matches type/module metadata and the displayed address.
+- Each scan and response is bounded. Page handles use the existing session TTL
+  and LRU store and are all released on detach.
+- GC snapshots are observational and may include Inspector-owned runtime
+  objects. No mutation, collection, referrer traversal, or reference retention
+  analysis is performed.

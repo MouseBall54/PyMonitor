@@ -170,7 +170,23 @@ def run_session(python_executable, duration_seconds, memory_growth_limit, exerci
 
         deadline = time.monotonic() + duration_seconds
         while time.monotonic() < deadline:
-            if request_count % 10 == 0:
+            if request_count % 100 == 0:
+                gc_objects, _ = client.request(
+                    "gc.listObjects",
+                    {
+                        "query": "__main__.StabilityMarker",
+                        "pageSize": 10,
+                        "maxObjects": 100000,
+                    },
+                )
+                if not any(
+                    item["value"]["qualifiedTypeName"] == "__main__.StabilityMarker"
+                    for item in gc_objects["items"]
+                ):
+                    raise AssertionError("Repeated GC scans lost the stability marker.")
+                if gc_objects["scannedCount"] > 100000:
+                    raise AssertionError("GC scan exceeded its object bound.")
+            elif request_count % 10 == 0:
                 main_scope, _ = client.request(
                     "modules.listNamespace",
                     {"moduleName": "__main__", "pageSize": 100},

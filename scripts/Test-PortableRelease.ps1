@@ -14,6 +14,7 @@ $requiredFiles = @(
     "agent\pyruntime_inspector_agent\__init__.py",
     "agent\pyruntime_inspector_agent\server.py",
     "agent\pyruntime_inspector_agent\modules.py",
+    "agent\pyruntime_inspector_agent\gc_objects.py",
     "samples\target_sample.py",
     "samples\target_managed.py",
     "README.md",

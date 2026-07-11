@@ -38,6 +38,23 @@ public sealed class CooperativeAgentTests
         Assert.Equal("property", members.Single(node => node!["name"]!.GetValue<string>() == "dangerous_property")!["kind"]!.GetValue<string>());
         Assert.Equal("(self, image: numpy.ndarray) -> list", members.Single(node => node!["name"]!.GetValue<string>() == "predict")!["signature"]!.GetValue<string>());
 
+        var gcObjects = Result(await client.RequestAsync("gc.listObjects", new JsonObject
+        {
+            ["query"] = "__main__.Detector",
+            ["pageSize"] = 100,
+            ["maxObjects"] = 100000,
+        }));
+        var gcDetector = gcObjects["items"]!.AsArray().Single(item =>
+            item!["value"]!["qualifiedTypeName"]!.GetValue<string>() == "__main__.Detector")!["value"]!.AsObject();
+        Assert.True(gcObjects["scannedCount"]!.GetValue<int>() <= 100000);
+        var gcClass = Result(await client.RequestAsync("classes.describe", new JsonObject
+        {
+            ["handleId"] = gcDetector["handleId"]!.GetValue<string>(),
+        }));
+        Assert.Equal("Detector", gcClass["qualifiedName"]!.GetValue<string>());
+        Assert.Equal("property", gcClass["members"]!.AsArray().Single(node =>
+            node!["name"]!.GetValue<string>() == "dangerous_property")!["kind"]!.GetValue<string>());
+
         var image = FindValue(globals, "GLOBAL_IMAGE");
         var handle = image["handleId"]!.GetValue<string>();
         var description = Result(await client.RequestAsync("arrays.describe", new JsonObject { ["handleId"] = handle }));

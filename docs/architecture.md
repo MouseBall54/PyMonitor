@@ -106,3 +106,16 @@ or exception messages.
 An optional normalized path prefix limits target overhead and noise. Agent code
 locations are always excluded. The WPF client requests events incrementally by
 sequence number and mirrors the target's bounded capacity.
+
+## Phase 8 GC-tracked objects
+
+The agent takes an explicit `gc.get_objects()` snapshot and examines at most
+100,000 entries for each WPF request. Filtering uses only exact type metadata
+and the CPython address; previews and opaque handles are created only for the
+requested page. The scan never forces a collection.
+
+The WPF Runtime Tree exposes a selectable `GC-tracked objects` node. Search and
+pagination use `gc.listObjects`, while selecting a returned row reuses the
+existing Object, Class, and Array inspectors. The periodic refresh loop skips
+this node so a heap scan runs only after selection, Search / Scan, pagination,
+or an explicit application refresh.

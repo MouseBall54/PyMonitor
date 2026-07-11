@@ -12,6 +12,7 @@ public enum RuntimeNodeKind
     Frame,
     Scope,
     Module,
+    GcObjects,
     Placeholder,
 }
 

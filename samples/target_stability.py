@@ -6,6 +6,13 @@ from pyruntime_inspector_agent import start_inspector
 
 
 LARGE_IMAGE = np.arange(4096 * 4096, dtype=np.uint16).reshape(4096, 4096)
+
+
+class StabilityMarker:
+    pass
+
+
+GC_MARKER = StabilityMarker()
 start_inspector()
 
 

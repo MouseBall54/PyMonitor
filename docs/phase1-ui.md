@@ -19,6 +19,12 @@ Selecting a frame loads locals by default; expand it to choose globals or
 built-ins. Selecting a variable loads static object and class details. Exact
 NumPy arrays also enable the Array/Image tab.
 
+The current Phase 8 UI also exposes `GC-tracked objects` in the Runtime Tree.
+Selecting it performs one bounded scan. Type, module, qualified type, or address
+filters are sent only when **Search / Scan** is pressed; pagination and explicit
+refresh take another snapshot. Automatic scope refresh deliberately skips GC
+scans.
+
 Phase 1 originally left **Launch** disabled. The current Phase 2 app enables it
 with interpreter, script, argv, cwd, environment, output, Stop, Restart, and
 exit-code controls. Live attach remains Phase 3.

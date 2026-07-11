@@ -20,6 +20,12 @@
 - Module browsing includes already-loaded exact Python modules only. Namespace
   snapshots can become stale immediately and modules removed during inspection
   return a structured invalid-argument error.
+- GC browsing includes only objects returned by `gc.get_objects()`. Atomic
+  values and types not tracked by Python's cyclic GC can be absent. The default
+  WPF scan examines at most 100,000 entries and pages can change between scans.
+- `gc.get_objects()` itself is synchronous inside the target and cannot be
+  cancelled after it starts. The UI therefore never invokes it from the
+  periodic refresh loop and does not force a collection.
 - Managed stdout/stderr display is UTF-8 and line-oriented; binary stream output
   and partial lines are not rendered incrementally.
 - `tracemalloc` covers only Python allocations made while tracing is active;

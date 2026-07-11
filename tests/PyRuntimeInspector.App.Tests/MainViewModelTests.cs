@@ -194,6 +194,39 @@ public sealed class MainViewModelTests
     }
 
     [Fact]
+    public async Task GcTreeSearchIsServerSideAndSkippedByAutomaticRefresh()
+    {
+        var session = new FakeSession();
+        await using var viewModel = new MainViewModel(session, new FakeProcessDiscovery())
+        {
+            RefreshIntervalSeconds = 1,
+        };
+        await viewModel.AttachCommand.ExecuteAsync();
+        var gcNode = Assert.Single(viewModel.RuntimeRoots, node => node.Kind == RuntimeNodeKind.GcObjects);
+
+        await viewModel.SelectTreeNodeAsync(gcNode);
+
+        Assert.Equal("GC-tracked objects", viewModel.Breadcrumb);
+        Assert.Single(viewModel.Variables);
+        Assert.Equal("gc-tracked", viewModel.Variables[0].Scope);
+        Assert.Contains("scanned 3 of 3", viewModel.PageLabel);
+        Assert.Equal(1, session.GcRequestCount);
+        Assert.True(viewModel.SearchCurrentCommand.CanExecute(null));
+
+        viewModel.SelectedVariable = viewModel.Variables[0];
+        await EventuallyAsync(() => session.GcDetailRequestCount == 2);
+
+        viewModel.SearchText = "example";
+        Assert.Equal(1, session.GcRequestCount);
+        await viewModel.SearchCurrentCommand.ExecuteAsync();
+        Assert.Equal(2, session.GcRequestCount);
+        Assert.Equal("example", session.GcQuery);
+
+        await Task.Delay(1200);
+        Assert.Equal(2, session.GcRequestCount);
+    }
+
+    [Fact]
     public async Task MemoryCommandsTrackSnapshotsDiffAndBoundedTimeline()
     {
         var session = new FakeSession();
@@ -321,6 +354,9 @@ public sealed class MainViewModelTests
         public event EventHandler<string>? Disconnected;
         public bool IsConnected { get; private set; }
         public bool DelayAttach { get; init; }
+        public int GcRequestCount { get; private set; }
+        public int GcDetailRequestCount { get; private set; }
+        public string? GcQuery { get; private set; }
 
         public Task<JsonObject> AttachAsync(int port, string token, int? expectedPid, CancellationToken cancellationToken)
         {
@@ -356,6 +392,37 @@ public sealed class MainViewModelTests
                         ModuleVariable("edd", "121")),
                     ["total"] = 2,
                 });
+            if (method == "gc.listObjects")
+            {
+                GcRequestCount++;
+                GcQuery = parameters?["query"]?.GetValue<string>();
+                return Frame(new JsonObject
+                {
+                    ["scopeType"] = "gc-tracked",
+                    ["items"] = new JsonArray(new JsonObject
+                    {
+                        ["name"] = "sample.Example",
+                        ["value"] = new JsonObject
+                        {
+                            ["handleId"] = "gc-handle",
+                            ["typeName"] = "Example",
+                            ["moduleName"] = "sample",
+                            ["qualifiedTypeName"] = "sample.Example",
+                            ["safePreview"] = "<sample.Example object>",
+                            ["addressHex"] = "0x1234",
+                            ["shallowSizeBytes"] = 48L,
+                            ["expandable"] = true,
+                            ["adapterKind"] = null,
+                            ["changeToken"] = "identity:1234",
+                        },
+                    }),
+                    ["total"] = 1,
+                    ["trackedTotal"] = 3,
+                    ["scannedCount"] = 3,
+                    ["truncated"] = false,
+                    ["durationMilliseconds"] = 1.25,
+                });
+            }
             if (method == "runtime.getInfo")
                 return Frame(Runtime());
             if (method == "memory.status")
@@ -396,9 +463,17 @@ public sealed class MainViewModelTests
                     }),
                 });
             if (method == "objects.listChildren")
+            {
+                if (parameters?["handleId"]?.GetValue<string>() == "gc-handle")
+                    GcDetailRequestCount++;
                 return Frame(new JsonObject { ["items"] = new JsonArray() });
+            }
             if (method == "classes.describe")
+            {
+                if (parameters?["handleId"]?.GetValue<string>() == "gc-handle")
+                    GcDetailRequestCount++;
                 return Frame(new JsonObject { ["members"] = new JsonArray() });
+            }
             if (method == "arrays.describe")
                 return Frame(new JsonObject
                 {

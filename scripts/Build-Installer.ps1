@@ -29,7 +29,7 @@ if (-not $outputRoot.StartsWith($workspacePrefix, [StringComparison]::OrdinalIgn
 New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
 
 & $dotnet build (Join-Path $root "installer\PyRuntimeInspector.Installer\PyRuntimeInspector.Installer.wixproj") `
-    -c $Configuration --nologo `
+    -c $Configuration --nologo --no-incremental `
     -p:PublishDir="$releaseRoot" `
     -p:OutputPath="$outputRoot"
 if ($LASTEXITCODE -ne 0) { throw "WiX installer build failed." }

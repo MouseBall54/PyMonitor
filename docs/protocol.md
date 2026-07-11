@@ -12,7 +12,7 @@ Requests contain `protocolVersion`, `messageType`, `requestId`, `method`,
 The first request must be `session.hello` with the session token. The supported
 Phase 0 methods are `session.detach`, `runtime.getInfo`, `threads.list`,
 `frames.list`, `scopes.list`, `objects.describe`, `objects.listChildren`,
-`modules.list`, `modules.listNamespace`,
+`modules.list`, `modules.listNamespace`, `gc.listObjects`,
 `objects.release`, `classes.describe`, `arrays.describe`, `arrays.preview`,
 `arrays.tile`, `arrays.histogram`, `arrays.pixel`, `memory.status`,
 `memory.start`, `memory.stop`,
@@ -34,6 +34,14 @@ anything. `modules.listNamespace` reads the selected module's direct
 `__dict__`, uses the same safe summaries and pagination as frame scopes, and
 therefore exposes idle REPL globals through the `__main__` module even when no
 user Python frame is active.
+
+`gc.listObjects` accepts `query`, `offset`, `pageSize`, and `maxObjects`. The
+query is limited to 200 characters and matches only type name, module name,
+qualified type name, or object address. `maxObjects` defaults to 100,000 and is
+hard-capped at 1,000,000. Results report `trackedTotal`, `scannedCount`,
+`truncated`, scan duration, and snapshot time. Only the returned page receives
+object handles and safe previews. GC pages are capped at 200 rows so every
+returned handle fits in the bounded session handle store.
 
 Array preview and tile requests accept `normalization` (`AUTO`, `NONE`,
 `MINMAX`, `PERCENTILE`, or `LABEL`) plus percentile bounds. Tiles require a

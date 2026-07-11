@@ -104,7 +104,10 @@
                             </Grid.RowDefinitions>
                             <DockPanel Margin="0,0,0,7">
                                 <TextBlock DockPanel.Dock="Left" Text="{Binding Breadcrumb}" FontWeight="SemiBold" VerticalAlignment="Center" />
-                                <TextBox DockPanel.Dock="Right" Width="220" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" ToolTip="Search name, type, or preview" />
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <TextBox Width="220" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" ToolTip="GC scan searches type, module, and address. Other scopes also filter safe previews." />
+                                    <Button Content="Search / Scan" Command="{Binding SearchCurrentCommand}" ToolTip="Apply the current filter. GC-tracked objects are scanned only on explicit actions." />
+                                </StackPanel>
                             </DockPanel>
                             <DataGrid Grid.Row="1" ItemsSource="{Binding FilteredVariables}" SelectedItem="{Binding SelectedVariable}" AutoGenerateColumns="False"
                                       IsReadOnly="True" SelectionMode="Single" EnableRowVirtualization="True" EnableColumnVirtualization="True"

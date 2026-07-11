@@ -32,6 +32,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private int _pageOffset;
     private int _pageTotal;
     private const int PageSize = 200;
+    private const int GcScanLimit = 100_000;
     private double _fitViewportWidth;
     private double _fitViewportHeight;
     private bool _fitMode = true;
@@ -180,6 +181,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         RefreshCommand = new AsyncCommand(RefreshAsync, () => IsConnected);
         PreviousPageCommand = new AsyncCommand(PreviousPageAsync, () => IsConnected && _pageOffset > 0);
         NextPageCommand = new AsyncCommand(NextPageAsync, () => IsConnected && _pageOffset + PageSize < _pageTotal);
+        SearchCurrentCommand = new AsyncCommand(SearchCurrentAsync, () => IsConnected && _currentScope is not null);
         ReloadPreviewCommand = new AsyncCommand(ReloadArrayPreviewAsync, () => IsConnected && _arrayHandle is not null);
         LoadTileCommand = new AsyncCommand(LoadArrayTileAsync, () => IsConnected && _arrayHandle is not null);
         LoadHistogramCommand = new AsyncCommand(LoadHistogramAsync, () => IsConnected && _arrayHandle is not null);
@@ -234,6 +236,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public AsyncCommand RefreshCommand { get; }
     public AsyncCommand PreviousPageCommand { get; }
     public AsyncCommand NextPageCommand { get; }
+    public AsyncCommand SearchCurrentCommand { get; }
     public AsyncCommand ReloadPreviewCommand { get; }
     public AsyncCommand LoadTileCommand { get; }
     public AsyncCommand LoadHistogramCommand { get; }
@@ -369,7 +372,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         get => _searchText;
         set
         {
-            if (SetProperty(ref _searchText, value))
+            if (SetProperty(ref _searchText, value) && _currentScope?.Kind != RuntimeNodeKind.GcObjects)
                 ApplyFilter();
         }
     }
@@ -477,7 +480,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
     public async Task SelectTreeNodeAsync(RuntimeTreeNode? node)
     {
-        if (node?.Kind is RuntimeNodeKind.Scope or RuntimeNodeKind.Module)
+        if (node?.Kind is RuntimeNodeKind.Scope or RuntimeNodeKind.Module or RuntimeNodeKind.GcObjects)
             await LoadScopeAsync(node, resetPage: true);
         else if (node?.Kind == RuntimeNodeKind.Frame)
         {
@@ -491,7 +494,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     {
         var isModule = node.Kind == RuntimeNodeKind.Module && node.ModuleName is not null;
         var isFrameScope = node.Kind == RuntimeNodeKind.Scope && node.FrameHandle is not null && node.ScopeType is not null;
-        if (!IsConnected || (!isModule && !isFrameScope))
+        var isGcObjects = node.Kind == RuntimeNodeKind.GcObjects;
+        if (!IsConnected || (!isModule && !isFrameScope && !isGcObjects))
             return;
         if (resetPage)
             _pageOffset = 0;
@@ -501,10 +505,20 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _selectionCts = CancellationTokenSource.CreateLinkedTokenSource(_connectionCts?.Token ?? CancellationToken.None);
         var generation = Interlocked.Increment(ref _selectionGeneration);
         var token = _selectionCts.Token;
-        Breadcrumb = isModule ? $"Modules / {node.ModuleName}" : $"Threads / {node.Label}";
+        Breadcrumb = isGcObjects
+            ? "GC-tracked objects"
+            : isModule ? $"Modules / {node.ModuleName}" : $"Threads / {node.Label}";
         try
         {
-            var parameters = isModule
+            var parameters = isGcObjects
+                ? new JsonObject
+                {
+                    ["query"] = SearchText,
+                    ["offset"] = _pageOffset,
+                    ["pageSize"] = PageSize,
+                    ["maxObjects"] = GcScanLimit,
+                }
+                : isModule
                 ? new JsonObject
                 {
                     ["moduleName"] = node.ModuleName,
@@ -518,7 +532,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                     ["offset"] = _pageOffset,
                     ["pageSize"] = PageSize,
                 };
-            var frame = await RequestAsync(isModule ? "modules.listNamespace" : "scopes.list", parameters, token);
+            var method = isGcObjects ? "gc.listObjects" : isModule ? "modules.listNamespace" : "scopes.list";
+            var frame = await RequestAsync(method, parameters, token);
             if (generation != _selectionGeneration || token.IsCancellationRequested)
                 return;
             ApplyScopeResult(frame.Header["result"]!.AsObject(), node);
@@ -1245,6 +1260,14 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         await LoadScopeAsync(_currentScope);
     }
 
+    private async Task SearchCurrentAsync()
+    {
+        if (_currentScope?.Kind == RuntimeNodeKind.GcObjects)
+            await LoadScopeAsync(_currentScope, resetPage: true);
+        else
+            ApplyFilter();
+    }
+
     private async Task LoadRuntimeTreeAsync(CancellationToken token, bool autoSelectMain = false)
     {
         RefreshProcessMemory();
@@ -1302,7 +1325,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             threadsRoot,
             modulesRoot,
             PlaceholderRoot("Classes", "Select a variable to inspect its class."),
-            PlaceholderRoot("GC-tracked objects", "Heap scanning is intentionally not enabled."),
+            new RuntimeTreeNode("GC-tracked objects", RuntimeNodeKind.GcObjects),
         ]);
         await RefreshMemoryAsync(token);
         await RefreshExecutionStatusAsync(token);
@@ -1326,6 +1349,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
     private void ApplyScopeResult(JsonObject result, RuntimeTreeNode node)
     {
+        var isGcObjects = node.Kind == RuntimeNodeKind.GcObjects;
         _pageTotal = result["total"]!.GetValue<int>();
         var rows = new List<VariableRow>();
         foreach (var item in result["items"]!.AsArray())
@@ -1333,8 +1357,12 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             var name = item!["name"]!.GetValue<string>();
             var value = item["value"]!.AsObject();
             var changeToken = value["changeToken"]?.GetValue<string>() ?? "";
-            var scopeKey = node.ModuleName is null ? $"{node.FrameHandle}:{node.ScopeType}" : $"module:{node.ModuleName}";
-            var changeKey = $"{scopeKey}:{name}";
+            var scopeKey = isGcObjects
+                ? "gc-tracked"
+                : node.ModuleName is null ? $"{node.FrameHandle}:{node.ScopeType}" : $"module:{node.ModuleName}";
+            var changeKey = isGcObjects
+                ? $"{scopeKey}:{value["addressHex"]?.GetValue<string>()}"
+                : $"{scopeKey}:{name}";
             var changed = _changeTokens.TryGetValue(changeKey, out var previous) && previous != changeToken;
             _changeTokens[changeKey] = changeToken;
             var shape = value["shape"] is JsonArray shapeArray
@@ -1343,7 +1371,9 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             rows.Add(new VariableRow
             {
                 Name = name,
-                Scope = node.ModuleName is null ? node.ScopeType! : $"module:{node.ModuleName}",
+                Scope = isGcObjects
+                    ? "gc-tracked"
+                    : node.ModuleName is null ? node.ScopeType! : $"module:{node.ModuleName}",
                 HandleId = value["handleId"]!.GetValue<string>(),
                 TypeName = value["typeName"]?.GetValue<string>() ?? "?",
                 ModuleName = value["moduleName"]?.GetValue<string>() ?? "?",
@@ -1364,7 +1394,20 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         ApplyFilter();
         var first = _pageTotal == 0 ? 0 : _pageOffset + 1;
         var last = Math.Min(_pageOffset + PageSize, _pageTotal);
-        PageLabel = $"{first}–{last} of {_pageTotal}";
+        if (isGcObjects)
+        {
+            var tracked = result["trackedTotal"]?.GetValue<int>() ?? 0;
+            var scanned = result["scannedCount"]?.GetValue<int>() ?? 0;
+            var truncated = result["truncated"]?.GetValue<bool>() ?? false;
+            var duration = result["durationMilliseconds"]?.GetValue<double>() ?? 0;
+            PageLabel = $"{first}–{last} of {_pageTotal} matches · scanned {scanned:N0} of {tracked:N0}"
+                + (truncated ? " (limit reached)" : "")
+                + $" · {duration:F1} ms";
+        }
+        else
+        {
+            PageLabel = $"{first}–{last} of {_pageTotal}";
+        }
         UpdateCommandStates();
     }
 
@@ -1621,7 +1664,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             try
             {
                 await Task.Delay(TimeSpan.FromSeconds(RefreshIntervalSeconds), token);
-                if (_currentScope is not null)
+                if (_currentScope is not null && _currentScope.Kind != RuntimeNodeKind.GcObjects)
                     await LoadScopeAsync(_currentScope);
                 else if (IsConnected)
                     await RequestAsync("runtime.getInfo", cancellationToken: token);
@@ -1697,6 +1740,9 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             ? Variables
             : Variables.Where(row => row.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
                 || row.TypeName.Contains(query, StringComparison.OrdinalIgnoreCase)
+                || row.ModuleName.Contains(query, StringComparison.OrdinalIgnoreCase)
+                || row.QualifiedTypeName.Contains(query, StringComparison.OrdinalIgnoreCase)
+                || row.Address.Contains(query, StringComparison.OrdinalIgnoreCase)
                 || row.SafePreview.Contains(query, StringComparison.OrdinalIgnoreCase));
         Replace(FilteredVariables, filtered);
     }
@@ -1962,6 +2008,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         RefreshCommand?.RaiseCanExecuteChanged();
         PreviousPageCommand?.RaiseCanExecuteChanged();
         NextPageCommand?.RaiseCanExecuteChanged();
+        SearchCurrentCommand?.RaiseCanExecuteChanged();
         ReloadPreviewCommand?.RaiseCanExecuteChanged();
         LoadTileCommand?.RaiseCanExecuteChanged();
         LoadHistogramCommand?.RaiseCanExecuteChanged();
