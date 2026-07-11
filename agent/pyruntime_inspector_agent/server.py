@@ -3,7 +3,7 @@ import os
 import socket
 import threading
 
-from . import arrays, classes, memory, monitoring
+from . import arrays, classes, memory, modules, monitoring
 from .frames import list_frames, list_scope, list_threads
 from .handles import HandleStore, ObjectExpiredError
 from .monitoring import MonitoringError
@@ -111,6 +111,10 @@ class InspectorAgent:
             return list_frames(self._handles, self._thread.ident), b"", False
         if method == "scopes.list":
             return list_scope(self._handles, self._objects, params["frameHandle"], params["scopeType"], params.get("offset", 0), params.get("pageSize", 100)), b"", False
+        if method == "modules.list":
+            return modules.list_modules(params.get("offset", 0), params.get("pageSize", 100)), b"", False
+        if method == "modules.listNamespace":
+            return modules.list_namespace(self._objects, params["moduleName"], params.get("offset", 0), params.get("pageSize", 100)), b"", False
         if method == "objects.describe":
             return self._objects.describe(params["handleId"]), b"", False
         if method == "objects.listChildren":

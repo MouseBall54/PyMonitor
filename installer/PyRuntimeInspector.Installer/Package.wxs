@@ -1,0 +1,55 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+      Name="PyRuntime Inspector"
+      Manufacturer="PyRuntime Inspector contributors"
+      Version="$(var.ProductVersion)"
+      UpgradeCode="{2D73C23D-A566-4D8A-889C-F89FCE4A1377}"
+      Language="1033"
+      Scope="perMachine"
+      InstallerVersion="500"
+      Compressed="yes">
+    <SummaryInformation Description="Read-only CPython runtime inspector for Windows" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of PyRuntime Inspector is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <Icon Id="ProductIcon" SourceFile="$(var.RepositoryRoot)\src\PyRuntimeInspector.App\Assets\app-icon.ico" />
+    <Property Id="ARPPRODUCTICON" Value="ProductIcon" />
+    <Feature Id="MainFeature" Title="PyRuntime Inspector" Level="1">
+      <ComponentGroupRef Id="ApplicationFiles" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="PyRuntime Inspector" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ProgramMenuDirectory" Name="PyRuntime Inspector" />
+    </StandardDirectory>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="ApplicationFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.PublishDir)\**" />
+    </ComponentGroup>
+  </Fragment>
+
+  <Fragment>
+    <Component Id="StartMenuShortcut" Directory="ProgramMenuDirectory" Guid="*">
+      <Shortcut
+          Id="ApplicationStartMenuShortcut"
+          Name="PyRuntime Inspector"
+          Description="Inspect a local CPython runtime"
+          Target="[INSTALLFOLDER]PyRuntimeInspector.exe"
+          WorkingDirectory="INSTALLFOLDER" />
+      <RemoveFolder Id="RemoveProgramMenuDirectory" Directory="ProgramMenuDirectory" On="uninstall" />
+      <RegistryValue
+          Root="HKCU"
+          Key="Software\PyRuntimeInspector"
+          Name="Installed"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+    </Component>
+  </Fragment>
+</Wix>

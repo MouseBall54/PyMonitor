@@ -114,6 +114,86 @@ public sealed class MainViewModelTests
     }
 
     [Fact]
+    public async Task QuickAttachForPython311CopiesOneLineAndLoadsMainGlobals()
+    {
+        var session = new FakeSession { DelayAttach = true };
+        var clipboard = new FakeClipboardService();
+        var liveAttach = new FakeLiveAttachService(session.CompleteAttach);
+        await using var viewModel = new MainViewModel(
+            session,
+            new FakeProcessDiscovery(),
+            liveAttachService: liveAttach,
+            clipboardService: clipboard)
+        {
+            SelectedProcess = new ProcessItem(1234, "python", Environment.ProcessPath, new Version(3, 11, 9)),
+            SelectedWorkspaceTabIndex = 6,
+        };
+
+        var quickAttach = viewModel.QuickAttachCommand.ExecuteAsync();
+        await EventuallyAsync(() => clipboard.Text is not null);
+        var bootstrap = Assert.IsType<string>(clipboard.Text);
+        Assert.Contains("pyruntime_inspector_agent", bootstrap);
+        Assert.Contains("port=", bootstrap);
+        Assert.Contains("token=", bootstrap);
+        Assert.DoesNotContain('\n', bootstrap);
+
+        session.CompleteAttach();
+        await quickAttach;
+
+        Assert.True(viewModel.IsConnected);
+        Assert.Equal("Modules / __main__", viewModel.Breadcrumb);
+        Assert.Equal(0, viewModel.SelectedWorkspaceTabIndex);
+        Assert.Contains(viewModel.Variables, row => row.Name == "example_value" && row.SafePreview == "1235");
+        Assert.Contains(viewModel.Variables, row => row.Name == "edd" && row.SafePreview == "121");
+        Assert.Null(liveAttach.Options);
+    }
+
+    [Fact]
+    public async Task QuickAttachForPython314UsesLiveAttachWithoutClipboardBootstrap()
+    {
+        var session = new FakeSession { DelayAttach = true };
+        var clipboard = new FakeClipboardService();
+        var liveAttach = new FakeLiveAttachService(session.CompleteAttach);
+        await using var viewModel = new MainViewModel(
+            session,
+            new FakeProcessDiscovery(),
+            liveAttachService: liveAttach,
+            clipboardService: clipboard)
+        {
+            SelectedProcess = new ProcessItem(1234, "python", Environment.ProcessPath, new Version(3, 14, 6)),
+            SelectedWorkspaceTabIndex = 6,
+        };
+
+        await viewModel.QuickAttachCommand.ExecuteAsync();
+
+        Assert.True(viewModel.IsConnected);
+        Assert.NotNull(liveAttach.Options);
+        Assert.Null(clipboard.Text);
+        Assert.Equal("Modules / __main__", viewModel.Breadcrumb);
+        Assert.Equal(0, viewModel.SelectedWorkspaceTabIndex);
+    }
+
+    [Fact]
+    public async Task QuickAttachRejectsDetectedUnsupportedPythonVersion()
+    {
+        var clipboard = new FakeClipboardService();
+        await using var viewModel = new MainViewModel(
+            new FakeSession(),
+            new FakeProcessDiscovery(),
+            clipboardService: clipboard)
+        {
+            SelectedProcess = new ProcessItem(1234, "python", Environment.ProcessPath, new Version(3, 9)),
+        };
+
+        await viewModel.QuickAttachCommand.ExecuteAsync();
+
+        Assert.False(viewModel.IsConnected);
+        Assert.Equal("Unsupported Python version", viewModel.Status);
+        Assert.Contains("3.10", viewModel.ErrorMessage);
+        Assert.Null(clipboard.Text);
+    }
+
+    [Fact]
     public async Task MemoryCommandsTrackSnapshotsDiffAndBoundedTimeline()
     {
         var session = new FakeSession();
@@ -254,6 +334,28 @@ public sealed class MainViewModelTests
         {
             if (method == "threads.list" || method == "frames.list")
                 return Frame(new JsonObject { ["items"] = new JsonArray() });
+            if (method == "modules.list")
+                return Frame(new JsonObject
+                {
+                    ["items"] = new JsonArray(new JsonObject
+                    {
+                        ["name"] = "__main__",
+                        ["filename"] = null,
+                        ["entryCount"] = 2,
+                        ["isMain"] = true,
+                    }),
+                    ["total"] = 1,
+                });
+            if (method == "modules.listNamespace")
+                return Frame(new JsonObject
+                {
+                    ["moduleName"] = "__main__",
+                    ["scopeType"] = "module",
+                    ["items"] = new JsonArray(
+                        ModuleVariable("example_value", "1235"),
+                        ModuleVariable("edd", "121")),
+                    ["total"] = 2,
+                });
             if (method == "runtime.getInfo")
                 return Frame(Runtime());
             if (method == "memory.status")
@@ -481,6 +583,30 @@ public sealed class MainViewModelTests
             ["ok"] = true,
             ["result"] = result,
         }, binary ?? []);
+
+        private static JsonObject ModuleVariable(string name, string preview) => new()
+        {
+            ["name"] = name,
+            ["value"] = new JsonObject
+            {
+                ["handleId"] = Guid.NewGuid().ToString(),
+                ["typeName"] = "int",
+                ["moduleName"] = "builtins",
+                ["qualifiedTypeName"] = "builtins.int",
+                ["safePreview"] = preview,
+                ["addressHex"] = "0x1",
+                ["shallowSizeBytes"] = 28L,
+                ["expandable"] = false,
+                ["adapterKind"] = null,
+                ["changeToken"] = $"identity:{preview}",
+            },
+        };
+    }
+
+    private sealed class FakeClipboardService : IClipboardService
+    {
+        public string? Text { get; private set; }
+        public void SetText(string text) => Text = text;
     }
 
     private sealed class FakeManagedLauncher : IManagedPythonLauncher

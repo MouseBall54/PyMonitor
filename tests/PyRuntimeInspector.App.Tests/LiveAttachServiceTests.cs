@@ -3,6 +3,7 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
+using System.Text.Json.Nodes;
 using PyRuntimeInspector.App.Services;
 using Xunit;
 
@@ -26,7 +27,7 @@ public sealed class LiveAttachServiceTests
             RedirectStandardError = true,
         };
         startInfo.ArgumentList.Add("-c");
-        startInfo.ArgumentList.Add("import time; print('ready', flush=True); exec(\"while True:\\n time.sleep(0.05)\")");
+        startInfo.ArgumentList.Add("import time; example_value=1235; print('ready', flush=True); exec(\"while True:\\n time.sleep(0.05)\")");
         using var target = Process.Start(startInfo) ?? throw new InvalidOperationException("Python target did not start.");
         try
         {
@@ -48,6 +49,14 @@ public sealed class LiveAttachServiceTests
 
             Assert.Equal(target.Id, runtime["pid"]!.GetValue<int>());
             Assert.Equal("live", runtime["attachMode"]!.GetValue<string>());
+            var mainScope = await session.RequestAsync("modules.listNamespace", new JsonObject
+            {
+                ["moduleName"] = "__main__",
+                ["pageSize"] = 1000,
+            }, timeout.Token);
+            var items = mainScope.Header["result"]!["items"]!.AsArray();
+            var example = items.Single(item => item!["name"]!.GetValue<string>() == "example_value")!;
+            Assert.Equal("1235", example["value"]!["safePreview"]!.GetValue<string>());
             await session.DetachAsync();
             await Task.Delay(100);
             Assert.False(target.HasExited);

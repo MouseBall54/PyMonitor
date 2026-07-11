@@ -1,10 +1,13 @@
 using System.Diagnostics;
+using System.IO;
 
 namespace PyRuntimeInspector.App.Services;
 
-public sealed record ProcessItem(int Id, string Name, string? ExecutablePath)
+public sealed record ProcessItem(int Id, string Name, string? ExecutablePath, Version? PythonVersion = null)
 {
-    public string DisplayName => $"{Name} ({Id})";
+    public string DisplayName => PythonVersion is null
+        ? $"{Name} ({Id})"
+        : $"{Name} {PythonVersion.Major}.{PythonVersion.Minor} ({Id})";
 }
 
 public sealed record ProcessMemoryInfo(
@@ -38,10 +41,27 @@ public sealed class ProcessDiscovery : IProcessDiscovery
                 catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException)
                 {
                 }
-                result.Add(new ProcessItem(process.Id, process.ProcessName, path));
+                result.Add(new ProcessItem(process.Id, process.ProcessName, path, ReadPythonVersion(path)));
             }
         }
         return result.OrderBy(item => item.Id).ToArray();
+    }
+
+    private static Version? ReadPythonVersion(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+        try
+        {
+            var version = FileVersionInfo.GetVersionInfo(path);
+            return version.FileMajorPart > 0
+                ? new Version(version.FileMajorPart, version.FileMinorPart)
+                : null;
+        }
+        catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 
     public ProcessMemoryInfo? GetMemoryInfo(int pid)

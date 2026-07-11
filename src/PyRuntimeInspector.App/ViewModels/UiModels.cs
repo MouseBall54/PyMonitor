@@ -11,6 +11,7 @@ public enum RuntimeNodeKind
     Thread,
     Frame,
     Scope,
+    Module,
     Placeholder,
 }
 
@@ -20,6 +21,7 @@ public sealed class RuntimeTreeNode(string label, RuntimeNodeKind kind = Runtime
     public RuntimeNodeKind Kind { get; } = kind;
     public string? FrameHandle { get; init; }
     public string? ScopeType { get; init; }
+    public string? ModuleName { get; init; }
     public ObservableCollection<RuntimeTreeNode> Children { get; } = [];
 }
 

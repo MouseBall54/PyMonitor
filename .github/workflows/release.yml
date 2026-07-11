@@ -1,0 +1,85 @@
+name: Signed Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: x64
+      - name: Capture CPython 3.12
+        shell: pwsh
+        run: |
+          $python = (Get-Command python).Source
+          Add-Content $env:GITHUB_ENV "PYTHON312_EXECUTABLE=$python"
+          Add-Content $env:GITHUB_ENV "PYTHON_EXECUTABLE=$python"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          architecture: x64
+      - name: Capture CPython 3.14
+        shell: pwsh
+        run: "Add-Content $env:GITHUB_ENV \"PYTHON314_EXECUTABLE=$((Get-Command python).Source)\""
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Require signing secrets
+        shell: pwsh
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if (-not $env:CERTIFICATE_BASE64 -or -not $env:CERTIFICATE_PASSWORD) {
+            throw "Signed releases require WINDOWS_CERTIFICATE_BASE64 and WINDOWS_CERTIFICATE_PASSWORD."
+          }
+      - name: Install integration dependency
+        shell: pwsh
+        run: "& $env:PYTHON312_EXECUTABLE -m pip install --disable-pip-version-check numpy"
+      - name: Build, test, and sign release
+        shell: pwsh
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $certificatePath = Join-Path $env:RUNNER_TEMP "release-signing.pfx"
+          [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:CERTIFICATE_BASE64))
+          $password = ConvertTo-SecureString $env:CERTIFICATE_PASSWORD -AsPlainText -Force
+          try {
+            .\scripts\Build-Release.ps1 -CertificatePath $certificatePath -CertificatePassword $password
+          }
+          finally {
+            Remove-Item -LiteralPath $certificatePath -Force -ErrorAction SilentlyContinue
+          }
+      - name: Create GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME `
+            artifacts\*.zip `
+            artifacts\*.sha256 `
+            artifacts\installer\*.msi `
+            artifacts\installer\*.sha256 `
+            --verify-tag --generate-notes --title "PyRuntime Inspector $env:GITHUB_REF_NAME"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PyRuntimeInspector-signed
+          if-no-files-found: error
+          path: |
+            artifacts/*.zip
+            artifacts/*.sha256
+            artifacts/installer/*.msi
+            artifacts/installer/*.sha256

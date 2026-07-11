@@ -54,7 +54,8 @@ redirected processes.
 
 ## Phase 3 live attach
 
-The WPF app starts its loopback listener before invoking a short-lived helper
+The WPF app exposes Quick Attach as the default connection command. For
+CPython 3.14+, it starts its loopback listener before invoking a short-lived helper
 with the selected target's own `python.exe`. The helper calls
 `sys.remote_exec(pid, bootstrap.py)`, while the bootstrap path and one-time token
 remain in a randomly named user temporary directory until the agent connects.
@@ -64,6 +65,12 @@ agent with `attachMode: live`.
 The helper can optionally run with the Windows `runas` verb. This elevates only
 the helper, not the WPF process. The target must be CPython 3.14+ and must reach
 a safe Python execution point before the bootstrap runs.
+
+For CPython 3.10-3.13, Quick Attach starts the listener and places a complete
+single-line cooperative bootstrap on the clipboard. The selected runtime PID
+is still verified after authentication. Once connected, the client lists
+already-loaded modules and automatically opens the direct `__main__` namespace;
+this keeps idle REPL globals visible without requiring an active frame.
 
 ## Phase 4 memory and timeline
 

@@ -6,8 +6,8 @@ Build the self-contained Windows client:
 & "$HOME\.dotnet10\dotnet.exe" build src\PyRuntimeInspector.App\PyRuntimeInspector.App.csproj -c Release
 ```
 
-Run `src\PyRuntimeInspector.App\bin\Release\net10.0-windows\win-x64\PyRuntimeInspector.App.exe`.
-Choose a port, keep the generated 256-bit token, and click **Attach**. While the
+Run the current portable `PyRuntimeInspector.exe`. For the original cooperative
+flow, choose a port, keep the generated 256-bit token, and click **Listen**. While the
 UI says `Waiting for cooperative target`, use **Copy environment** and apply the
 copied variables in a second PowerShell session, then run a cooperative target:
 

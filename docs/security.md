@@ -11,6 +11,19 @@
   `numpy.ndarray` when a genuine NumPy module is already in `sys.modules`.
 - Object handles are opaque, session-scoped, TTL-bound, LRU-bounded, and all
   released on detach.
+- Module discovery snapshots `sys.modules` and accepts only exact already-loaded
+  `ModuleType` objects. Namespace inspection reads the module's direct
+  dictionary without importing modules or invoking module attributes.
+
+## Quick Attach bootstrap
+
+- CPython 3.10-3.13 Quick Attach copies one explicit Python line containing the
+  bundled Agent path, loopback port, and a newly generated one-time token.
+- The listener is active before the line is copied and accepts only the selected
+  process PID. Once connected, the listener closes, so the clipboard token
+  cannot establish a second connection.
+- The bootstrap imports only the bundled Agent and starts its daemon connection
+  thread. It does not evaluate a user expression or modify inspected values.
 
 ## CPython 3.14+ live attach
 

@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:PyRuntimeInspector.App.Controls"
         xmlns:vm="clr-namespace:PyRuntimeInspector.App.ViewModels"
-        Title="PyRuntime Inspector" Width="1500" Height="920" MinWidth="1180" MinHeight="720"
+        Title="PyRuntime Inspector" Icon="Assets/app-icon.ico" Width="1500" Height="920" MinWidth="1180" MinHeight="720"
         Background="{StaticResource WindowBackground}" Foreground="{StaticResource PrimaryText}"
         Closed="Window_Closed">
     <Grid>
@@ -22,15 +22,16 @@
                 <StackPanel Grid.Row="0" Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="PyRuntime Inspector" FontSize="19" FontWeight="SemiBold" Margin="0,0,18,0" VerticalAlignment="Center" />
                     <TextBlock Text="Process" Foreground="{StaticResource SecondaryText}" VerticalAlignment="Center" Margin="0,0,5,0" />
-                    <ComboBox Width="190" ItemsSource="{Binding Processes}" SelectedItem="{Binding SelectedProcess}" DisplayMemberPath="DisplayName" ToolTip="Select a process for CPython 3.14+ Live Attach, or optionally validate a cooperative PID." />
+                    <ComboBox Width="220" ItemsSource="{Binding Processes}" SelectedItem="{Binding SelectedProcess}" DisplayMemberPath="DisplayName" ToolTip="Select a Python process, then use Quick Attach." />
                     <Button Content="↻" Command="{Binding RefreshProcessesCommand}" ToolTip="Refresh Python processes" />
                     <TextBlock Text="PID" Foreground="{StaticResource SecondaryText}" Margin="12,0,4,0" VerticalAlignment="Center" />
                     <TextBlock Text="{Binding TargetPid, TargetNullValue=—}" FontFamily="Cascadia Mono" VerticalAlignment="Center" />
                     <TextBlock Text="Python" Foreground="{StaticResource SecondaryText}" Margin="14,0,4,0" VerticalAlignment="Center" />
                     <TextBlock Text="{Binding PythonVersion}" MaxWidth="210" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
                     <TextBlock Text="{Binding Architecture}" Foreground="{StaticResource SecondaryText}" Margin="8,0,12,0" VerticalAlignment="Center" />
-                    <Button Content="Attach" Command="{Binding AttachCommand}" Background="#1F6FEB" BorderBrush="#388BFD" FontWeight="SemiBold" />
-                    <Button Content="Live Attach" Command="{Binding LiveAttachCommand}" Background="#8250DF" BorderBrush="#A371F7" FontWeight="SemiBold" ToolTip="Inject the agent into a running CPython 3.14+ process." />
+                    <Button Content="Quick Attach" Command="{Binding QuickAttachCommand}" Background="#1F6FEB" BorderBrush="#58A6FF" FontWeight="SemiBold" ToolTip="One click on Python 3.14+. For Python 3.10–3.13, paste the automatically copied bootstrap once." />
+                    <Button Content="Listen" Command="{Binding AttachCommand}" ToolTip="Advanced cooperative listener." />
+                    <Button Content="Live" Command="{Binding LiveAttachCommand}" Background="#8250DF" BorderBrush="#A371F7" ToolTip="Advanced CPython 3.14+ Live Attach." />
                     <Button Content="Launch" Command="{Binding LaunchCommand}" Background="#238636" BorderBrush="#2EA043" FontWeight="SemiBold" />
                     <Button Content="Stop" Command="{Binding StopCommand}" />
                     <Button Content="Restart" Command="{Binding RestartCommand}" />
@@ -93,7 +94,7 @@
             <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch" Background="{StaticResource BorderBrush}" />
 
             <Border Grid.Column="2" Background="{StaticResource PanelBackground}">
-                <TabControl>
+                <TabControl SelectedIndex="{Binding SelectedWorkspaceTabIndex}">
                     <TabItem Header="Variables">
                         <Grid Margin="8">
                             <Grid.RowDefinitions>

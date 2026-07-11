@@ -19,6 +19,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private readonly IProcessDiscovery _processDiscovery;
     private readonly IManagedPythonLauncher _launcher;
     private readonly ILiveAttachService _liveAttachService;
+    private readonly IClipboardService _clipboardService;
     private readonly SynchronizationContext? _uiContext;
     private readonly Dictionary<string, string> _changeTokens = [];
     private CancellationTokenSource? _connectionCts;
@@ -69,6 +70,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private string _searchText = "";
     private string _pageLabel = "0 items";
     private string _lastLatency = "—";
+    private int _selectedWorkspaceTabIndex;
     private string _selectedType = "—";
     private string _selectedModule = "—";
     private string _selectedQualifiedName = "—";
@@ -142,7 +144,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private bool _isManagedRunning;
     private bool _elevateLiveAttach;
 
-    public MainViewModel() : this(new InspectorSession(), new ProcessDiscovery(), new ManagedPythonLauncher(), new LiveAttachService())
+    public MainViewModel() : this(new InspectorSession(), new ProcessDiscovery(), new ManagedPythonLauncher(), new LiveAttachService(), new WpfClipboardService())
     {
     }
 
@@ -150,12 +152,14 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         IInspectorSession session,
         IProcessDiscovery processDiscovery,
         IManagedPythonLauncher? launcher = null,
-        ILiveAttachService? liveAttachService = null)
+        ILiveAttachService? liveAttachService = null,
+        IClipboardService? clipboardService = null)
     {
         _session = session;
         _processDiscovery = processDiscovery;
         _launcher = launcher ?? new ManagedPythonLauncher();
         _liveAttachService = liveAttachService ?? new LiveAttachService();
+        _clipboardService = clipboardService ?? new WpfClipboardService();
         _uiContext = SynchronizationContext.Current;
         var repositoryRoot = FindRepositoryRoot();
         _pythonExecutable = Environment.GetEnvironmentVariable("PYTHON_EXECUTABLE") ?? "python";
@@ -170,6 +174,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _launcher.Exited += OnManagedExited;
 
         AttachCommand = new AsyncCommand(AttachAsync, () => !IsConnected && !IsBusy);
+        QuickAttachCommand = new AsyncCommand(QuickAttachAsync, () => !IsConnected && !IsBusy && SelectedProcess is not null);
         LiveAttachCommand = new AsyncCommand(LiveAttachAsync, () => !IsConnected && !IsBusy && SelectedProcess?.ExecutablePath is not null);
         DetachCommand = new AsyncCommand(DetachAsync, () => IsConnected || IsBusy);
         RefreshCommand = new AsyncCommand(RefreshAsync, () => IsConnected);
@@ -223,6 +228,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public IReadOnlyList<int> SliceAxes { get; } = [0, 1, 2];
 
     public AsyncCommand AttachCommand { get; }
+    public AsyncCommand QuickAttachCommand { get; }
     public AsyncCommand LiveAttachCommand { get; }
     public AsyncCommand DetachCommand { get; }
     public AsyncCommand RefreshCommand { get; }
@@ -260,7 +266,11 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         set
         {
             if (SetProperty(ref _selectedProcess, value))
+            {
+                if (!IsConnected)
+                    ApplySelectedProcessPreview();
                 UpdateCommandStates();
+            }
         }
     }
     public string PortText { get => _portText; set => SetProperty(ref _portText, value); }
@@ -365,6 +375,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     }
     public string PageLabel { get => _pageLabel; private set => SetProperty(ref _pageLabel, value); }
     public string LastLatency { get => _lastLatency; private set => SetProperty(ref _lastLatency, value); }
+    public int SelectedWorkspaceTabIndex { get => _selectedWorkspaceTabIndex; set => SetProperty(ref _selectedWorkspaceTabIndex, Math.Max(0, value)); }
 
     public VariableRow? SelectedVariable
     {
@@ -466,7 +477,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
     public async Task SelectTreeNodeAsync(RuntimeTreeNode? node)
     {
-        if (node?.Kind == RuntimeNodeKind.Scope)
+        if (node?.Kind is RuntimeNodeKind.Scope or RuntimeNodeKind.Module)
             await LoadScopeAsync(node, resetPage: true);
         else if (node?.Kind == RuntimeNodeKind.Frame)
         {
@@ -478,7 +489,9 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
     public async Task LoadScopeAsync(RuntimeTreeNode node, bool resetPage = false)
     {
-        if (!IsConnected || node.FrameHandle is null || node.ScopeType is null)
+        var isModule = node.Kind == RuntimeNodeKind.Module && node.ModuleName is not null;
+        var isFrameScope = node.Kind == RuntimeNodeKind.Scope && node.FrameHandle is not null && node.ScopeType is not null;
+        if (!IsConnected || (!isModule && !isFrameScope))
             return;
         if (resetPage)
             _pageOffset = 0;
@@ -488,16 +501,24 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _selectionCts = CancellationTokenSource.CreateLinkedTokenSource(_connectionCts?.Token ?? CancellationToken.None);
         var generation = Interlocked.Increment(ref _selectionGeneration);
         var token = _selectionCts.Token;
-        Breadcrumb = $"Threads / {node.Label}";
+        Breadcrumb = isModule ? $"Modules / {node.ModuleName}" : $"Threads / {node.Label}";
         try
         {
-            var frame = await RequestAsync("scopes.list", new JsonObject
-            {
-                ["frameHandle"] = node.FrameHandle,
-                ["scopeType"] = node.ScopeType,
-                ["offset"] = _pageOffset,
-                ["pageSize"] = PageSize,
-            }, token);
+            var parameters = isModule
+                ? new JsonObject
+                {
+                    ["moduleName"] = node.ModuleName,
+                    ["offset"] = _pageOffset,
+                    ["pageSize"] = PageSize,
+                }
+                : new JsonObject
+                {
+                    ["frameHandle"] = node.FrameHandle,
+                    ["scopeType"] = node.ScopeType,
+                    ["offset"] = _pageOffset,
+                    ["pageSize"] = PageSize,
+                };
+            var frame = await RequestAsync(isModule ? "modules.listNamespace" : "scopes.list", parameters, token);
             if (generation != _selectionGeneration || token.IsCancellationRequested)
                 return;
             ApplyScopeResult(frame.Header["result"]!.AsObject(), node);
@@ -641,7 +662,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             ApplyRuntime(runtime);
             IsConnected = true;
             Status = "Connected (managed launch)";
-            await LoadRuntimeTreeAsync(_connectionCts.Token);
+            await LoadRuntimeTreeAsync(_connectionCts.Token, autoSelectMain: true);
             StartRefreshLoop();
         }
         catch (OperationCanceledException)
@@ -709,7 +730,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             ApplyRuntime(runtime);
             IsConnected = true;
             Status = "Connected";
-            await LoadRuntimeTreeAsync(_connectionCts.Token);
+            await LoadRuntimeTreeAsync(_connectionCts.Token, autoSelectMain: true);
             StartRefreshLoop();
         }
         catch (OperationCanceledException)
@@ -724,6 +745,86 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         finally
         {
             IsBusy = false;
+        }
+    }
+
+    private async Task QuickAttachAsync()
+    {
+        if (SelectedProcess is null || IsConnected || IsBusy)
+            return;
+
+        if (SelectedProcess.PythonVersion is Version unsupported
+            && (unsupported.Major != 3 || unsupported.Minor < 10))
+        {
+            Status = "Unsupported Python version";
+            ErrorMessage = "Quick Attach requires CPython 3.10 or newer.";
+            return;
+        }
+
+        if (SelectedProcess.PythonVersion is { Major: 3, Minor: >= 14 })
+        {
+            await LiveAttachAsync();
+            if (IsConnected || Status == "Live attach cancelled")
+                return;
+        }
+
+        await OnePasteAttachAsync();
+    }
+
+    private async Task OnePasteAttachAsync()
+    {
+        if (SelectedProcess is null || IsConnected || IsBusy)
+            return;
+
+        Token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+        if (!TryGetConnectionSettings(out var port))
+            return;
+
+        var agentDirectory = Path.Combine(FindRepositoryRoot(), "agent");
+        if (!Directory.Exists(agentDirectory))
+        {
+            ErrorMessage = $"Bundled Python Agent was not found: {agentDirectory}";
+            return;
+        }
+
+        ErrorMessage = "";
+        IsBusy = true;
+        _connectionCts = new CancellationTokenSource();
+        Task<JsonObject>? attachTask = null;
+        try
+        {
+            attachTask = _session.AttachAsync(port, Token, SelectedProcess.Id, _connectionCts.Token);
+            _clipboardService.SetText(ReplBootstrap.Build(agentDirectory, port, Token));
+            var version = SelectedProcess.PythonVersion is Version selectedVersion
+                ? $"{selectedVersion.Major}.{selectedVersion.Minor}"
+                : "3.10–3.13";
+            Status = $"Bootstrap copied — paste once into Python {version} and press Enter";
+
+            var runtime = await attachTask;
+            ApplyRuntime(runtime);
+            IsConnected = true;
+            Status = "Connected · showing __main__ globals";
+            await LoadRuntimeTreeAsync(_connectionCts.Token, autoSelectMain: true);
+            StartRefreshLoop();
+        }
+        catch (OperationCanceledException)
+        {
+            Status = "Quick attach cancelled";
+        }
+        catch (Exception exception)
+        {
+            Status = "Quick attach failed";
+            SetError(exception);
+            _connectionCts.Cancel();
+        }
+        finally
+        {
+            if (!IsConnected && attachTask is not null)
+            {
+                try { await attachTask; } catch { }
+            }
+            IsBusy = false;
+            UpdateCommandStates();
         }
     }
 
@@ -767,12 +868,12 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                 Token,
                 ElevateLiveAttach), timeoutCts.Token);
 
-            Status = "Live attach scheduled; waiting for the target safe point";
+            Status = "Waiting for Python safe point — press Enter once if the REPL is idle";
             var runtime = await attachTask;
             ApplyRuntime(runtime);
             IsConnected = true;
             Status = "Connected (live attach)";
-            await LoadRuntimeTreeAsync(_connectionCts.Token);
+            await LoadRuntimeTreeAsync(_connectionCts.Token, autoSelectMain: true);
             StartRefreshLoop();
         }
         catch (OperationCanceledException)
@@ -1144,13 +1245,19 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         await LoadScopeAsync(_currentScope);
     }
 
-    private async Task LoadRuntimeTreeAsync(CancellationToken token)
+    private async Task LoadRuntimeTreeAsync(CancellationToken token, bool autoSelectMain = false)
     {
         RefreshProcessMemory();
         var threadsFrame = await RequestAsync("threads.list", cancellationToken: token);
         var framesFrame = await RequestAsync("frames.list", cancellationToken: token);
+        var modulesFrame = await RequestAsync("modules.list", new JsonObject
+        {
+            ["offset"] = 0,
+            ["pageSize"] = 1000,
+        }, token);
         var threads = threadsFrame.Header["result"]!["items"]!.AsArray();
         var frames = framesFrame.Header["result"]!["items"]!.AsArray();
+        var modules = modulesFrame.Header["result"]!["items"]!.AsArray();
         var processRoot = new RuntimeTreeNode($"Process  PID {TargetPid}");
         processRoot.Children.Add(new RuntimeTreeNode($"Private bytes  {PrivateBytes}", RuntimeNodeKind.Placeholder));
         var interpreterRoot = new RuntimeTreeNode("Interpreter");
@@ -1173,11 +1280,27 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             }
             threadsRoot.Children.Add(threadNode);
         }
+        var modulesRoot = new RuntimeTreeNode("Modules");
+        RuntimeTreeNode? mainModuleNode = null;
+        foreach (var module in modules)
+        {
+            var name = module!["name"]!.GetValue<string>();
+            var count = module["entryCount"]?.GetValue<int>() ?? 0;
+            var label = name == "__main__" ? $"__main__  ({count} variables)" : name;
+            var moduleNode = new RuntimeTreeNode(label, RuntimeNodeKind.Module)
+            {
+                ModuleName = name,
+                ScopeType = "module",
+            };
+            modulesRoot.Children.Add(moduleNode);
+            if (name == "__main__")
+                mainModuleNode = moduleNode;
+        }
         Replace(RuntimeRoots, [
             processRoot,
             interpreterRoot,
             threadsRoot,
-            PlaceholderRoot("Modules", "Module namespace browsing is scheduled after the Phase 1 shell."),
+            modulesRoot,
             PlaceholderRoot("Classes", "Select a variable to inspect its class."),
             PlaceholderRoot("GC-tracked objects", "Heap scanning is intentionally not enabled."),
         ]);
@@ -1185,6 +1308,11 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         await RefreshExecutionStatusAsync(token);
         if (ExecutionMonitoringActive)
             await LoadExecutionEventsAsync(token);
+        if (autoSelectMain && mainModuleNode is not null)
+        {
+            await LoadScopeAsync(mainModuleNode, resetPage: true);
+            SelectedWorkspaceTabIndex = 0;
+        }
     }
 
     private void ApplyRuntime(JsonObject runtime)
@@ -1205,7 +1333,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             var name = item!["name"]!.GetValue<string>();
             var value = item["value"]!.AsObject();
             var changeToken = value["changeToken"]?.GetValue<string>() ?? "";
-            var changeKey = $"{node.FrameHandle}:{node.ScopeType}:{name}";
+            var scopeKey = node.ModuleName is null ? $"{node.FrameHandle}:{node.ScopeType}" : $"module:{node.ModuleName}";
+            var changeKey = $"{scopeKey}:{name}";
             var changed = _changeTokens.TryGetValue(changeKey, out var previous) && previous != changeToken;
             _changeTokens[changeKey] = changeToken;
             var shape = value["shape"] is JsonArray shapeArray
@@ -1214,7 +1343,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             rows.Add(new VariableRow
             {
                 Name = name,
-                Scope = node.ScopeType!,
+                Scope = node.ModuleName is null ? node.ScopeType! : $"module:{node.ModuleName}",
                 HandleId = value["handleId"]!.GetValue<string>(),
                 TypeName = value["typeName"]?.GetValue<string>() ?? "?",
                 ModuleName = value["moduleName"]?.GetValue<string>() ?? "?",
@@ -1575,7 +1704,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private void CopyEnvironment()
     {
         var text = $"$env:PY_INSPECTOR_HOST='127.0.0.1'\r\n$env:PY_INSPECTOR_PORT='{PortText}'\r\n$env:PY_INSPECTOR_TOKEN='{Token}'\r\n$env:PYTHONPATH='{FindRepositoryRoot()}\\agent'";
-        Clipboard.SetText(text);
+        _clipboardService.SetText(text);
         Status = "Connection environment copied";
     }
 
@@ -1733,6 +1862,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _arrayHandle = null;
         UpdateCommandStates();
         ClearArrayDetails();
+        ApplySelectedProcessPreview();
     }
 
     private void ClearArrayDetails()
@@ -1826,6 +1956,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private void UpdateCommandStates()
     {
         AttachCommand?.RaiseCanExecuteChanged();
+        QuickAttachCommand?.RaiseCanExecuteChanged();
         LiveAttachCommand?.RaiseCanExecuteChanged();
         DetachCommand?.RaiseCanExecuteChanged();
         RefreshCommand?.RaiseCanExecuteChanged();
@@ -1846,6 +1977,17 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         LaunchCommand?.RaiseCanExecuteChanged();
         StopCommand?.RaiseCanExecuteChanged();
         RestartCommand?.RaiseCanExecuteChanged();
+    }
+
+    private void ApplySelectedProcessPreview()
+    {
+        TargetPid = SelectedProcess?.Id;
+        Executable = SelectedProcess?.ExecutablePath ?? "—";
+        PythonVersion = SelectedProcess?.PythonVersion is Version version
+            ? $"Python {version.Major}.{version.Minor}"
+            : "—";
+        Architecture = SelectedProcess is null ? "—" : "Detected after attach";
+        RefreshProcessMemory();
     }
 
     private static RuntimeTreeNode PlaceholderRoot(string label, string message)

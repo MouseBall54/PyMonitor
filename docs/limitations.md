@@ -12,8 +12,14 @@
 - Array previews support exact NumPy bool, integer, and floating-point 2D
   grayscale, 3D HWC/CHW color, and volume slices. Complex, structured, object,
   datetime, and string dtypes are metadata-only.
-- For CPython 3.10-3.13, the WPF process selector can only validate a
-  cooperative connection's PID.
+- CPython 3.10-3.13 has no supported unmodified live-injection API. Quick
+  Attach reduces the cooperative bootstrap to one paste and Enter in the
+  selected REPL, then validates the connected PID.
+- CPython 3.14 Live Attach still needs a Python safe point. An idle interactive
+  REPL may require one Enter keypress before the scheduled bootstrap runs.
+- Module browsing includes already-loaded exact Python modules only. Namespace
+  snapshots can become stale immediately and modules removed during inspection
+  return a structured invalid-argument error.
 - Managed stdout/stderr display is UTF-8 and line-oriented; binary stream output
   and partial lines are not rendered incrementally.
 - `tracemalloc` covers only Python allocations made while tracing is active;

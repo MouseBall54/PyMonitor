@@ -1,0 +1,84 @@
+# Phase 7 release hardening
+
+Phase 7 turns the Phase 0-6 implementation into reproducible Windows release
+artifacts. The product version is `0.1.0` and is shared by the .NET assemblies,
+the Python package, and the runtime handshake.
+
+## Portable release
+
+Run from the repository root in PowerShell:
+
+```powershell
+$env:DOTNET_EXE = 'C:\path\to\dotnet.exe' # only when dotnet is not on PATH
+.\scripts\Build-PortableRelease.ps1
+```
+
+The script runs Python and .NET tests, publishes a self-contained `win-x64`
+application, bundles `agent/`, `samples/`, the README and docs, rejects PDB,
+PYC and `__pycache__` files, creates a ZIP, and writes a SHA-256 sidecar.
+The extracted directory is intentionally self-contained; the Python Agent is
+loaded from its sibling `agent` directory and is not installed globally.
+
+## Compatibility matrix
+
+CI runs all Python Agent tests on standard-GIL x64 CPython 3.10, 3.11, 3.12,
+3.13 and 3.14. The same matrix can be run locally with uv:
+
+```powershell
+.\scripts\Test-PythonMatrix.ps1
+```
+
+Set `PYTHON_3_14_EXECUTABLE` (or the corresponding minor-version variable) to
+force a particular interpreter path. Live Attach remains a CPython 3.14+
+feature; older versions are covered for cooperative attach and Managed Launch.
+
+## Stability gate
+
+```powershell
+.\scripts\Invoke-StabilityTests.ps1 -DurationSeconds 60 -Cycles 10
+```
+
+The gate exercises a 4096 by 4096 NumPy array through the bounded preview,
+fills the 100-entry execution-event ring, rotates twelve tracemalloc snapshots
+through the eight-entry limit, maintains a request stream for the selected
+duration, and repeats connection/detach cycles. Every detach must leave the
+target alive. On Windows the target working-set increase must remain under the
+configured 192 MiB ceiling.
+
+## MSI
+
+Build the portable directory first, then run:
+
+```powershell
+.\scripts\Build-Installer.ps1
+```
+
+WiX Toolset SDK 5.0.2 creates a per-machine x64 MSI with an embedded cabinet,
+Add/Remove Programs icon, major-upgrade protection, and Start Menu shortcut.
+The MSI and its SHA-256 sidecar are written below `artifacts/installer/`.
+
+## Authenticode signing
+
+Release signing requires a trusted code-signing PFX. Do not commit it. To sign
+the application before ZIP creation and then sign the MSI:
+
+```powershell
+$password = Read-Host 'PFX password' -AsSecureString
+.\scripts\Build-Release.ps1 `
+  -CertificatePath C:\secure\release-signing.pfx `
+  -CertificatePassword $password
+```
+
+`Sign-Artifacts.ps1` uses the x64 Windows SDK `signtool.exe`, SHA-256 file and
+timestamp digests, DigiCert's RFC 3161 timestamp endpoint, and verifies every
+signature. The tagged GitHub workflow refuses to publish unless
+`WINDOWS_CERTIFICATE_BASE64` and `WINDOWS_CERTIFICATE_PASSWORD` are configured.
+Ordinary CI artifacts are explicitly named `unsigned`.
+
+## CI release flow
+
+- `.github/workflows/ci.yml` runs the five-version Python matrix, .NET tests,
+  the 60-second stability gate, portable packaging, and MSI packaging.
+- `.github/workflows/release.yml` runs on `v*` tags, repeats all tests, signs
+  the EXE and MSI, and publishes the ZIP, MSI, and SHA-256 files.
+- Generated artifacts and PFX files are ignored by Git.

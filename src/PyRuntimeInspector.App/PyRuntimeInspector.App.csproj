@@ -5,10 +5,26 @@
     <UseWPF>true</UseWPF>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
+    <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
+    <AssemblyName>PyRuntimeInspector</AssemblyName>
+    <RootNamespace>PyRuntimeInspector.App</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../PyRuntimeInspector.Protocol/PyRuntimeInspector.Protocol.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Resource Include="Assets\app-icon.ico" />
+    <Content Include="..\..\agent\pyruntime_inspector_agent\**\*.py">
+      <Link>agent\pyruntime_inspector_agent\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\samples\*.py">
+      <Link>samples\%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
   </ItemGroup>
 </Project>

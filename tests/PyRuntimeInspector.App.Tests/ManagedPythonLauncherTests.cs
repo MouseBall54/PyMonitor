@@ -61,7 +61,10 @@ public sealed class ManagedPythonLauncherTests
         Assert.Equal(handle.ProcessId, runtime["pid"]!.GetValue<int>());
         Assert.Equal("managed", runtime["attachMode"]!.GetValue<string>());
         Assert.Equal(Path.GetFullPath(python), Path.GetFullPath(runtime["executable"]!.GetValue<string>()), ignoreCase: true);
-        Assert.Equal(Path.GetFullPath(root), Path.GetFullPath(runtime["currentWorkingDirectory"]!.GetValue<string>()), ignoreCase: true);
+        Assert.Equal(
+            Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)),
+            Path.TrimEndingDirectorySeparator(Path.GetFullPath(runtime["currentWorkingDirectory"]!.GetValue<string>())),
+            ignoreCase: true);
         Assert.Equal(new[] { Path.GetFullPath(script), "first", "two words" }, runtime["argv"]!.AsArray().Select(node => node!.GetValue<string>()));
         Assert.Equal("managed-stdout", await stdout.Task.WaitAsync(timeout.Token));
         Assert.Equal("managed-stderr", await stderr.Task.WaitAsync(timeout.Token));

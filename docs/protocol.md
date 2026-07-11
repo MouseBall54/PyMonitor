@@ -12,6 +12,7 @@ Requests contain `protocolVersion`, `messageType`, `requestId`, `method`,
 The first request must be `session.hello` with the session token. The supported
 Phase 0 methods are `session.detach`, `runtime.getInfo`, `threads.list`,
 `frames.list`, `scopes.list`, `objects.describe`, `objects.listChildren`,
+`modules.list`, `modules.listNamespace`,
 `objects.release`, `classes.describe`, `arrays.describe`, `arrays.preview`,
 `arrays.tile`, `arrays.histogram`, `arrays.pixel`, `memory.status`,
 `memory.start`, `memory.stop`,
@@ -27,6 +28,12 @@ sampling steps so preview coordinates can be mapped back to exact array pixels.
 Managed Launch reports `attachMode: managed` from `runtime.getInfo`; cooperative
 connections continue to report `attachMode: cooperative`.
 CPython 3.14+ Live Attach reports `attachMode: live`.
+
+`modules.list` snapshots already-loaded exact Python modules without importing
+anything. `modules.listNamespace` reads the selected module's direct
+`__dict__`, uses the same safe summaries and pagination as frame scopes, and
+therefore exposes idle REPL globals through the `__main__` module even when no
+user Python frame is active.
 
 Array preview and tile requests accept `normalization` (`AUTO`, `NONE`,
 `MINMAX`, `PERCENTILE`, or `LABEL`) plus percentile bounds. Tiles require a
