@@ -9,7 +9,8 @@ types that do not participate in cyclic GC can be absent.
 1. Connect to a target and select **GC-tracked objects** in the Runtime Tree.
 2. Enter a type name, module name, qualified type name, or displayed address.
 3. Click **Search / Scan**. Use Previous and Next for additional pages.
-4. Select a row to reuse the Object, Class & Methods, and Array / Image tabs.
+4. Select a row to open the shared Selected object context and its Overview,
+   Object Tree, Class and Methods, and optional Array and Image views.
 
 Selecting the node, searching, changing page, or explicitly refreshing takes a
 new snapshot. The one-second scope refresh loop never scans the GC heap.

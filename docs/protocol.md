@@ -14,12 +14,23 @@ Phase 0 methods are `session.detach`, `runtime.getInfo`, `threads.list`,
 `frames.list`, `scopes.list`, `objects.describe`, `objects.listChildren`,
 `modules.list`, `modules.listNamespace`, `gc.listObjects`,
 `objects.release`, `classes.describe`, `arrays.describe`, `arrays.preview`,
-`arrays.tile`, `arrays.histogram`, `arrays.pixel`, `memory.status`,
+`arrays.tile`, `arrays.histogram`, `arrays.pixel`, `dataframes.describe`,
+`dataframes.preview`, `memory.status`,
 `memory.start`, `memory.stop`,
 `memory.snapshot`, `memory.listSnapshots`, `memory.statistics`, and
 `memory.diff`, plus `execution.status`, `execution.start`, `execution.stop`,
-`execution.list`, and `execution.clear`. Collections accept zero-based `offset` and `pageSize` (default
-100, maximum 1000).
+`execution.list`, and `execution.clear`. Collections accept zero-based `offset`
+and `pageSize`. The default is 100. Scope, module-namespace, object-child, and
+GC pages that create value handles are capped at 200 rows. Metadata-only module
+listing and execution-event methods retain their method-specific limits up to
+1,000 rows.
+
+Requests are sequential on one TCP stream. Cancellation after a frame is sent
+suppresses stale UI application but still drains that response before another
+request can use the stream. A transport abort is reserved for disconnect and
+the one-second cooperative detach deadline, and is also enforced after the
+15-second hard request timeout. It unblocks any nonresponsive read, marks that
+session disconnected, and makes queued requests fail deterministically.
 
 For Phase 1, NumPy object summaries also include `shape`, `dtype`, and
 `payloadSizeBytes`. `arrays.preview` accepts `layout`, `colorOrder`,
@@ -33,7 +44,24 @@ CPython 3.14+ Live Attach reports `attachMode: live`.
 anything. `modules.listNamespace` reads the selected module's direct
 `__dict__`, uses the same safe summaries and pagination as frame scopes, and
 therefore exposes idle REPL globals through the `__main__` module even when no
-user Python frame is active.
+user Python frame is active. Scope and module namespace results report
+`ordering`, `scanComplete`, `totalIsExact`, and `mutationDetected`. A key
+mutation is retried once; repeated mutation returns a structured retry error so
+the client does not apply a partial total as a complete comparison snapshot.
+
+`objects.listChildren` accepts `offset`, `pageSize`, the current navigation
+`depth`, and up to 32 `ancestorIdentityTokens`. It reads only exact built-in
+container entries or a statically available instance dictionary. Each child
+reports its relation/path metadata, depth, cycle status, and whether it can be
+expanded. The WPF client uses pages of 100 and applies a stricter depth limit of
+eight for interactive navigation.
+
+`classes.describe` returns bounded class references for bases, MRO, and
+metaclass plus at most 200 effective members. Members identify their declaring
+class and inherited state, classification, static source location, and a
+structured function signature when it can be read without invoking user code.
+Structured parameters include kind and bounded safe representations of
+defaults and annotations.
 
 `gc.listObjects` accepts `query`, `offset`, `pageSize`, and `maxObjects`. The
 query is limited to 200 characters and matches only type name, module name,
@@ -49,6 +77,21 @@ source `x`, `y`, `width`, and `height`; each dimension is capped at 1024.
 Histogram bin counts are capped at 512 and source sampling at one million
 elements. NaN and infinities in `arrays.pixel` use `{ "kind": "NaN" }`,
 `+Infinity`, or `-Infinity` objects instead of non-standard JSON numbers.
+
+`dataframes.describe` and `dataframes.preview` are available only for an exact,
+already-loaded pandas `DataFrame`; the agent never imports pandas. The adapter
+reads trusted internal C-extension descriptors directly and does not call
+mutable pandas module functions, public DataFrame properties, user callables,
+or scalar `repr`/`str`. Preview accepts `rowOffset`, `rowCount`, `columnOffset`,
+and `columnCount`. Rows are capped at 200, columns at 100, and a combined page
+at 2,000 cells so the complete table remains within the response budget. Results contain
+bounded column names and dtypes, index labels, display-safe cell text, exact
+page totals, independent row/column truncation flags, and snapshot mutation
+status. Unsupported extension-array cells are returned as unavailable instead
+of executing their accessors. Structural metadata and at most 64 uniformly
+distributed safe cells contribute to the DataFrame change token; this is a
+bounded change hint, not a full-frame checksum. No preview operation copies or
+serializes the complete frame.
 
 Memory statistics support `lineno`, `filename`, and `traceback` grouping and a
 maximum result limit of 200. Snapshot identifiers are opaque and scoped to the

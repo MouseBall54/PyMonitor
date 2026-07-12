@@ -1,30 +1,169 @@
-# Phase 1 WPF shell
+# PyMonitor WPF interface
 
-Build the self-contained Windows client:
+Build the Windows client from the repository root:
 
 ```powershell
 & "$HOME\.dotnet10\dotnet.exe" build src\PyRuntimeInspector.App\PyRuntimeInspector.App.csproj -c Release
 ```
 
-Run the current portable `PyRuntimeInspector.exe`. For the original cooperative
-flow, choose a port, keep the generated 256-bit token, and click **Listen**. While the
-UI says `Waiting for cooperative target`, use **Copy environment** and apply the
-copied variables in a second PowerShell session, then run a cooperative target:
+The public executable is `PyMonitor.exe`. The application is organized into
+four top-level workspaces: **Inspect**, **Launch**, **Memory**, and **Events**.
+The command bar keeps **Rescan**, **Quick Attach**, **Refresh**, **Detach**, and
+**About** visible. Listener configuration, explicit Live Attach, environment
+copying, automatic-refresh controls, and theme selection are in the Advanced
+section.
+
+## Selection-driven inspection
+
+Inspect is a master-detail workflow with three linked regions:
+
+1. Choose a frame scope, loaded module namespace, or GC-tracked object source
+   in **Runtime Tree**.
+2. Search, filter, and select a row in **Variables**.
+3. Inspect that same selected object in **Overview**, **Object Tree**,
+   **Class and Methods**, **Array and Image**, or **DataFrame**.
+
+Changing the variable selection replaces the complete Selected object context;
+the detail views are not independent object pickers. Exact NumPy arrays enable
+Array and Image, while an exact, already-loaded pandas DataFrame enables the
+DataFrame table preview. Other values keep those specialized views unavailable
+while preserving Overview, Object Tree, and Class and Methods.
+
+The detail header exposes the selected path, type, safe preview, address, and
+read-only status. A clickable root-to-current breadcrumb, depth label, and
+history position keep the current location visible while drilling into nested
+objects. Back, Forward, and Parent show their destination; any breadcrumb
+ancestor can be opened directly. Pin/unpin, copy path, and copy address remain
+available. Pins last for the current connection session and can be reopened
+from **Pinned objects**.
+
+## Search, filters, and snapshot changes
+
+Variables search matches name, type, module, qualified type, address, and safe
+preview. Scope, change classification, and exact type filters combine with the
+Arrays, Expandable, and Pinned toggles. **Clear filters** restores the complete
+current page.
+
+For ordinary frame and module scopes, filtering operates on the current
+snapshot. GC-tracked object search is different: the query is sent only after
+an explicit **Search / Scan**, because each request can examine up to 100,000
+GC-tracked objects. Periodic refresh deliberately skips GC scans.
+
+Each ordinary scope snapshot is compared with its preceding snapshot. Changed
+rows remain highlighted for ten seconds:
+
+- **Added** means a name was not present in the preceding snapshot.
+- **Removed** is a temporary ghost row for a binding that disappeared from a
+  complete first-page snapshot.
+- **Rebound** means the same name now points to a different object identity.
+- **Updated** means identity is unchanged but bounded display metadata such as
+  safe preview, size, shape, or dtype changed.
+
+The first snapshot establishes the comparison baseline. **Reset comparison**
+clears the baseline for the current scope. This is a bounded observation aid,
+not a debugger watchpoint: arbitrary mutations inside a user object may not
+change the exposed metadata and therefore may not be highlighted.
+
+Automatic refresh reconciles Variables rows in place. It does not clear and
+repopulate the table or show the loading overlay, so the selected row, realized
+DataGrid containers, and scroll position remain stable. When the selected value
+is a NumPy/OpenCV array or DataFrame, its preview is refreshed in the background
+without resetting the current slice, layout, or row/column page.
+
+## Object Tree
+
+Object Tree groups safe child values by their origin: collection items,
+mapping values, instance fields, and direct instance-dictionary entries.
+Children load on demand in pages of 100. **Load more** requests the next page
+without materializing the entire container in the UI.
+
+Opening a child makes it the Selected object, so its class, array, DataFrame,
+and overview information stay synchronized. The breadcrumb records the complete
+root-to-current chain, highlights the current node, and lets the user return to
+any ancestor without replaying Back. Back, Forward, and Parent remain available
+with destination labels and tooltips. Repeated object identity in the current
+ancestor chain is marked as a cycle and cannot be expanded. The UI stops
+expansion at depth 8; the Agent also validates ancestry and request depth
+independently.
+
+The Selected object area distinguishes these states:
+
+- **No selection**: select a Variables row to begin.
+- **Loading**: bounded object and class requests are in progress.
+- **Ready / empty**: data is available, or the value has no safely enumerable
+  children.
+- **Expired**: the session handle was evicted, reached its TTL, or its source
+  binding disappeared; refresh the scope and select the current row again.
+- **Error**: the request failed and diagnostics contain the reason.
+
+## Class and Methods
+
+The class tree separates class overview, base classes, MRO, instance fields,
+instance methods, static methods, class methods, properties and descriptors,
+class attributes, and inherited members. Function nodes can contain structured
+parameter children with kind, bounded default preview, and safe annotation
+text. Source file and first line are shown when code metadata is available.
+
+All class data is obtained through static class dictionaries and code-object
+metadata. PyMonitor does not invoke properties, descriptors, annotation
+thunks, wrapped user callables, or user-defined `repr` while building this
+tree. Class members, scanned namespaces, parameters, and text lengths are
+bounded.
+
+## DataFrame
+
+The DataFrame tab displays an index column plus dynamic data columns in a
+virtualized, read-only table. Column headers include bounded names and dtypes.
+The WPF page size is 50 rows by 20 columns, with independent row and column
+navigation, shape/range text, refresh, empty/error states, and snapshot
+consistency status.
+
+The Agent accepts larger bounded pages but caps each response at 200 rows, 100
+columns, and 2,000 cells. It does not import pandas, call DataFrame properties,
+or serialize the complete frame. Unsupported extension-array cells remain
+unavailable instead of invoking user accessors.
+
+## Connection modes
+
+**Managed Launch** is the simplest way to inspect a script: choose the exact
+Python executable and script in Launch, then start it. PyMonitor starts the
+authenticated Agent before running the user script and preserves argv, working
+directory, environment, stdout, stderr, and exit status.
+
+**Quick Attach** connects to an existing local process. CPython 3.14+ uses Live
+Attach and may require one Enter keypress when an idle REPL must reach a Python
+safe point. CPython 3.10-3.13 requires one cooperative step: Quick Attach copies
+a complete bootstrap line, which must be pasted at that Python REPL's `>>>`
+prompt and executed once.
+
+Starting plain `python` in `cmd.exe` and assigning a variable does not, by
+itself, expose that process to PyMonitor. Seeing `python.exe` in the Process
+list is only discovery. The Agent must first be started by Quick Attach (or by
+the advanced listener bootstrap). After authentication, `Modules / __main__`
+opens automatically and global REPL bindings are available without a keep-alive
+loop.
+
+For the advanced cooperative flow, click **Start listener**, use **Copy
+environment**, apply the copied variables in another shell, and start a target
+that loads the bundled Agent, for example:
 
 ```powershell
 python samples\target_sample.py
 ```
 
-Selecting a frame loads locals by default; expand it to choose globals or
-built-ins. Selecting a variable loads static object and class details. Exact
-NumPy arrays also enable the Array/Image tab.
+## Appearance, persistence, and keyboard access
 
-The current Phase 8 UI also exposes `GC-tracked objects` in the Runtime Tree.
-Selecting it performs one bounded scan. Type, module, qualified type, or address
-filters are sent only when **Search / Scan** is pressed; pagination and explicit
-refresh take another snapshot. Automatic scope refresh deliberately skips GC
-scans.
+Light is the default theme; Dark remains optional. PyMonitor persists the
+theme, refresh interval, window dimensions and maximized state, and left/right
+pane widths in `%LOCALAPPDATA%\PyMonitor\settings.json`. Missing, malformed, or
+out-of-range settings fall back to bounded defaults. About identifies
+PyMonitor `26.7.11`, developer 박영문, the Windows x64 target, and the read-only
+inspection model.
 
-Phase 1 originally left **Launch** disabled. The current Phase 2 app enables it
-with interpreter, script, argv, cwd, environment, output, Stop, Restart, and
-exit-code controls. Live attach remains Phase 3.
+- `Ctrl+F` switches to Inspect and focuses Variables search.
+- `F5` refreshes the active connection or selected scope.
+- `Alt+Left` and `Alt+Right` navigate Selected object history.
+
+The top status area keeps connection state, read-only mode, target PID, Python
+version, architecture, private memory, and request latency visible without
+requiring a separate detail tab.

@@ -32,6 +32,25 @@ overwriting a newer selection. A minimum one-second refresh loop polls only the
 selected scope (or runtime status when no scope is selected). Connection loss
 clears live collections without blocking the UI thread.
 
+The protocol client serializes requests. After a request frame is sent, caller
+cancellation returns immediately while an internal task drains the matching
+response to preserve frame alignment. Every exchange also has a 15-second hard
+timeout; an unresponsive transport is aborted and the UI transitions to a
+diagnosable disconnected state. Detach separately allows one second for a
+cooperative `session.detach` before aborting the transport, so a pending read
+cannot block window shutdown.
+
+The current Inspect workspace uses a selection-driven master-detail structure:
+Runtime Tree chooses the data source, Variables owns search/filter/change
+comparison, and one persistent Selected object context drives Overview, Object
+Tree, Class and Methods, and Array and Image. Object navigation keeps bounded
+history and parent context, while cycle/depth markers prevent unbounded tree
+expansion. Pins and history protect referenced handles from eager release for
+that connection. Weak-referenceable targets can still disappear, while
+non-weak-referenceable targets may remain strongly held until the reference is
+evicted/unpinned, the session detaches, or the Agent TTL/LRU expires; this is not
+durable cross-session retention.
+
 The array viewer creates a frozen `WriteableBitmap` from bounded Gray8, RGB24,
 or BGRA32 payloads. WPF handles nearest-neighbor zoom; the overlay draws a pixel
 grid at high magnification. Exact pixel values are requested separately using

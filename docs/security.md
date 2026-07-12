@@ -6,18 +6,49 @@
 - Pickle, eval, exec, callable execution, arbitrary repr/str/getattr/dir,
   descriptor invocation, and property reads are not used.
 - User-defined objects expose type identity, address, base object size, their
-  static instance dictionary when safely available, and static class members.
+  direct CPython instance dictionary when available, and static class members.
 - NumPy is never imported by the agent. Its adapter activates only for an exact
   `numpy.ndarray` when a genuine NumPy module is already in `sys.modules`.
 - Object handles are opaque, session-scoped, TTL-bound, LRU-bounded, and all
   released on detach.
+- Variable namespaces and object-child responses that carry handles are capped
+  at 200 rows per request; the UI requests 100 at a time. Object Tree expansion
+  is also bounded by ancestry validation, cycle detection, and a UI depth limit
+  of eight.
 - Module discovery snapshots `sys.modules` and accepts only exact already-loaded
   `ModuleType` objects. Namespace inspection reads the module's direct
   dictionary without importing modules or invoking module attributes.
+- Thread discovery reads only CPython-owned private state from each exact
+  instance dictionary and the interpreter's current-frame snapshot. It never
+  calls overridable `Thread` properties or `is_alive()`.
 - GC discovery runs only on explicit UI actions, never calls `gc.collect()`,
   and inspects at most 100,000 objects from the snapshot in the default UI.
   Filtering reads exact type metadata and addresses only; arbitrary previews
   are created only for the requested page.
+
+## Deep object and class inspection
+
+- Object Tree reads only exact built-in container entries or the direct
+  CPython instance dictionary. It does not copy a complete list,
+  mapping, or set before pagination.
+- An identity already present in the selected ancestor chain is returned as a
+  cycle marker and is not expanded. Each deeper request remains independently
+  paginated and depth-validated.
+- Class and inheritance data comes from direct class dictionaries, MRO entries,
+  function code objects, and already materialized safe metadata. Properties,
+  descriptors, callable wrappers, and annotation thunks are never invoked.
+- Instance fields are read through CPython's generic dictionary accessor, not
+  through a target-owned `__dict__` descriptor. This can materialize an empty
+  instance dictionary but does not execute Python callbacks.
+- Type and module metadata is accepted only when it is an exact string;
+  hostile replacement values are reported as safe placeholders without
+  formatting or coercion.
+- Signature parameters and source locations are bounded. Unsafe default values
+  and annotations are represented by placeholders instead of calling their
+  formatting hooks.
+- Pinned objects retain only session handles and navigation context. They are
+  cleared on disconnect and do not grant access to a different process or a
+  later authenticated session.
 
 ## Quick Attach bootstrap
 

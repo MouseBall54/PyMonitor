@@ -1,17 +1,48 @@
 # Current limitations
 
 - Windows x64 CPython 3.10-3.14 standard-GIL builds are the intended target;
-  core inspection is verified with CPython 3.12 and Live Attach with 3.14.6.
+  the Agent is exercised across every supported minor and Live Attach is
+  integration-tested with a CPython 3.14 runtime.
 - Unmodified attach to an already-running process requires CPython 3.14+ and
   remote debugging must not have been disabled by the target.
 - Live attach can be delayed while the target is outside a Python safe
   execution point and the UI gives up waiting after 30 seconds.
+- Ordinary inspector requests have a 15-second hard timeout. Canceling a UI
+  selection stops that caller immediately while the matching response is
+  drained; if the target never responds, PyMonitor aborts the connection and
+  requires a new attach rather than leaving the UI request queue blocked.
 - Snapshots are not stop-the-world and may be stale immediately after capture.
-- Mutable changes are not comprehensively detected.
+- Change highlighting compares one bounded scope snapshot with the preceding
+  snapshot. Rebinding is reliable for the displayed name and identity token,
+  while exact NumPy arrays and pandas DataFrames also contribute bounded content
+  fingerprints for in-place mutation hints. Other mutable values are shown only
+  when exposed preview, size, shape, dtype, or bounded metadata changes. Removed
+  rows can be inferred only from a complete first-page snapshot. Highlights
+  expire after ten seconds.
 - Safe summaries deliberately omit values for arbitrary user-defined objects.
+- Object Tree requests 100 children at a time, stops UI expansion at depth 8,
+  and does not traverse cycle markers. Opaque handles are session-scoped and
+  can expire through the five-minute TTL or 512-entry LRU bound; refresh the
+  source scope and reselect the current value after an expired state.
+- Frame and module namespace pages retain only the requested rows while
+  scanning the direct dictionary. Pages follow dictionary insertion order
+  rather than an alphabetical full-copy sort; target mutations can therefore
+  shift subsequent page offsets. A key mutation during a scan is retried once;
+  repeated mutation returns a retryable inspection error instead of applying a
+  partial snapshot or producing false Removed rows.
+- Pins and bounded navigation history protect their opaque handles from eager
+  UI release for the current authenticated connection. Weak-referenceable
+  objects can still disappear independently; non-weak-referenceable values can
+  remain strongly reachable until unpin/history eviction, detach, or the Agent's
+  five-minute TTL/512-entry LRU. Nothing reconnects to a later process session.
 - Array previews support exact NumPy bool, integer, and floating-point 2D
   grayscale, 3D HWC/CHW color, and volume slices. Complex, structured, object,
   datetime, and string dtypes are metadata-only.
+- DataFrame preview requires an exact pandas DataFrame from an already-loaded
+  pandas module. The WPF table requests 50 rows by 20 columns; Agent responses
+  are capped at 200 rows, 100 columns, and 2,000 cells. Unsupported extension
+  cells are unavailable, and the bounded change fingerprint is not a full-frame
+  checksum.
 - CPython 3.10-3.13 has no supported unmodified live-injection API. Quick
   Attach reduces the cooperative bootstrap to one paste and Enter in the
   selected REPL, then validates the connected PID.
