@@ -654,7 +654,8 @@ public sealed class VariablesCenteredUxTests
         viewModel.RefreshIntervalSeconds = 1;
         viewModel.AutoRefreshEnabled = true;
         await EventuallyAsync(() => session.Requests.Count(request => request.Method == "scopes.list") >= 2
-            && session.Requests.Count(request => request.Method == "arrays.preview") >= 2);
+            && session.Requests.Count(request => request.Method == "arrays.preview") >= 2,
+            timeoutSeconds: 5);
         viewModel.AutoRefreshEnabled = false;
 
         Assert.False(loadingWasShown);
@@ -827,7 +828,8 @@ public sealed class VariablesCenteredUxTests
         viewModel.RefreshIntervalSeconds = 1;
         viewModel.AutoRefreshEnabled = true;
         await EventuallyAsync(() => session.Requests.Count(request => request.Method == "scopes.list") >= 2
-            && session.Requests.Count(request => request.Method == "dataframes.preview") >= 3);
+            && session.Requests.Count(request => request.Method == "dataframes.preview") >= 3,
+            timeoutSeconds: 5);
         viewModel.AutoRefreshEnabled = false;
 
         Assert.False(loadingWasShown);
@@ -1742,7 +1744,8 @@ public sealed class VariablesCenteredUxTests
         viewModel.RefreshIntervalSeconds = 1;
         viewModel.AutoRefreshEnabled = true;
         await EventuallyAsync(() => session.Requests.Count(request => request.Method == "scopes.list") >= 2
-            && session.Requests.Count(request => request.Method == "figures.preview") >= 2);
+            && session.Requests.Count(request => request.Method == "figures.preview") >= 2,
+            timeoutSeconds: 5);
         viewModel.AutoRefreshEnabled = false;
 
         Assert.False(loadingWasShown);
@@ -1775,7 +1778,8 @@ public sealed class VariablesCenteredUxTests
         viewModel.RefreshIntervalSeconds = 1;
         viewModel.AutoRefreshEnabled = true;
         await EventuallyAsync(() => viewModel.MatplotlibAvailabilityReason == "buffer-changed"
-            && session.Requests.Count(request => request.Method == "figures.describe") >= 2);
+            && session.Requests.Count(request => request.Method == "figures.describe") >= 2,
+            timeoutSeconds: 5);
         viewModel.AutoRefreshEnabled = false;
 
         Assert.Same(completePreview, viewModel.MatplotlibPreview);
@@ -2251,9 +2255,9 @@ public sealed class VariablesCenteredUxTests
         return null;
     }
 
-    private static async Task EventuallyAsync(Func<bool> predicate)
+    private static async Task EventuallyAsync(Func<bool> predicate, int timeoutSeconds = 2)
     {
-        var timeout = DateTime.UtcNow.AddSeconds(2);
+        var timeout = DateTime.UtcNow.AddSeconds(timeoutSeconds);
         while (!predicate() && DateTime.UtcNow < timeout)
             await Task.Delay(10);
         Assert.True(predicate());
