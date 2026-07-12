@@ -188,6 +188,114 @@ public sealed class MainWindowSmokeTests
                     setter.Property == UIElement.VisibilityProperty
                     && setter.Value is Binding { Path.Path: "IsSearchVisible" });
 
+                var classTab = LogicalDescendants<TabItem>(window)
+                    .Single(tab => string.Equals(tab.Header?.ToString(), "Class and Methods", StringComparison.Ordinal));
+                classTab.IsSelected = true;
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                window.UpdateLayout();
+
+                var classSearch = LogicalDescendants<TextBox>(classTab)
+                    .Single(textBox => AutomationProperties.GetName(textBox)
+                        == "Search class members methods and parameters");
+                var classSearchBinding = Assert.IsType<Binding>(BindingOperations
+                    .GetBindingBase(classSearch, TextBox.TextProperty));
+                Assert.Equal("ClassTreeSearchText", classSearchBinding.Path.Path);
+                Assert.Equal(UpdateSourceTrigger.PropertyChanged, classSearchBinding.UpdateSourceTrigger);
+                var searchScope = classSearch.ToolTip?.ToString() ?? "";
+                Assert.Contains("already loaded", searchScope, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("class details", searchScope, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("safety limit", searchScope, StringComparison.OrdinalIgnoreCase);
+                foreach (var expectedScope in new[]
+                {
+                    "name", "kind", "declaring class", "signature", "detail", "source", "parameter",
+                })
+                {
+                    Assert.Contains(expectedScope, searchScope, StringComparison.OrdinalIgnoreCase);
+                }
+
+                var clearClassSearch = LogicalDescendants<Button>(classTab)
+                    .Single(button => AutomationProperties.GetName(button) == "Clear class member search");
+                var classViewModel = Assert.IsType<MainViewModel>(window.DataContext);
+                Assert.Same(classViewModel.ClearClassTreeSearchCommand, clearClassSearch.Command);
+                var classSearchStatus = LogicalDescendants<TextBlock>(classTab)
+                    .Single(text => AutomationProperties.GetLiveSetting(text) == AutomationLiveSetting.Polite);
+                var classStatusBinding = Assert.IsType<Binding>(BindingOperations
+                    .GetBindingBase(classSearchStatus, TextBlock.TextProperty));
+                Assert.Equal("ClassTreeSearchResultLabel", classStatusBinding.Path.Path);
+                Assert.True(classStatusBinding.NotifyOnTargetUpdated);
+                Assert.Equal(classSearchStatus.Text, AutomationProperties.GetName(classSearchStatus));
+                Assert.NotNull(typeof(MainWindow).GetMethod(
+                    "ClassTreeSearchStatus_TargetUpdated",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic));
+                var classStatusTargetUpdates = 0;
+                classSearchStatus.TargetUpdated += (_, _) => classStatusTargetUpdates++;
+
+                var classTree = LogicalDescendants<TreeView>(classTab)
+                    .Single(tree => AutomationProperties.GetName(tree) == "Class members methods and parameters");
+                var classItemsBinding = Assert.IsType<Binding>(BindingOperations
+                    .GetBindingBase(classTree, ItemsControl.ItemsSourceProperty));
+                Assert.Equal("ClassTree", classItemsBinding.Path.Path);
+                Assert.True(VirtualizingPanel.GetIsVirtualizing(classTree));
+                Assert.Equal(VirtualizationMode.Recycling, VirtualizingPanel.GetVirtualizationMode(classTree));
+                Assert.True(ScrollViewer.GetCanContentScroll(classTree));
+                var classExpandedSetter = Assert.Single(
+                    classTree.ItemContainerStyle.Setters.OfType<Setter>(),
+                    setter => setter.Property == TreeViewItem.IsExpandedProperty);
+                var classExpandedBinding = Assert.IsType<Binding>(classExpandedSetter.Value);
+                Assert.Equal("IsExpanded", classExpandedBinding.Path.Path);
+                Assert.Equal(BindingMode.TwoWay, classExpandedBinding.Mode);
+                Assert.Contains(classTree.ItemContainerStyle.Setters.OfType<Setter>(), setter =>
+                    setter.Property == UIElement.VisibilityProperty
+                    && setter.Value is Binding { Path.Path: "IsSearchVisible" });
+
+                var classTemplate = Assert.Single(
+                    classTree.Resources.Values.OfType<HierarchicalDataTemplate>());
+                var classTemplateRoot = Assert.IsAssignableFrom<DependencyObject>(classTemplate.LoadContent());
+                var classLabel = LogicalDescendants<TextBlock>(classTemplateRoot)
+                    .Single(text => BindingOperations.GetBindingBase(text, TextBlock.TextProperty)
+                        is Binding { Path.Path: "Label" });
+                var directMatchTrigger = Assert.Single(
+                    classLabel.Style.Triggers.OfType<DataTrigger>(),
+                    trigger => trigger.Binding is Binding { Path.Path: "IsSearchMatch" });
+                Assert.Contains(directMatchTrigger.Setters.OfType<Setter>(), setter =>
+                    setter.Property == TextBlock.ForegroundProperty);
+                Assert.Contains(directMatchTrigger.Setters.OfType<Setter>(), setter =>
+                    setter.Property == TextBlock.TextDecorationsProperty);
+                Assert.DoesNotContain(classLabel.Style.Triggers.OfType<DataTrigger>(), trigger =>
+                    trigger.Binding is Binding { Path.Path: "IsSearchAncestor" });
+
+                var noClassResults = LogicalDescendants<Border>(classTab)
+                    .Single(border => AutomationProperties.GetName(border) == "No class member search results");
+                var emptyClassBinding = Assert.IsType<Binding>(BindingOperations
+                    .GetBindingBase(noClassResults, UIElement.VisibilityProperty));
+                Assert.Equal("IsClassTreeSearchEmpty", emptyClassBinding.Path.Path);
+                Assert.Equal(AutomationLiveSetting.Polite, AutomationProperties.GetLiveSetting(noClassResults));
+                var emptyClassText = string.Join(" ", LogicalDescendants<TextBlock>(noClassResults)
+                    .Select(text => text.Text));
+                Assert.Contains("loaded", emptyClassText, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("class details", emptyClassText, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("safety limit", emptyClassText, StringComparison.OrdinalIgnoreCase);
+
+                AssertElementIsVisibleAndInside(classSearch, window, "Class search", "minimum supported viewport");
+                AssertElementIsVisibleAndInside(clearClassSearch, window, "Clear class search", "minimum supported viewport");
+                AssertElementIsVisibleAndInside(classSearchStatus, window, "Class search status", "minimum supported viewport");
+                AssertElementIsVisibleAndInside(classTree, window, "Class member tree", "minimum supported viewport");
+
+                classSearch.Text = "no-such-class-member";
+                classSearch.GetBindingExpression(TextBox.TextProperty)?.UpdateSource();
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                window.UpdateLayout();
+                Assert.True(noClassResults.IsVisible);
+                AssertElementIsVisibleAndInside(noClassResults, window, "Empty class search", "minimum supported viewport");
+                Assert.Contains("0", classSearchStatus.Text, StringComparison.Ordinal);
+                Assert.True(classStatusTargetUpdates > 0,
+                    "Class search status binding did not raise TargetUpdated for the live-region handler.");
+                Assert.Equal(classSearchStatus.Text, AutomationProperties.GetName(classSearchStatus));
+                clearClassSearch.Command.Execute(null);
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                Assert.Equal("", classViewModel.ClassTreeSearchText);
+                Assert.False(noClassResults.IsVisible);
+
                 var copyableValue = Descendants<TextBlock>(window)
                     .First(text => text.Text == "No object selected");
                 copyableValue.RaiseEvent(new MouseButtonEventArgs(

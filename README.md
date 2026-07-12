@@ -229,8 +229,8 @@ flowchart LR
 
 Agent suite 99개는 CPython 3.10.18, 3.11.9, 3.12.9, 3.13.7,
 3.14.0rc2에서 NumPy·pandas·Matplotlib을 함께 설치한 상태로 통과했습니다
-(런타임별 비지원 기능은 예상대로 skip). .NET Release suite는 App 118개,
-Protocol 5개, Integration 2개로 총 125개가 통과했습니다. VS Code
+(런타임별 비지원 기능은 예상대로 skip). .NET Release suite는 App 123개,
+Protocol 5개, Integration 2개로 총 130개가 통과했습니다. VS Code
 debugpy breakpoint 연결은 CPython 3.12에서 DataFrame/Object Tree와 OpenCV
 gradient·rectangle·text·gray·mask 변경까지 실제 검증했으며, Live Attach는
 로컬 CPython 3.14.0rc2 Windows x64 런타임에서 검증했습니다.
@@ -499,10 +499,16 @@ watchpoint가 아니라 bounded snapshot 비교로 해석해야 합니다.
 - class attributes와 inherited members
 - 함수 parameter의 kind, 안전한 default preview와 annotation text
 - 사용할 수 있는 경우 선언 source의 file과 line
+- 이름, 종류, 선언 class, signature/detail, source와 parameter를 대상으로 하는
+  재귀 검색
 
 클래스 검사는 direct class dictionary와 MRO를 정적으로 읽습니다. property,
 descriptor, annotation thunk 또는 사용자 callable을 실행하지 않으며, member와
-parameter 수 및 표시 문자열을 제한합니다.
+parameter 수 및 표시 문자열을 제한합니다. 검색은 이 안전 한도 안에 이미 로드된
+class detail만 대소문자 구분 없이 찾습니다. 공백으로 나눈 단어는 한 항목 안에서
+모두 일치해야 하며, 일치한 하위 항목의 조상 경로는 자동으로 표시·확장됩니다.
+**Clear**는 검색 전 펼침 상태를 복원하고 검색 자체는 Python 대상에 추가 요청을
+보내지 않습니다.
 
 ### Array and Image
 

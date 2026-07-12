@@ -3,9 +3,12 @@ using System.IO;
 using System.Net.Http;
 using System.Windows;
 using System.Windows.Automation;
+using System.Windows.Automation.Peers;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using PyRuntimeInspector.App.Services;
 using PyRuntimeInspector.App.ViewModels;
 
@@ -278,6 +281,23 @@ public partial class MainWindow : Window
         {
             Owner = this,
         }.ShowDialog();
+    }
+
+    private void ClassTreeSearchStatus_TargetUpdated(object sender, DataTransferEventArgs e)
+    {
+        if (sender is not FrameworkElement element || !element.IsLoaded)
+            return;
+
+        _ = element.Dispatcher.BeginInvoke(
+            DispatcherPriority.ContextIdle,
+            new Action(() =>
+            {
+                if (!element.IsLoaded)
+                    return;
+                var peer = UIElementAutomationPeer.FromElement(element)
+                    ?? UIElementAutomationPeer.CreatePeerForElement(element);
+                peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+            }));
     }
 
     private void ShowAvailableUpdate(GitHubUpdateRelease release)

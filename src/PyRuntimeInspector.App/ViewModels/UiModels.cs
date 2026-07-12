@@ -215,14 +215,23 @@ public sealed class ObjectTreeNode : ObservableObject
     public string Address => Value?.Address ?? "";
 }
 
-public sealed class ClassTreeNode
+public sealed class ClassTreeNode : ObservableObject
 {
+    private bool _isExpanded;
+    private bool _isSearchVisible = true;
+    private bool _isSearchMatch;
+    private bool _isSearchAncestor;
+
     public required string Label { get; init; }
     public string Kind { get; init; } = "";
     public string Detail { get; init; } = "";
     public string DeclaredBy { get; init; } = "";
     public string Source { get; init; } = "";
     public ObservableCollection<ClassTreeNode> Children { get; } = [];
+    public bool IsExpanded { get => _isExpanded; set => SetProperty(ref _isExpanded, value); }
+    public bool IsSearchVisible { get => _isSearchVisible; set => SetProperty(ref _isSearchVisible, value); }
+    public bool IsSearchMatch { get => _isSearchMatch; set => SetProperty(ref _isSearchMatch, value); }
+    public bool IsSearchAncestor { get => _isSearchAncestor; set => SetProperty(ref _isSearchAncestor, value); }
 }
 
 public sealed record ObjectChildRow(

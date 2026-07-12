@@ -218,14 +218,16 @@ public static class HelpCatalog
             "검사",
             "Object Tree와 Class & Methods",
             "선택한 객체의 계층, 현재 위치, class, MRO, method와 parameter를 안전하게 탐색합니다.",
-            "object tree 객체 계층 breadcrumb 경로 parent back forward history depth cycle pin class methods method parameter signature MRO property instance field",
-            "Variables에서 객체를 선택하면 Overview와 Object Tree가 같은 선택 컨텍스트를 사용합니다. Object Tree는 collection item, mapping value와 instance field를 그룹화하고 필요한 child만 지연 로딩합니다. Class & Methods는 선택한 instance의 class, base class, MRO, method 종류와 안전한 signature를 정리합니다.",
+            "object tree 객체 계층 breadcrumb 경로 parent back forward history depth cycle pin class methods method parameter signature MRO property instance field search 검색 declaring class source annotation default",
+            "Variables에서 객체를 선택하면 Overview와 Object Tree가 같은 선택 컨텍스트를 사용합니다. Object Tree는 collection item, mapping value와 instance field를 그룹화하고 필요한 child만 지연 로딩합니다. Class & Methods는 선택한 instance의 class, base class, MRO, method 종류와 안전한 signature를 정리하며, 이미 로드된 class detail 트리를 재귀적으로 검색합니다.",
             [
                 "Variables에서 expandable 객체를 선택합니다.",
                 "Overview에서 기본 정보와 immediate child를 확인하거나 Object Tree에서 항목을 펼칩니다.",
                 "상단 breadcrumb로 현재 객체 경로와 깊이를 확인하고 Back, Forward, Parent 또는 breadcrumb 항목으로 이동합니다.",
                 "Load more가 나타나면 다음 100개 child를 요청합니다. cycle 표시는 조상 객체를 다시 만난 상태입니다.",
                 "Class & Methods에서 Instance fields, Methods, Class attributes를 펼치고 method 종류와 parameter signature를 확인합니다.",
+                "Class 검색에 이름, 종류, 선언 class, signature/detail, source 또는 parameter 내용을 입력합니다. 공백으로 나눈 모든 단어가 하나의 항목에 포함되어야 일치합니다.",
+                "하위 항목이 일치하면 그 위치를 보여 주는 조상 경로가 자동으로 펼쳐집니다. Clear를 누르면 검색 전 펼침 상태로 돌아갑니다.",
                 "자주 보는 객체는 Pin으로 고정해 다른 source를 탐색한 뒤 다시 엽니다.",
             ],
             """
@@ -242,6 +244,8 @@ public static class HelpCatalog
             """,
             [
                 "Safe Mode는 property getter, arbitrary repr/getattr/dir와 callable을 실행하지 않습니다.",
+                "Class 검색은 현재 선택에서 안전 한도 안에 이미 로드된 항목만 찾으며, 검색 때문에 Python 대상에 추가 요청을 보내지는 않습니다.",
+                "F5 detail refresh는 검색어와 검색 전 펼침 상태를 유지하지만 새 객체 선택, Back, Forward와 Parent 이동은 검색을 초기화합니다.",
                 "순환 참조, 최대 깊이, pagination과 handle 만료 상태를 명시적으로 표시합니다.",
             ]),
         new(

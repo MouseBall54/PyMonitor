@@ -84,6 +84,24 @@ public sealed class HelpViewModelTests
     }
 
     [Fact]
+    public void ObjectClassHelpExplainsRecursiveLoadedTreeSearch()
+    {
+        var topic = Assert.Single(HelpCatalog.Topics, topic => topic.Id == "objects-classes");
+        var content = string.Join('\n',
+            topic.Summary,
+            topic.Keywords,
+            topic.Overview,
+            string.Join('\n', topic.Steps),
+            string.Join('\n', topic.Notes));
+
+        Assert.Contains("재귀", content, StringComparison.Ordinal);
+        Assert.Contains("이미 로드된", content, StringComparison.Ordinal);
+        Assert.Contains("추가 요청", content, StringComparison.Ordinal);
+        Assert.Contains("검색 전 펼침 상태", content, StringComparison.Ordinal);
+        Assert.Contains("모든 단어가 하나의 항목", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ViewModelRepresentsEmptyQueryNoResultsAndClearSearchStates()
     {
         var viewModel = new HelpViewModel();

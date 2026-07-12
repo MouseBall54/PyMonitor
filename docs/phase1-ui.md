@@ -120,6 +120,15 @@ class attributes, and inherited members. Function nodes can contain structured
 parameter children with kind, bounded default preview, and safe annotation
 text. Source file and first line are shown when code metadata is available.
 
+Class search recursively matches the name, kind, declaring class,
+signature/detail, source, and parameter text of the class details already
+loaded for the current selection. Whitespace-separated terms are
+case-insensitive AND terms within one item. A descendant match keeps and
+expands its ancestor path; only the matching detail is emphasized and counted.
+Clearing the query restores the expansion state from before the search. Search
+does not issue another target request, so results remain limited to the bounded
+class description currently loaded in the tree.
+
 All class data is obtained through static class dictionaries and code-object
 metadata. PyMonitor does not invoke properties, descriptors, annotation
 thunks, wrapped user callables, or user-defined `repr` while building this

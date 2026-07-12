@@ -209,6 +209,260 @@ public sealed class VariablesCenteredUxTests
     }
 
     [Fact]
+    public async Task ClassTreeSearchMatchesAllNodeFieldsPreservesPathsAndRestoresExpansion()
+    {
+        var session = new UxSession
+        {
+            ObjectChildren = ObjectChildrenResult(),
+            ClassDescription = StructuredClassDescription(membersTruncated: true),
+        };
+        session.EnqueueScope(ScopeResult(
+            Value("selected", "root-handle", "root-identity", "root-metadata", address: "0x100", expandable: true)));
+        await using var viewModel = await ConnectedViewModelAsync(session);
+
+        await viewModel.LoadScopeAsync(ScopeNode(), resetPage: true);
+        viewModel.SelectedVariable = Assert.Single(viewModel.Variables);
+        await EventuallyAsync(() => viewModel.InspectorState == InspectorPaneState.Ready);
+
+        var allNodes = FlattenClassTree(viewModel.ClassTree).ToArray();
+        var semanticNodes = allNodes.Where(IsSemanticClassTreeNode).ToArray();
+        var overview = Assert.Single(viewModel.ClassTree, node => node.Label == "Class overview");
+        var metaclass = Assert.Single(overview.Children, node => node.Label == "Metaclass");
+        var methods = Assert.Single(viewModel.ClassTree, node => node.Label == "Instance methods");
+        var render = Assert.Single(methods.Children, node => node.Label == "render");
+        var parameters = Assert.Single(render.Children, node => node.Label == "Parameters");
+        var width = Assert.Single(parameters.Children, node => node.Label == "width");
+        var inheritedGroup = Assert.Single(viewModel.ClassTree, node => node.Label == "Inherited members");
+        var inheritedName = Assert.Single(inheritedGroup.Children, node => node.Label == "name");
+        var truncatedStatus = Assert.Single(viewModel.ClassTree, node => node.Kind == "status");
+        overview.IsExpanded = true;
+        methods.IsExpanded = false;
+        render.IsExpanded = false;
+        parameters.IsExpanded = false;
+        var requestCount = session.Requests.Count;
+
+        viewModel.ClassTreeSearchText = "  WIDTH   positionalOrKeyword  80 ";
+
+        Assert.True(width.IsSearchVisible);
+        Assert.True(width.IsSearchMatch);
+        Assert.False(width.IsSearchAncestor);
+        Assert.True(parameters.IsSearchVisible);
+        Assert.False(parameters.IsSearchMatch);
+        Assert.True(parameters.IsSearchAncestor);
+        Assert.True(parameters.IsExpanded);
+        Assert.True(render.IsSearchAncestor);
+        Assert.True(render.IsExpanded);
+        Assert.True(methods.IsSearchAncestor);
+        Assert.True(methods.IsExpanded);
+        Assert.False(overview.IsSearchVisible);
+        Assert.Contains($"1 of {semanticNodes.Length} loaded class details match", viewModel.ClassTreeSearchResultLabel);
+        Assert.Contains("additional class members omitted", viewModel.ClassTreeSearchResultLabel);
+        Assert.Contains("2 of 300 members loaded", viewModel.ClassTreeSearchResultLabel);
+        Assert.False(viewModel.IsClassTreeSearchEmpty);
+
+        viewModel.ClassTreeSearchText = "RENDER sample.PY";
+
+        Assert.True(render.IsSearchMatch);
+        Assert.False(render.IsSearchAncestor);
+        Assert.True(methods.IsSearchAncestor);
+        Assert.False(width.IsSearchVisible);
+
+        viewModel.ClassTreeSearchText = "BASE property";
+
+        Assert.True(inheritedName.IsSearchMatch);
+        Assert.True(inheritedGroup.IsSearchAncestor);
+        Assert.False(methods.IsSearchVisible);
+
+        viewModel.ClassTreeSearchText = "BUILTINS metadata";
+
+        Assert.True(metaclass.IsSearchMatch);
+        Assert.True(overview.IsSearchAncestor);
+
+        viewModel.ClassTreeSearchText = "MRO";
+
+        var mro = Assert.Single(overview.Children, node => node.Label == "MRO");
+        Assert.False(mro.IsSearchVisible);
+        Assert.False(mro.IsSearchMatch);
+        Assert.False(mro.IsSearchAncestor);
+        Assert.True(viewModel.IsClassTreeSearchEmpty);
+        Assert.StartsWith($"0 of {semanticNodes.Length} loaded class details match", viewModel.ClassTreeSearchResultLabel);
+
+        viewModel.ClassTreeSearchText = "Additional class members omitted";
+
+        Assert.False(truncatedStatus.IsSearchVisible);
+        Assert.False(truncatedStatus.IsSearchMatch);
+        Assert.True(viewModel.IsClassTreeSearchEmpty);
+
+        viewModel.ClassTreeSearchText = "render positionalOrKeyword";
+
+        Assert.True(viewModel.IsClassTreeSearchEmpty);
+        Assert.StartsWith($"0 of {semanticNodes.Length} loaded class details match", viewModel.ClassTreeSearchResultLabel);
+
+        viewModel.ClassTreeSearchText = "render missing-token";
+
+        Assert.True(viewModel.IsClassTreeSearchEmpty);
+        Assert.StartsWith($"0 of {semanticNodes.Length} loaded class details match", viewModel.ClassTreeSearchResultLabel);
+        Assert.All(viewModel.ClassTree, node => Assert.False(node.IsSearchVisible));
+
+        viewModel.ClearClassTreeSearchCommand.Execute(null);
+
+        Assert.Equal("", viewModel.ClassTreeSearchText);
+        Assert.False(viewModel.IsClassTreeSearchEmpty);
+        Assert.StartsWith($"{semanticNodes.Length} loaded class details", viewModel.ClassTreeSearchResultLabel);
+        Assert.Contains("additional class members omitted", viewModel.ClassTreeSearchResultLabel);
+        Assert.All(allNodes, node =>
+        {
+            Assert.True(node.IsSearchVisible);
+            Assert.False(node.IsSearchMatch);
+            Assert.False(node.IsSearchAncestor);
+        });
+        Assert.True(overview.IsExpanded);
+        Assert.False(methods.IsExpanded);
+        Assert.False(render.IsExpanded);
+        Assert.False(parameters.IsExpanded);
+        Assert.Equal(requestCount, session.Requests.Count);
+    }
+
+    [Fact]
+    public async Task ClassTreeSearchResetsWhenSelectionBuildsANewTree()
+    {
+        var session = new UxSession
+        {
+            ObjectChildren = ObjectChildrenResult(),
+            ClassDescription = StructuredClassDescription(),
+        };
+        session.EnqueueScope(ScopeResult(
+            Value("first", "first-handle", "first-identity", "first-metadata", address: "0x100", expandable: true),
+            Value("second", "second-handle", "second-identity", "second-metadata", address: "0x200", expandable: true)));
+        await using var viewModel = await ConnectedViewModelAsync(session);
+
+        await viewModel.LoadScopeAsync(ScopeNode(), resetPage: true);
+        viewModel.SelectedVariable = Assert.Single(viewModel.Variables, row => row.Name == "first");
+        await EventuallyAsync(() => viewModel.InspectorState == InspectorPaneState.Ready);
+        var firstMethods = Assert.Single(viewModel.ClassTree, node => node.Label == "Instance methods");
+        firstMethods.IsExpanded = false;
+        viewModel.ClassTreeSearchText = "width positionalOrKeyword";
+        Assert.True(firstMethods.IsExpanded);
+
+        viewModel.SelectedVariable = Assert.Single(viewModel.Variables, row => row.Name == "second");
+        await EventuallyAsync(() => viewModel.SelectedObjectName == "second"
+            && viewModel.InspectorState == InspectorPaneState.Ready);
+
+        Assert.Equal("", viewModel.ClassTreeSearchText);
+        var secondMethods = Assert.Single(viewModel.ClassTree, node => node.Label == "Instance methods");
+        Assert.NotSame(firstMethods, secondMethods);
+        Assert.False(secondMethods.IsExpanded);
+        Assert.All(FlattenClassTree(viewModel.ClassTree), node =>
+        {
+            Assert.True(node.IsSearchVisible);
+            Assert.False(node.IsSearchMatch);
+            Assert.False(node.IsSearchAncestor);
+        });
+        Assert.False(viewModel.IsClassTreeSearchEmpty);
+    }
+
+    [Fact]
+    public async Task ClassTreeSearchSurvivesF5AndRestoresStructuralExpansionSnapshot()
+    {
+        var session = new UxSession
+        {
+            ObjectChildren = ObjectChildrenResult(),
+            ClassDescription = StructuredClassDescription(),
+        };
+        var rootValue = Value(
+            "selected",
+            "root-handle",
+            "root-identity",
+            "root-metadata",
+            address: "0x100",
+            expandable: true);
+        session.EnqueueScope(ScopeResult((JsonObject)rootValue.DeepClone()));
+        session.EnqueueScope(ScopeResult((JsonObject)rootValue.DeepClone()));
+        await using var viewModel = await ConnectedViewModelAsync(session);
+
+        await viewModel.LoadScopeAsync(ScopeNode(), resetPage: true);
+        viewModel.SelectedVariable = Assert.Single(viewModel.Variables);
+        await EventuallyAsync(() => viewModel.InspectorState == InspectorPaneState.Ready);
+        var firstOverview = Assert.Single(viewModel.ClassTree, node => node.Label == "Class overview");
+        var firstMethods = Assert.Single(viewModel.ClassTree, node => node.Label == "Instance methods");
+        var firstRender = Assert.Single(firstMethods.Children, node => node.Label == "render");
+        var firstParameters = Assert.Single(firstRender.Children, node => node.Label == "Parameters");
+        firstOverview.IsExpanded = true;
+        firstMethods.IsExpanded = false;
+        firstRender.IsExpanded = true;
+        firstParameters.IsExpanded = false;
+        viewModel.ClassTreeSearchText = "width positionalOrKeyword";
+        Assert.True(firstMethods.IsExpanded);
+        Assert.True(firstParameters.IsExpanded);
+
+        await viewModel.RefreshCommand.ExecuteAsync();
+
+        Assert.Equal("width positionalOrKeyword", viewModel.ClassTreeSearchText);
+        var refreshedOverview = Assert.Single(viewModel.ClassTree, node => node.Label == "Class overview");
+        var refreshedMethods = Assert.Single(viewModel.ClassTree, node => node.Label == "Instance methods");
+        var refreshedRender = Assert.Single(refreshedMethods.Children, node => node.Label == "render");
+        var refreshedParameters = Assert.Single(refreshedRender.Children, node => node.Label == "Parameters");
+        Assert.NotSame(firstMethods, refreshedMethods);
+        Assert.True(refreshedMethods.IsSearchAncestor);
+        Assert.True(refreshedMethods.IsExpanded);
+        Assert.True(refreshedParameters.IsExpanded);
+        Assert.True(Assert.Single(refreshedParameters.Children, node => node.Label == "width").IsSearchMatch);
+        var classRequestCount = session.Requests.Count(request => request.Method == "classes.describe");
+
+        viewModel.ClearClassTreeSearchCommand.Execute(null);
+
+        Assert.True(refreshedOverview.IsExpanded);
+        Assert.False(refreshedMethods.IsExpanded);
+        Assert.True(refreshedRender.IsExpanded);
+        Assert.False(refreshedParameters.IsExpanded);
+        Assert.All(FlattenClassTree(viewModel.ClassTree), node => Assert.True(node.IsSearchVisible));
+        Assert.Equal(classRequestCount, session.Requests.Count(request => request.Method == "classes.describe"));
+    }
+
+    [Fact]
+    public async Task LargeClassTreeSearchDebouncesAndAppliesOnlyTheLatestQuery()
+    {
+        var session = new UxSession
+        {
+            ClassDescription = LargeStructuredClassDescription(memberCount: 256, parametersPerMember: 8),
+        };
+        session.EnqueueScope(ScopeResult(
+            Value("selected", "root-handle", "root-identity", "root-metadata", address: "0x100", expandable: true)));
+        await using var viewModel = await ConnectedViewModelAsync(session);
+
+        await viewModel.LoadScopeAsync(ScopeNode(), resetPage: true);
+        viewModel.SelectedVariable = Assert.Single(viewModel.Variables);
+        await EventuallyAsync(() => viewModel.InspectorState == InspectorPaneState.Ready);
+        var semanticNodes = FlattenClassTree(viewModel.ClassTree).Where(IsSemanticClassTreeNode).ToArray();
+        Assert.True(semanticNodes.Length > 2_000);
+        var methods = Assert.Single(viewModel.ClassTree, node => node.Label == "Instance methods");
+        var first = Assert.Single(methods.Children, node => node.Label == "member_0000");
+        var latest = Assert.Single(methods.Children, node => node.Label == "member_0255");
+        var initialResultLabel = viewModel.ClassTreeSearchResultLabel;
+
+        viewModel.ClassTreeSearchText = "member_0000";
+        viewModel.ClassTreeSearchText = "member_0255";
+
+        Assert.Equal(initialResultLabel, viewModel.ClassTreeSearchResultLabel);
+        Assert.False(first.IsSearchMatch);
+        Assert.False(latest.IsSearchMatch);
+        Assert.True(first.IsSearchVisible);
+        Assert.True(latest.IsSearchVisible);
+
+        await EventuallyAsync(() => latest.IsSearchMatch);
+
+        Assert.Equal("member_0255", viewModel.ClassTreeSearchText);
+        Assert.False(first.IsSearchVisible);
+        Assert.False(first.IsSearchMatch);
+        Assert.True(latest.IsSearchVisible);
+        Assert.True(latest.IsSearchMatch);
+        Assert.StartsWith($"1 of {semanticNodes.Length:N0} loaded class details match", viewModel.ClassTreeSearchResultLabel);
+        await Task.Delay(TimeSpan.FromMilliseconds(200));
+        Assert.False(first.IsSearchMatch);
+        Assert.True(latest.IsSearchMatch);
+    }
+
+    [Fact]
     public async Task ObjectPathNavigationLabelsAndCopiedValuesPreserveUnderscores()
     {
         var session = new UxSession
@@ -1823,12 +2077,18 @@ public sealed class VariablesCenteredUxTests
         },
     };
 
-    private static JsonObject StructuredClassDescription() => new()
+    private static JsonObject StructuredClassDescription(bool membersTruncated = false) => new()
     {
         ["name"] = "Example",
         ["qualifiedName"] = "Example",
         ["module"] = "sample",
-        ["metaclass"] = new JsonObject { ["displayName"] = "builtins.type" },
+        ["metaclass"] = "type",
+        ["metaclassRef"] = new JsonObject
+        {
+            ["module"] = "builtins",
+            ["qualifiedName"] = "type",
+            ["displayName"] = "builtins.type",
+        },
         ["baseClassRefs"] = new JsonArray(new JsonObject { ["displayName"] = "base.BaseExample" }),
         ["mroRefs"] = new JsonArray(
             new JsonObject { ["displayName"] = "sample.Example" },
@@ -1838,17 +2098,23 @@ public sealed class VariablesCenteredUxTests
             {
                 ["name"] = "render",
                 ["kind"] = "instance method",
-                ["declaredBy"] = new JsonObject { ["displayName"] = "sample.Example" },
+                ["declaredBy"] = "Example",
+                ["declaredByRef"] = new JsonObject
+                {
+                    ["module"] = "sample",
+                    ["qualifiedName"] = "Example",
+                    ["displayName"] = "sample.Example",
+                },
                 ["inherited"] = false,
                 ["signatureDetails"] = new JsonObject
                 {
                     ["display"] = "(self, width: int = 80)",
                     ["parameters"] = new JsonArray(
-                        new JsonObject { ["name"] = "self", ["kind"] = "positional-or-keyword" },
+                        new JsonObject { ["name"] = "self", ["kind"] = "positionalOrKeyword" },
                         new JsonObject
                         {
                             ["name"] = "width",
-                            ["kind"] = "positional-or-keyword",
+                            ["kind"] = "positionalOrKeyword",
                             ["annotationText"] = "int",
                             ["defaultPreview"] = "80",
                         }),
@@ -1859,11 +2125,78 @@ public sealed class VariablesCenteredUxTests
             {
                 ["name"] = "name",
                 ["kind"] = "property",
-                ["declaredBy"] = new JsonObject { ["displayName"] = "base.BaseExample" },
+                ["declaredBy"] = "BaseExample",
+                ["declaredByRef"] = new JsonObject
+                {
+                    ["module"] = "base",
+                    ["qualifiedName"] = "BaseExample",
+                    ["displayName"] = "base.BaseExample",
+                },
                 ["inherited"] = true,
                 ["signature"] = "—",
             }),
+        ["memberTotal"] = membersTruncated ? 300 : 2,
+        ["memberLimit"] = 256,
+        ["membersTruncated"] = membersTruncated,
     };
+
+    private static JsonObject LargeStructuredClassDescription(int memberCount, int parametersPerMember)
+    {
+        var members = new JsonArray();
+        for (var memberIndex = 0; memberIndex < memberCount; memberIndex++)
+        {
+            var parameters = new JsonArray();
+            for (var parameterIndex = 0; parameterIndex < parametersPerMember; parameterIndex++)
+            {
+                parameters.Add(new JsonObject
+                {
+                    ["name"] = $"argument_{memberIndex:D4}_{parameterIndex:D2}",
+                    ["kind"] = "positionalOrKeyword",
+                    ["annotationText"] = "int",
+                });
+            }
+
+            members.Add(new JsonObject
+            {
+                ["name"] = $"member_{memberIndex:D4}",
+                ["kind"] = "instance method",
+                ["declaredBy"] = "Example",
+                ["declaredByRef"] = new JsonObject
+                {
+                    ["module"] = "sample",
+                    ["qualifiedName"] = "Example",
+                    ["displayName"] = "sample.Example",
+                },
+                ["inherited"] = false,
+                ["signature"] = "(self, ...)",
+                ["parameters"] = parameters.DeepClone(),
+                ["signatureDetails"] = new JsonObject
+                {
+                    ["display"] = "(self, ...)",
+                    ["parameters"] = parameters,
+                },
+            });
+        }
+
+        var description = StructuredClassDescription();
+        description["members"] = members;
+        description["memberTotal"] = memberCount;
+        description["memberLimit"] = memberCount;
+        return description;
+    }
+
+    private static IEnumerable<ClassTreeNode> FlattenClassTree(IEnumerable<ClassTreeNode> roots)
+    {
+        foreach (var root in roots)
+        {
+            yield return root;
+            foreach (var child in FlattenClassTree(root.Children))
+                yield return child;
+        }
+    }
+
+    private static bool IsSemanticClassTreeNode(ClassTreeNode node) =>
+        node.Kind is not ("group" or "metadata-group" or "parameters" or "status");
 
     private static T? FindVisualDescendant<T>(DependencyObject root) where T : DependencyObject
     {
