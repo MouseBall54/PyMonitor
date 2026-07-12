@@ -175,6 +175,44 @@
                                    TextWrapping="Wrap" />
                     </Grid>
                 </Border>
+
+                <Border Background="White"
+                        BorderBrush="{StaticResource AboutBorder}"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="16"
+                        Margin="0,16,0,0"
+                        AutomationProperties.Name="PyMonitor updates">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Text="UPDATES" Style="{StaticResource MetadataLabel}" />
+                        <TextBlock x:Name="UpdateStatusText"
+                                   Grid.Row="1"
+                                   Text="Check GitHub Releases for a newer stable version."
+                                   Foreground="#334155"
+                                   FontSize="13"
+                                   TextWrapping="Wrap"
+                                   Margin="0,2,0,10"
+                                   AutomationProperties.Name="{Binding Text, RelativeSource={RelativeSource Self}}"
+                                   AutomationProperties.LiveSetting="Polite" />
+                        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Left">
+                            <Button x:Name="CheckForUpdatesButton"
+                                    Content="Check for updates"
+                                    Click="CheckForUpdates_Click"
+                                    AutomationProperties.Name="Check GitHub for PyMonitor updates" />
+                            <Button x:Name="InstallUpdateButton"
+                                    Content="Download and install"
+                                    Click="InstallUpdate_Click"
+                                    Style="{StaticResource CloseButtonStyle}"
+                                    Visibility="Collapsed"
+                                    AutomationProperties.Name="Download and install available PyMonitor update" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
             </StackPanel>
         </ScrollViewer>
 

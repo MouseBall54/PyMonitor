@@ -185,6 +185,51 @@
             </Grid>
         </Border>
 
+        <Border x:Name="UpdateBanner"
+                Grid.Row="1"
+                Panel.ZIndex="20"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Top"
+                MaxWidth="640"
+                Margin="16,10,20,0"
+                Padding="10,7"
+                CornerRadius="6"
+                Background="{DynamicResource SuccessBackground}"
+                BorderBrush="{DynamicResource SuccessBrush}"
+                BorderThickness="1"
+                Visibility="Collapsed"
+                AutomationProperties.Name="PyMonitor update available"
+                AutomationProperties.LiveSetting="Polite">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Update available"
+                           Foreground="{DynamicResource SuccessBrush}"
+                           FontWeight="SemiBold"
+                           VerticalAlignment="Center"
+                           Margin="0,0,10,0" />
+                <TextBlock x:Name="UpdateBannerText"
+                           Grid.Column="1"
+                           Text="A newer PyMonitor release is available."
+                           VerticalAlignment="Center"
+                           TextWrapping="Wrap" />
+                <Button x:Name="UpdateInstallButton"
+                        Grid.Column="2"
+                        Content="Download and install"
+                        Click="UpdateInstall_Click"
+                        Style="{StaticResource PrimaryButton}"
+                        AutomationProperties.Name="Download and install PyMonitor update" />
+                <Button Grid.Column="3"
+                        Content="Later"
+                        Click="UpdateLater_Click"
+                        AutomationProperties.Name="Dismiss PyMonitor update" />
+            </Grid>
+        </Border>
+
         <!-- Primary workspaces -->
         <TabControl Grid.Row="1"
                     SelectedIndex="{Binding SelectedWorkspaceTabIndex}"

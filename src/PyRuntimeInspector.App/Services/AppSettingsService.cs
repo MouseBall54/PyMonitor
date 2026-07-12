@@ -29,6 +29,7 @@ public sealed class AppSettings
     public bool IsWindowMaximized { get; init; }
     public double LeftPaneWidth { get; init; } = DefaultLeftPaneWidth;
     public double RightPaneWidth { get; init; } = DefaultRightPaneWidth;
+    public DateTimeOffset? LastAutomaticUpdateCheckUtc { get; init; }
     public Dictionary<string, double> ColumnWidths { get; init; } = [];
 
     public static AppSettings CreateDefault() => new();
@@ -53,6 +54,7 @@ public sealed class AppSettings
             IsWindowMaximized = settings.IsWindowMaximized,
             LeftPaneWidth = FiniteAndBounded(settings.LeftPaneWidth, DefaultLeftPaneWidth, 160, 800),
             RightPaneWidth = FiniteAndBounded(settings.RightPaneWidth, DefaultRightPaneWidth, 300, 1200),
+            LastAutomaticUpdateCheckUtc = settings.LastAutomaticUpdateCheckUtc?.ToUniversalTime(),
             ColumnWidths = NormalizeColumnWidths(settings.ColumnWidths),
         };
     }

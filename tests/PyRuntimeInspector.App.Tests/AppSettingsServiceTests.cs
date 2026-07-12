@@ -12,6 +12,7 @@ public sealed class AppSettingsServiceTests
         using var directory = new TemporaryDirectory();
         var path = Path.Combine(directory.Path, "nested", "settings.json");
         var service = new JsonAppSettingsService(path);
+        var lastUpdateCheck = new DateTimeOffset(2026, 7, 12, 9, 30, 0, TimeSpan.FromHours(9));
         var expected = new AppSettings
         {
             Theme = "Dark",
@@ -21,6 +22,7 @@ public sealed class AppSettingsServiceTests
             IsWindowMaximized = true,
             LeftPaneWidth = 320,
             RightPaneWidth = 420,
+            LastAutomaticUpdateCheckUtc = lastUpdateCheck,
             ColumnWidths = new Dictionary<string, double>
             {
                 ["Variables.Name"] = 180,
@@ -39,6 +41,7 @@ public sealed class AppSettingsServiceTests
         Assert.Equal(expected.IsWindowMaximized, actual.IsWindowMaximized);
         Assert.Equal(expected.LeftPaneWidth, actual.LeftPaneWidth);
         Assert.Equal(expected.RightPaneWidth, actual.RightPaneWidth);
+        Assert.Equal(lastUpdateCheck.ToUniversalTime(), actual.LastAutomaticUpdateCheckUtc);
         Assert.Equal(expected.ColumnWidths, actual.ColumnWidths);
         Assert.Empty(Directory.EnumerateFiles(Path.GetDirectoryName(path)!, "*.tmp"));
     }

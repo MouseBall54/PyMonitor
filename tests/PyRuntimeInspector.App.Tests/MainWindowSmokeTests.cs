@@ -11,6 +11,7 @@ using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
+using PyRuntimeInspector.App.Infrastructure;
 using PyRuntimeInspector.App.Services;
 using PyRuntimeInspector.App.ViewModels;
 using Xunit;
@@ -45,7 +46,11 @@ public sealed class MainWindowSmokeTests
 
                 application = new App();
                 application.InitializeComponent();
-                window = new MainWindow(new JsonAppSettingsService(testSettingsPath))
+                var updateManager = new AppUpdateManager(new AvailableUpdateService());
+                window = new MainWindow(
+                    new JsonAppSettingsService(testSettingsPath),
+                    updateManager,
+                    new NoOpUpdateInstallerLauncher())
                 {
                     WindowStartupLocation = WindowStartupLocation.Manual,
                     Left = 0,
@@ -59,6 +64,13 @@ public sealed class MainWindowSmokeTests
 
                 Assert.InRange(window.ActualWidth, 950, 970);
                 Assert.InRange(window.ActualHeight, 530, 550);
+                var updateBanner = Descendants<Border>(window)
+                    .Single(border => AutomationProperties.GetName(border) == "PyMonitor update available");
+                Assert.Equal(Visibility.Visible, updateBanner.Visibility);
+                Assert.Equal(AutomationLiveSetting.Polite, AutomationProperties.GetLiveSetting(updateBanner));
+                var updateAction = Descendants<Button>(updateBanner)
+                    .Single(button => AutomationProperties.GetName(button) == "Download and install PyMonitor update");
+                AssertElementIsVisibleAndInside(updateAction, window, "Update action", "minimum supported viewport");
                 var primaryActions = Descendants<Button>(window)
                     .Where(button => button.Content is string text
                         && text is "Quick Attach" or "Refresh" or "Detach" or "Help" or "About")
@@ -193,9 +205,23 @@ public sealed class MainWindowSmokeTests
                 Assert.True(copyItem.IsEnabled);
                 copyMenu.IsOpen = false;
 
-                var aboutWindow = new AboutWindow { Owner = window };
+                var aboutWindow = new AboutWindow(
+                    updateManager,
+                    _ => { },
+                    (_, _) => Task.CompletedTask)
+                {
+                    Owner = window,
+                };
                 aboutWindow.Show();
                 aboutWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                var updateStatus = LogicalDescendants<TextBlock>(aboutWindow)
+                    .Single(text => AutomationProperties.GetLiveSetting(text) == AutomationLiveSetting.Polite);
+                Assert.Equal(updateStatus.Text, AutomationProperties.GetName(updateStatus));
+                Assert.Contains("26.7.12", updateStatus.Text, StringComparison.Ordinal);
+                Assert.True(LogicalDescendants<Button>(aboutWindow)
+                    .Single(button => AutomationProperties.GetName(button)
+                        == "Download and install available PyMonitor update")
+                    .IsVisible);
                 var aboutText = Descendants<TextBlock>(aboutWindow)
                     .First(text => !string.IsNullOrWhiteSpace(text.Text));
                 aboutText.RaiseEvent(new MouseButtonEventArgs(
@@ -314,6 +340,7 @@ public sealed class MainWindowSmokeTests
         Assert.Null(exception);
         thread.Join(TimeSpan.FromSeconds(2));
         Assert.True(File.Exists(testSettingsPath), "Closing the smoke-test window should save only its isolated settings file.");
+        Assert.NotNull(new JsonAppSettingsService(testSettingsPath).Load().LastAutomaticUpdateCheckUtc);
         Assert.Equal(userSettingsBefore, CaptureFile(userSettingsPath));
     }
 
@@ -479,6 +506,42 @@ public sealed class MainWindowSmokeTests
         long Length,
         DateTime LastWriteTimeUtc,
         string? Sha256);
+
+    private sealed class AvailableUpdateService : IGitHubUpdateService
+    {
+        private static readonly SemanticVersion CurrentVersion = SemanticVersion.Parse("26.7.11");
+        private static readonly SemanticVersion LatestVersion = SemanticVersion.Parse("26.7.12");
+        private static readonly string InstallerName = $"PyMonitor-{LatestVersion}-win-x64.msi";
+        private static readonly GitHubUpdateRelease Release = new(
+            LatestVersion,
+            $"v{LatestVersion}",
+            $"PyMonitor v{LatestVersion}",
+            new Uri($"https://github.com/example/PyMonitor/releases/tag/v{LatestVersion}"),
+            DateTimeOffset.UtcNow,
+            new GitHubReleaseAsset(
+                InstallerName,
+                new Uri($"https://github.com/example/PyMonitor/releases/download/v{LatestVersion}/{InstallerName}"),
+                1),
+            new GitHubReleaseAsset(
+                InstallerName + ".sha256",
+                new Uri($"https://github.com/example/PyMonitor/releases/download/v{LatestVersion}/{InstallerName}.sha256"),
+                1));
+
+        public Task<UpdateCheckResult> CheckForUpdateAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(new UpdateCheckResult(CurrentVersion, Release));
+
+        public Task<VerifiedUpdateInstaller> DownloadAndVerifyInstallerAsync(
+            GitHubUpdateRelease release,
+            string destinationDirectory,
+            CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("The smoke test must not start an update download.");
+    }
+
+    private sealed class NoOpUpdateInstallerLauncher : IUpdateInstallerLauncher
+    {
+        public void Launch(VerifiedUpdateInstaller installer) =>
+            throw new InvalidOperationException("The smoke test must not start Windows Installer.");
+    }
 
     private sealed class TemporaryDirectory : IDisposable
     {

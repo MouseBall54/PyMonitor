@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.IO;
+using System.Net.Http;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -25,23 +26,45 @@ public partial class MainWindow : Window
 
     private readonly IAppSettingsService _settingsService;
     private readonly AppSettings _settings;
+    private readonly AppUpdateManager _updateManager;
+    private readonly IUpdateInstallerLauncher _installerLauncher;
     private HelpWindow? _helpWindow;
     private bool _panning;
     private bool _applyingTheme;
+    private bool _installingUpdate;
+    private bool _viewModelDisposed;
     private string _theme = AppSettings.DefaultTheme;
+    private DateTimeOffset? _lastAutomaticUpdateCheckUtc;
     private Point _panOrigin;
     private double _horizontalOrigin;
     private double _verticalOrigin;
 
     public MainWindow()
-        : this(new JsonAppSettingsService())
+        : this(
+            new JsonAppSettingsService(),
+            AppUpdateManager.CreateDefault(),
+            new WindowsInstallerLauncher())
     {
     }
 
     public MainWindow(IAppSettingsService settingsService)
+        : this(
+            settingsService,
+            AppUpdateManager.CreateDefault(),
+            new WindowsInstallerLauncher())
+    {
+    }
+
+    public MainWindow(
+        IAppSettingsService settingsService,
+        AppUpdateManager updateManager,
+        IUpdateInstallerLauncher installerLauncher)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
+        _updateManager = updateManager ?? throw new ArgumentNullException(nameof(updateManager));
+        _installerLauncher = installerLauncher ?? throw new ArgumentNullException(nameof(installerLauncher));
         _settings = _settingsService.Load();
+        _lastAutomaticUpdateCheckUtc = _settings.LastAutomaticUpdateCheckUtc;
         InitializeComponent();
         DataContext = new MainViewModel();
         ViewModel.LaunchOutput.CollectionChanged += LaunchOutput_CollectionChanged;
@@ -148,10 +171,34 @@ public partial class MainWindow : Window
         await ViewModel.ExpandObjectNodeAsync(node);
     }
 
-    private void Window_Loaded(object sender, RoutedEventArgs e)
+    private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
         if (_settings.IsWindowMaximized)
             WindowState = WindowState.Maximized;
+
+        if (!_updateManager.IsConfigured)
+            return;
+
+        var now = DateTimeOffset.UtcNow;
+        if (!AppUpdateManager.IsAutomaticCheckDue(_lastAutomaticUpdateCheckUtc, now))
+            return;
+
+        _lastAutomaticUpdateCheckUtc = now;
+        TrySaveSettings();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        try
+        {
+            var result = await _updateManager.CheckForUpdateAsync(timeout.Token);
+            if (result is { IsUpdateAvailable: true })
+                ShowAvailableUpdate(result.LatestRelease);
+        }
+        catch (Exception exception) when (exception is ApplicationUpdateException
+                                               or HttpRequestException
+                                               or OperationCanceledException
+                                               or IOException)
+        {
+            // Automatic checks are best-effort and must never interrupt startup or offline work.
+        }
     }
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
@@ -194,7 +241,13 @@ public partial class MainWindow : Window
     {
         if (_helpWindow is null)
         {
-            _helpWindow = new HelpWindow { Owner = this };
+            _helpWindow = new HelpWindow(
+                _updateManager,
+                ShowAvailableUpdate,
+                InstallUpdateAsync)
+            {
+                Owner = this,
+            };
             _helpWindow.Closed += HelpWindow_Closed;
             _helpWindow.Show();
         }
@@ -218,7 +271,101 @@ public partial class MainWindow : Window
 
     private void About_Click(object sender, RoutedEventArgs e)
     {
-        new AboutWindow { Owner = this }.ShowDialog();
+        new AboutWindow(
+            _updateManager,
+            ShowAvailableUpdate,
+            InstallUpdateAsync)
+        {
+            Owner = this,
+        }.ShowDialog();
+    }
+
+    private void ShowAvailableUpdate(GitHubUpdateRelease release)
+    {
+        UpdateBanner.Tag = release;
+        UpdateBannerText.Text = $"PyMonitor {release.Version} is available.";
+        UpdateBanner.Visibility = Visibility.Visible;
+        UpdateInstallButton.IsEnabled = true;
+        UpdateInstallButton.Content = "Download and install";
+    }
+
+    private async void UpdateInstall_Click(object sender, RoutedEventArgs e)
+    {
+        if (UpdateBanner.Tag is GitHubUpdateRelease release)
+            await InstallUpdateAsync(this, release);
+    }
+
+    private void UpdateLater_Click(object sender, RoutedEventArgs e) =>
+        UpdateBanner.Visibility = Visibility.Collapsed;
+
+    private async Task InstallUpdateAsync(Window owner, GitHubUpdateRelease release)
+    {
+        if (_installingUpdate)
+            return;
+
+        var confirmation = MessageBox.Show(
+            owner,
+            $"Download and install PyMonitor {release.Version}?\n\n"
+            + "PyMonitor will verify the release SHA-256 and Windows publisher signature before asking for administrator approval. "
+            + "If this is a Portable copy, continuing switches future updates to the installed MSI version.",
+            "PyMonitor update",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Information,
+            MessageBoxResult.No);
+        if (confirmation != MessageBoxResult.Yes)
+            return;
+
+        _installingUpdate = true;
+        UpdateInstallButton.IsEnabled = false;
+        UpdateInstallButton.Content = "Downloading and verifying…";
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+            var installer = await _updateManager.DownloadAndVerifyInstallerAsync(release, timeout.Token);
+            _installerLauncher.Launch(installer);
+
+            TrySaveSettings();
+            if (!_viewModelDisposed)
+            {
+                _viewModelDisposed = true;
+                try
+                {
+                    await ViewModel.DisposeAsync();
+                }
+                catch
+                {
+                    // Windows Installer has already started; shutdown must continue to release application files.
+                }
+            }
+            Application.Current?.Shutdown();
+        }
+        catch (Exception exception) when (exception is ApplicationUpdateException
+                                               or HttpRequestException
+                                               or OperationCanceledException
+                                               or IOException
+                                               or UnauthorizedAccessException
+                                               or System.ComponentModel.Win32Exception
+                                               or InvalidOperationException)
+        {
+            if (owner.IsLoaded)
+            {
+                MessageBox.Show(
+                    owner,
+                    $"The update was not installed.\n\n{exception.Message}",
+                    "PyMonitor update",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+        }
+        finally
+        {
+            _installingUpdate = false;
+            if (IsLoaded)
+            {
+                UpdateInstallButton.IsEnabled = true;
+                UpdateInstallButton.Content = "Download and install";
+            }
+        }
     }
 
     private void ThemeSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -339,6 +486,11 @@ public partial class MainWindow : Window
 
     private void Window_Closing(object? sender, CancelEventArgs e)
     {
+        TrySaveSettings();
+    }
+
+    private void TrySaveSettings()
+    {
         var bounds = WindowState == WindowState.Normal
             ? new Rect(Left, Top, ActualWidth, ActualHeight)
             : RestoreBounds;
@@ -353,6 +505,7 @@ public partial class MainWindow : Window
                 IsWindowMaximized = WindowState == WindowState.Maximized,
                 LeftPaneWidth = LeftPaneColumn.ActualWidth,
                 RightPaneWidth = VariablePaneColumn.ActualWidth,
+                LastAutomaticUpdateCheckUtc = _lastAutomaticUpdateCheckUtc,
                 ColumnWidths = new Dictionary<string, double>
                 {
                     ["Variables.Name"] = VariableNameColumn.ActualWidth,
@@ -375,6 +528,11 @@ public partial class MainWindow : Window
     private async void Window_Closed(object? sender, EventArgs e)
     {
         ViewModel.LaunchOutput.CollectionChanged -= LaunchOutput_CollectionChanged;
-        await ViewModel.DisposeAsync();
+        _updateManager.Dispose();
+        if (!_viewModelDisposed)
+        {
+            _viewModelDisposed = true;
+            await ViewModel.DisposeAsync();
+        }
     }
 }

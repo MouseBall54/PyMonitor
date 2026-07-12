@@ -215,12 +215,24 @@ class ReleaseMetadataTests(unittest.TestCase):
             "별도 .NET 10 runtime을 설치할 필요가 없",
             "대상 CPython 3.10~3.14",
             "대상 Python 또는 대상 venv/Conda 환경",
-            "자동 업데이트 기능은 없",
+            "최신 안정 Release",
+            "24시간이 지났을 때",
+            "About > Check for updates",
+            "GitHubRepository",
+            "repository metadata가 없는 로컬 개발 빌드",
+            "Release 저장소는 공개",
+            "private GitHub Release",
+            "Windows Authenticode",
+            "Windows UAC",
+            "MSI major upgrade",
+            "Windows MSI 설치 방식으로 전환",
             "설정 > 앱 > 설치된 앱 > PyMonitor > 제거",
             "Portable 제거",
             "%LOCALAPPDATA%\\PyMonitor\\settings.json",
         ):
             self.assertIn(expected, install)
+        self.assertNotIn("자동 업데이트 기능은 없", install)
+        self.assertNotIn("- MSI 업데이트:", install)
 
         quick_start = markdown_section(readme, "5분 빠른 시작")
         for expected in (
@@ -268,6 +280,55 @@ class ReleaseMetadataTests(unittest.TestCase):
             self.assertIn("pip install --disable-pip-version-check numpy pandas matplotlib", workflow)
             self.assertIn('import matplotlib, numpy, pandas', workflow)
 
+    def test_release_docs_define_update_and_github_publication_contracts(self):
+        release_doc = (self.root / "docs" / "release.md").read_text(encoding="utf-8")
+
+        update_contract = markdown_section(release_doc, "In-app update contract")
+        for expected in (
+            "GitHubRepository",
+            "latest stable Release",
+            "at most once",
+            "per 24 hours",
+            "About > Check for updates",
+            "local build with",
+            "empty repository metadata",
+            "public Releases",
+            "no embedded GitHub token",
+            "PyMonitor-<version>-win-x64.msi",
+            "PyMonitor-<version>-win-x64.msi.sha256",
+            "SHA-256",
+            "Authenticode",
+            "UAC",
+            "major upgrade",
+            "changes the installation model to a machine-wide MSI",
+        ):
+            self.assertIn(expected, update_contract)
+
+        runbook = markdown_section(release_doc, "GitHub release operator runbook")
+        for expected in (
+            "permissions: contents: write",
+            "WINDOWS_CERTIFICATE_BASE64",
+            "WINDOWS_CERTIFICATE_PASSWORD",
+            "Directory.Build.props",
+            "agent/pyproject.toml",
+            "agent/pyruntime_inspector_agent/__init__.py",
+            "agent/pyruntime_inspector_agent/server.py",
+            "rg -n --fixed-strings '<previous-version>'",
+            'git commit -m "release: PyMonitor $version"',
+            'git tag -a "v$version"',
+            'git push origin "v$version"',
+            "GITHUB_REPOSITORY",
+            "PyMonitor-X.Y.Z-win-x64.zip",
+            "PyMonitor-X.Y.Z-win-x64.zip.sha256",
+            "PyMonitor-X.Y.Z-win-x64.msi",
+            "PyMonitor-X.Y.Z-win-x64.msi.sha256",
+            "workflow_dispatch",
+            "Publication failure conditions",
+            "contents: write",
+            "gh release create",
+        ):
+            self.assertIn(expected, runbook)
+
     def test_signed_installer_is_reverified_after_hash_sidecar_update(self):
         release = (self.root / "scripts" / "Build-Release.ps1").read_text(
             encoding="utf-8"
@@ -279,6 +340,82 @@ class ReleaseMetadataTests(unittest.TestCase):
 
         self.assertLess(installer_sign, sidecar_update)
         self.assertLess(sidecar_update, final_verification)
+
+    def test_github_release_injects_repository_metadata_and_uploads_exact_assets(self):
+        app_project = (
+            self.root / "src" / "PyRuntimeInspector.App" / "PyRuntimeInspector.App.csproj"
+        ).read_text(encoding="utf-8")
+        portable = (self.root / "scripts" / "Build-PortableRelease.ps1").read_text(
+            encoding="utf-8"
+        )
+        release = (self.root / "scripts" / "Build-Release.ps1").read_text(
+            encoding="utf-8"
+        )
+        workflow = (self.root / ".github" / "workflows" / "release.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('<ItemGroup Condition="\'$(GitHubRepository)\' != \'\'">', app_project)
+        self.assertIn(
+            '<AssemblyMetadata Include="GitHubRepository" Value="$(GitHubRepository)" />',
+            app_project,
+        )
+        self.assertIn("[string]$GitHubRepository", portable)
+        self.assertIn("GitHubRepository must use owner/repository format.", portable)
+        self.assertIn('"-p:GitHubRepository=$GitHubRepository"', portable)
+        self.assertIn("-GitHubRepository $GitHubRepository", release)
+        self.assertIn("-GitHubRepository $env:GITHUB_REPOSITORY", workflow)
+
+        executable_sign = release.index('"Sign-Artifacts.ps1"')
+        portable_archive = release.index('"New-PortableArchive.ps1"')
+        installer_build = release.index('"Build-Installer.ps1"')
+        installer_sign = release.rindex('"Sign-Artifacts.ps1"')
+        self.assertLess(executable_sign, portable_archive)
+        self.assertLess(portable_archive, installer_build)
+        self.assertLess(installer_build, installer_sign)
+
+        self.assertIn('tags: ["v*"]', workflow)
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("contents: write", workflow)
+        self.assertIn("id: release_metadata", workflow)
+        self.assertIn('Add-Content $env:GITHUB_OUTPUT "version=$version"', workflow)
+        self.assertIn("Release tag $env:GITHUB_REF_NAME does not match product version", workflow)
+        self.assertIn("WINDOWS_CERTIFICATE_BASE64", workflow)
+        self.assertIn("WINDOWS_CERTIFICATE_PASSWORD", workflow)
+        self.assertIn("Test-Path -LiteralPath $asset -PathType Leaf", workflow)
+        self.assertIn("gh release create $env:GITHUB_REF_NAME @assets", workflow)
+        self.assertIn("--verify-tag --generate-notes", workflow)
+        self.assertNotIn("artifacts\\*.zip", workflow)
+
+        require_secrets = workflow.index("- name: Require signing secrets")
+        build_release = workflow.index("- name: Build, test, and sign release")
+        create_release = workflow.index("- name: Create GitHub release")
+        upload_artifact = workflow.index("- uses: actions/upload-artifact@v4")
+        self.assertLess(require_secrets, build_release)
+        self.assertLess(build_release, create_release)
+        self.assertLess(create_release, upload_artifact)
+        create_step = workflow[create_release:upload_artifact]
+        self.assertIn("if: startsWith(github.ref, 'refs/tags/')", create_step)
+        self.assertIn("GH_TOKEN: ${{ github.token }}", create_step)
+        for asset in (
+            '"artifacts\\$baseName.zip"',
+            '"artifacts\\$baseName.zip.sha256"',
+            '"artifacts\\installer\\$baseName.msi"',
+            '"artifacts\\installer\\$baseName.msi.sha256"',
+        ):
+            self.assertIn(asset, create_step)
+
+        version_expression = "${{ steps.release_metadata.outputs.version }}"
+        expected_assets = (
+            f"artifacts/PyMonitor-{version_expression}-win-x64.zip",
+            f"artifacts/PyMonitor-{version_expression}-win-x64.zip.sha256",
+            f"artifacts/installer/PyMonitor-{version_expression}-win-x64.msi",
+            f"artifacts/installer/PyMonitor-{version_expression}-win-x64.msi.sha256",
+        )
+        workflow_lines = [line.strip() for line in workflow.splitlines()]
+        for asset in expected_assets:
+            self.assertEqual(1, workflow_lines.count(asset))
+        self.assertIn("if-no-files-found: error", workflow)
 
 
 if __name__ == "__main__":

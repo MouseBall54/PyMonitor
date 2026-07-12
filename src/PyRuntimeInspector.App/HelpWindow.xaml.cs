@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Automation.Peers;
 using System.Windows.Input;
 using System.Windows.Threading;
+using PyRuntimeInspector.App.Services;
 using PyRuntimeInspector.App.ViewModels;
 
 namespace PyRuntimeInspector.App;
@@ -20,9 +21,23 @@ public partial class HelpWindow : Window
         });
 
     private readonly HelpViewModel _viewModel;
+    private readonly AppUpdateManager? _updateManager;
+    private readonly Action<GitHubUpdateRelease>? _releaseFound;
+    private readonly Func<Window, GitHubUpdateRelease, Task>? _installUpdate;
 
     public HelpWindow()
+        : this(null, null, null)
     {
+    }
+
+    public HelpWindow(
+        AppUpdateManager? updateManager,
+        Action<GitHubUpdateRelease>? releaseFound,
+        Func<Window, GitHubUpdateRelease, Task>? installUpdate)
+    {
+        _updateManager = updateManager;
+        _releaseFound = releaseFound;
+        _installUpdate = installUpdate;
         InitializeComponent();
         _viewModel = new HelpViewModel();
         DataContext = _viewModel;
@@ -84,7 +99,7 @@ public partial class HelpWindow : Window
     }
 
     private void About_Click(object sender, RoutedEventArgs e) =>
-        new AboutWindow { Owner = this }.ShowDialog();
+        new AboutWindow(_updateManager, _releaseFound, _installUpdate) { Owner = this }.ShowDialog();
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
 

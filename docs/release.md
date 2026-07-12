@@ -130,6 +130,40 @@ default Light theme, persisted settings, Quick Attach behavior in a real
 `cmd.exe` Python REPL, selection-driven Inspect views, keyboard access, and the
 PyMonitor/version/developer metadata in About and Windows Apps & Features.
 
+## In-app update contract
+
+Official tagged GitHub builds receive the `owner/repository` value from
+`GITHUB_REPOSITORY` as the application's `GitHubRepository` assembly metadata.
+At startup the application checks GitHub's latest stable Release at most once
+per 24 hours. The automatic path is quiet: no-update, offline, HTTP, and invalid
+response outcomes do not interrupt inspection. **About > Check for updates** is
+the explicit manual path and reports its status to the user. A local build with
+empty repository metadata does not perform the automatic network check.
+
+The repository named by `GitHubRepository` must expose public Releases to end
+users. The updater intentionally has no embedded GitHub token and does not ask
+users for source-repository credentials. The current workflow publishes to and
+injects the same repository, so that repository must be public before end-user
+distribution. A separate public release repository would require additional
+cross-repository credentials and workflow support and is not part of this flow.
+
+Finding a newer version never authorizes a download or install. After the user
+reviews the version and approves the update, the updater accepts exactly one
+`PyMonitor-<version>-win-x64.msi` and one matching
+`PyMonitor-<version>-win-x64.msi.sha256` from that stable Release. It validates
+the sidecar's exact filename and SHA-256, verifies that Windows trusts the MSI's
+Authenticode signature, and only then requests UAC elevation to start the MSI
+major upgrade. Missing, duplicated, oversized, renamed, hash-mismatched, or
+untrusted assets fail closed and are never executed.
+
+The updater deliberately installs an MSI even when the running copy came from
+the Portable ZIP. The approval UI must therefore state that accepting an update
+from a Portable copy changes the installation model to a machine-wide MSI. The
+old Portable directory is not the update target and may be removed manually
+after the installed Start Menu copy is confirmed. Users who want to remain
+Portable should instead verify the new ZIP sidecar and extract the new ZIP into
+a separate directory.
+
 ## Authenticode signing
 
 Release signing requires a trusted code-signing PFX. Do not commit it. To sign
@@ -144,14 +178,107 @@ $password = Read-Host 'PFX password' -AsSecureString
 
 `Sign-Artifacts.ps1` uses the x64 Windows SDK `signtool.exe`, SHA-256 file and
 timestamp digests, DigiCert's RFC 3161 timestamp endpoint, and verifies every
-signature. The tagged GitHub workflow refuses to publish unless
-`WINDOWS_CERTIFICATE_BASE64` and `WINDOWS_CERTIFICATE_PASSWORD` are configured.
-Ordinary CI artifacts are explicitly named `unsigned`.
+signature. Ordinary CI artifacts are explicitly named `unsigned`; only the
+signed tagged workflow supplies the assets consumed by the in-app updater.
 
-## CI release flow
+## GitHub release operator runbook
 
-- `.github/workflows/ci.yml` runs the five-version Python matrix, .NET tests,
-  the 60-second stability gate, portable packaging, and MSI packaging.
-- `.github/workflows/release.yml` runs on `v*` tags, repeats all tests, signs
-  the EXE and MSI, and publishes the ZIP, MSI, and SHA-256 files.
-- Generated artifacts and PFX files are ignored by Git.
+### One-time repository configuration
+
+1. Keep the least-privilege `permissions: contents: write` grant in
+   `.github/workflows/release.yml`. The repository default may remain read-only;
+   confirm only that an organization or enterprise policy does not block the
+   workflow's explicit grant. The workflow token must be able to create a Release.
+2. Add both Actions secrets:
+   - `WINDOWS_CERTIFICATE_BASE64`: Base64 of a trusted code-signing PFX.
+   - `WINDOWS_CERTIFICATE_PASSWORD`: the PFX password.
+3. Protect the secrets and certificate outside the repository. Never commit a
+   PFX, decoded certificate, password, or generated artifact.
+4. Before distributing the first updater-enabled build, make this Release
+   repository public. The current workflow does not publish across repositories;
+   never work around private Release access by embedding a personal access token
+   in the app.
+
+### Prepare every stable version
+
+Choose the stable version `X.Y.Z` and update every version-bearing source before
+creating the tag:
+
+- `Directory.Build.props`: `Version`, `AssemblyVersion`, `FileVersion`, and
+  `InformationalVersion`.
+- `agent/pyproject.toml`, `agent/pyruntime_inspector_agent/__init__.py`, and
+  `agent/pyruntime_inspector_agent/server.py`.
+- user-visible version text and artifact examples in `MainWindow.xaml`,
+  `AboutWindow.xaml`, `Help/HelpCatalog.cs`, `README.md`, and release docs.
+- verifier defaults in `scripts/Test-PortableRelease.ps1` and
+  `scripts/Test-InstallerRelease.ps1`, plus expected versions in the Python and
+  .NET test projects.
+
+Review every remaining literal occurrence of the previous version; keep one
+only when it is deliberately describing a historical artifact rather than the
+new product identity:
+
+```powershell
+rg -n --fixed-strings '<previous-version>' `
+  Directory.Build.props agent src scripts tests README.md docs
+```
+
+Run the release metadata tests after the edit; they are the required guard that
+the .NET product version, Python package/Agent handshake, UI identity, README,
+and public artifact names still agree. Also require the normal CI workflow to
+be green before tagging.
+
+Commit the complete version change, push it, create the exact annotated
+`v<version>` tag on that commit, and push the tag:
+
+```powershell
+$version = '26.7.12'
+git add --all
+git commit -m "release: PyMonitor $version"
+git push origin HEAD
+git tag -a "v$version" -m "PyMonitor $version"
+git push origin "v$version"
+```
+
+No manual ZIP, MSI, hash, GitHub Release, or repository-slug editing is needed.
+The tag workflow verifies `v<version>` against `Directory.Build.props`, injects
+the current `GITHUB_REPOSITORY` slug into assembly metadata, requires both
+signing secrets, builds and tests, signs the EXE before ZIP creation, creates
+the ZIP sidecar, builds and signs the MSI, rewrites and re-verifies its sidecar,
+then creates a non-draft stable GitHub Release with generated notes.
+
+The Release contains exactly these four public assets:
+
+```text
+PyMonitor-X.Y.Z-win-x64.zip
+PyMonitor-X.Y.Z-win-x64.zip.sha256
+PyMonitor-X.Y.Z-win-x64.msi
+PyMonitor-X.Y.Z-win-x64.msi.sha256
+```
+
+The signed EXE is inside the ZIP and is not a fifth public asset. The same exact
+four files are retained as the `PyMonitor-signed` workflow artifact.
+`workflow_dispatch` may be used to build that signed Actions artifact, but it
+does not create a GitHub Release because there is no pushed release tag.
+
+### Publication failure conditions
+
+The workflow fails and either publishes nothing or leaves a partial Release
+that requires inspection when any of these gates fails:
+
+- the pushed tag is not exactly `v` plus the version in
+  `Directory.Build.props`, or version metadata/tests disagree;
+- either signing secret is absent, malformed, or has the wrong password;
+- build, automated tests, portable verification, Agent source/hash comparison,
+  MSI metadata/extraction verification, signing, timestamping, or signature
+  verification fails;
+- any exact ZIP, MSI, or sidecar is absent, stale, misnamed, or fails its hash
+  contract;
+- the workflow token lacks `contents: write`, GitHub refuses the verified tag,
+  or `gh release create` fails, including when a Release already exists for the
+  tag.
+
+Inspect and correct the first failing gate before rerunning. If a partial
+Release already exists, inspect its assets and remove the incomplete Release
+before rerunning the unchanged, verified tag workflow. Generated artifacts and
+PFX files remain ignored by Git.
