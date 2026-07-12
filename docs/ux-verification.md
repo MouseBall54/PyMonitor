@@ -98,8 +98,8 @@ sales = pd.DataFrame(
   NumPy/OpenCV and DataFrame previews retain their current layout/page.
 - [ ] After a baseline snapshot, exercise an added binding, `del` removal,
   same-name rebinding, and an in-place list/array metadata change. Confirm the
-  Added, Removed, Rebound, and Updated classifications and ten-second visual
-  highlight lifetime.
+  Added, Removed, Rebound, and Updated classifications, at least ten seconds of
+  visible highlighting, and expiry after the default 12-second window.
 - [ ] Reset comparison clears the current scope baseline, and Changed-only
   filtering does not treat the new baseline as a change.
 - [ ] `Ctrl+F` selects Inspect and focuses Variables search; `F5` refreshes;

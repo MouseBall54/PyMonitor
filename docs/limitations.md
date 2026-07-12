@@ -18,7 +18,8 @@
   fingerprints for in-place mutation hints. Other mutable values are shown only
   when exposed preview, size, shape, dtype, or bounded metadata changes. Removed
   rows can be inferred only from a complete first-page snapshot. Highlights
-  expire after ten seconds.
+  expire after the default 12-second window, which includes margin to keep the
+  visible emphasis present for at least ten seconds.
 - Safe summaries deliberately omit values for arbitrary user-defined objects.
 - Object Tree requests 100 children at a time, stops UI expansion at depth 8,
   and does not traverse cycle markers. Opaque handles are session-scoped and

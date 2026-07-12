@@ -61,7 +61,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private const int GcScanLimit = 100_000;
     private const int MaxHandleReleaseBatch = 8;
     private const int MaxDetachHandleReleaseBatch = 32;
-    private static readonly TimeSpan ChangeHighlightDuration = TimeSpan.FromSeconds(10);
+    // Leave a small render/refresh margin so users see every change for at least ten seconds.
+    private static readonly TimeSpan ChangeHighlightDuration = TimeSpan.FromSeconds(12);
     private static readonly TimeSpan DetachHandleReleaseBudget = TimeSpan.FromMilliseconds(750);
     private static readonly TimeSpan DefaultOnePasteAttachTimeout = TimeSpan.FromSeconds(120);
     private readonly TimeSpan _onePasteAttachTimeout;

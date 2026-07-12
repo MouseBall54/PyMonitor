@@ -949,10 +949,13 @@ public sealed class VariablesCenteredUxTests
     }
 
     [Fact]
-    public async Task ChangeHighlightExpiresAfterTenSecondInspectionWindow()
+    public async Task ChangeHighlightRemainsVisibleForTenSecondsAndExpiresAfterDefaultWindow()
     {
         var session = new UxSession();
         session.EnqueueScope(ScopeResult(Value("seed", "seed-handle", "seed-id", "seed-meta")));
+        session.EnqueueScope(ScopeResult(
+            Value("seed", "seed-handle", "seed-id", "seed-meta"),
+            Value("added", "added-handle", "added-id", "added-meta")));
         session.EnqueueScope(ScopeResult(
             Value("seed", "seed-handle", "seed-id", "seed-meta"),
             Value("added", "added-handle", "added-id", "added-meta")));
@@ -967,6 +970,11 @@ public sealed class VariablesCenteredUxTests
         Assert.Equal(VariableChangeKind.Added, Assert.Single(viewModel.Variables, row => row.Name == "added").ChangeKind);
 
         await Task.Delay(TimeSpan.FromSeconds(10.1));
+        await viewModel.LoadScopeAsync(scope);
+
+        Assert.Equal(VariableChangeKind.Added, Assert.Single(viewModel.Variables, row => row.Name == "added").ChangeKind);
+
+        await Task.Delay(TimeSpan.FromSeconds(2.1));
         await viewModel.LoadScopeAsync(scope);
 
         Assert.All(viewModel.Variables, row => Assert.Equal(VariableChangeKind.Unchanged, row.ChangeKind));

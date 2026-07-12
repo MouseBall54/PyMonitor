@@ -343,8 +343,9 @@ address와 safe preview를 대상으로 합니다. Scope, change, type 필터와
 **Search / Scan**을 실행할 때만 최대 100,000개의 GC-tracked object를
 검사합니다.
 
-같은 scope의 직전 snapshot과 비교하여 다음 변경을 분류하고 10초 동안 행을
-강조합니다.
+같은 scope의 직전 snapshot과 비교하여 다음 변경을 분류하고 기본 12초 동안
+행을 강조합니다. UI 반영 시간을 포함해 사용자가 최소 10초 이상 변화를 확인할
+수 있도록 여유를 둔 값입니다.
 
 - **Added**: 새 이름 binding
 - **Removed**: 직전의 완전한 첫 페이지에는 있었지만 현재는 사라진 binding

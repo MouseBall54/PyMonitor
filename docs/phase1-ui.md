@@ -64,7 +64,8 @@ an explicit **Search / Scan**, because each request can examine up to 100,000
 GC-tracked objects. Periodic refresh deliberately skips GC scans.
 
 Each ordinary scope snapshot is compared with its preceding snapshot. Changed
-rows remain highlighted for ten seconds:
+rows remain highlighted for a default 12-second window, ensuring at least ten
+seconds of visible emphasis after UI rendering:
 
 - **Added** means a name was not present in the preceding snapshot.
 - **Removed** is a temporary ghost row for a binding that disappeared from a
