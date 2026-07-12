@@ -249,7 +249,12 @@ clean uninstall; the three MSI logs are retained in the timestamped evidence
 directory recorded above.
 
 Current automated evidence is 80 Agent tests on each CPython 3.10–3.14 runtime,
-56 .NET tests (Protocol 5, Integration 2, App 49), and a 60-second stability run
+59 .NET tests (Protocol 5, Integration 2, App 52), and a 60-second stability run
 with 10 cycles, 6,481 requests, and 1,568,768 bytes maximum working-set growth.
+The final Quick Attach follow-up additionally verified the manual-bootstrap
+instruction state, cancellation and timeout cleanup, listener-port reuse, and a
+debugger-safe Agent response while the target remained paused. The rebuilt
+portable directory and MSI each contain 446 files; all 16 packaged Agent Python
+files match repository source by relative path and SHA-256.
 The final requirement-by-requirement evidence disposition is in
 [`completion-audit.md`](completion-audit.md).
