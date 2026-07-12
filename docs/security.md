@@ -9,6 +9,13 @@
   direct CPython instance dictionary when available, and static class members.
 - NumPy is never imported by the agent. Its adapter activates only for an exact
   `numpy.ndarray` when a genuine NumPy module is already in `sys.modules`.
+- Matplotlib and NumPy are never imported for Figure inspection. The adapter
+  accepts only exact regular, already-loaded `Figure` or `Axes` objects and
+  reads only a current, completed Agg C-extension RGBA buffer. It never calls
+  target drawing, `buffer_rgba`, an Axes getter, artist/formatter code, target
+  callbacks, descriptors, or properties. An Axes preview is explicitly the
+  complete owning Figure. Stale, missing, non-Agg, inconsistent, or changing
+  renders remain unavailable instead of executing target code.
 - Object handles are opaque, session-scoped, TTL-bound, LRU-bounded, and all
   released on detach.
 - Variable namespaces and object-child responses that carry handles are capped

@@ -3,7 +3,7 @@ import os
 import socket
 import threading
 
-from . import arrays, classes, dataframes, gc_objects, memory, modules, monitoring
+from . import arrays, classes, dataframes, gc_objects, matplotlib_figures, memory, modules, monitoring
 from .frames import list_frames, list_scope, list_threads
 from .handles import HandleStore, ObjectExpiredError
 from .monitoring import MonitoringError
@@ -213,6 +213,15 @@ class InspectorAgent:
                 params.get("columnOffset", 0),
                 params.get("columnCount", 20),
             ), b"", False
+        if method == "figures.describe":
+            return matplotlib_figures.describe(self._handles.get(params["handleId"])), b"", False
+        if method == "figures.preview":
+            metadata, binary = matplotlib_figures.preview(
+                self._handles.get(params["handleId"]),
+                params.get("maxWidth", matplotlib_figures.MAX_PREVIEW_DIMENSION),
+                params.get("maxHeight", matplotlib_figures.MAX_PREVIEW_DIMENSION),
+            )
+            return metadata, binary, False
         if method == "memory.status":
             return memory.status(), b"", False
         if method == "memory.start":

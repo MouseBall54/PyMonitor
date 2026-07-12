@@ -15,7 +15,7 @@ Phase 0 methods are `session.detach`, `runtime.getInfo`, `threads.list`,
 `modules.list`, `modules.listNamespace`, `gc.listObjects`,
 `objects.release`, `classes.describe`, `arrays.describe`, `arrays.preview`,
 `arrays.tile`, `arrays.histogram`, `arrays.pixel`, `dataframes.describe`,
-`dataframes.preview`, `memory.status`,
+`dataframes.preview`, `figures.describe`, `figures.preview`, `memory.status`,
 `memory.start`, `memory.stop`,
 `memory.snapshot`, `memory.listSnapshots`, `memory.statistics`, and
 `memory.diff`, plus `execution.status`, `execution.start`, `execution.stop`,
@@ -92,6 +92,26 @@ of executing their accessors. Structural metadata and at most 64 uniformly
 distributed safe cells contribute to the DataFrame change token; this is a
 bounded change hint, not a full-frame checksum. No preview operation copies or
 serializes the complete frame.
+
+`figures.describe` and `figures.preview` are available only for exact regular,
+already-loaded Matplotlib `Figure` and `Axes` objects. The Agent never imports
+Matplotlib or NumPy for this adapter and never calls `draw`, `draw_idle`,
+`buffer_rgba`, `Axes.get_figure`, an artist, formatter, callback, descriptor, or
+target property. An `Axes` resolves through its static owning-Figure reference
+and returns the complete Figure image with `sourceKind: Axes`,
+`renderedKind: Figure`, and `axesUsesOwningFigure: true`.
+
+Only a current, completed buffer owned by an Agg-derived canvas is readable.
+Missing renders, stale Figures, non-Agg canvases, detached Axes, unsupported
+renderer internals, and buffers that change during the bounded copy return a
+successful response with `previewAvailable: false` and a structured
+`availability` state, reason, message, and next action; the Agent does not draw
+the target to make a preview available. `figures.preview` accepts `maxWidth`
+and `maxHeight`, each capped at 1024. It samples the existing RGBA buffer
+directly, revalidates renderer identity, stale state, shape, and sampled bytes,
+and returns at most 1024 by 1024 BGRA32 pixels (4 MiB) with source dimensions
+and sampling steps. A bounded pixel sample contributes to the Figure/Axes
+change token; it is not a full-render checksum.
 
 Memory statistics support `lineno`, `filename`, and `traceback` grouping and a
 maximum result limit of 200. Snapshot identifiers are opaque and scoped to the

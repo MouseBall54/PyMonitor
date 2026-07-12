@@ -73,6 +73,7 @@ ax_line.set_ylabel("Revenue")
 ax_line.legend()
 ax_line.grid(True, alpha=0.3)
 fig_line.tight_layout()
+fig_line.canvas.draw()  # PyMonitor reads this completed Agg buffer without drawing the target.
 
 fig_bar, ax_bar = plt.subplots(figsize=(6, 4))
 ax_bar.bar(df_summary["product"], df_summary["total_revenue"], color=["#4C72B0", "#55A868", "#C44E52"])
@@ -80,6 +81,7 @@ ax_bar.set_title("Revenue by Product")
 ax_bar.set_xlabel("Product")
 ax_bar.set_ylabel("Total Revenue")
 fig_bar.tight_layout()
+fig_bar.canvas.draw()
 
 fig_scatter, ax_scatter = plt.subplots(figsize=(6, 4))
 ax_scatter.scatter(df_sales["quantity"], df_sales["price"], c=df_sales["revenue"], cmap="viridis")
@@ -87,6 +89,7 @@ ax_scatter.set_title("Quantity vs Price")
 ax_scatter.set_xlabel("Quantity")
 ax_scatter.set_ylabel("Price")
 fig_scatter.tight_layout()
+fig_scatter.canvas.draw()
 
 # 디버거에서 바로 확인할 수 있는 요약 변수
 debug_summary = {

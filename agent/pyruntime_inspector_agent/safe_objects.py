@@ -4,7 +4,7 @@ import itertools
 import sys
 import types
 
-from . import arrays, dataframes
+from . import arrays, dataframes, matplotlib_figures
 from .runtime_info import timestamp
 from .safe_metadata import bounded_text, type_module, type_name, type_qualified_name
 
@@ -38,7 +38,7 @@ class SafeObjectInspector:
         elif dataframes.is_exact_dataframe(value):
             adapter = "pandas.DataFrame"
         else:
-            adapter = None
+            adapter = matplotlib_figures.adapter_kind(value)
         handle = self._handles.put(value)
         identity_token = _identity_token(value)
         preview = self._preview(value, 0, set())
@@ -73,6 +73,18 @@ class SafeObjectInspector:
                 "rowCount": frame_metadata["rows"],
                 "columnCount": frame_metadata["columns"],
             })
+        elif adapter in ("matplotlib.Figure", "matplotlib.Axes"):
+            figure_metadata = matplotlib_figures.summary_metadata(value)
+            summary.update({
+                "renderState": figure_metadata["availability"]["state"],
+                "renderUnavailableReason": figure_metadata["availability"]["reason"],
+            })
+            if figure_metadata["previewAvailable"]:
+                summary.update({
+                    "shape": [figure_metadata["sourceHeight"], figure_metadata["sourceWidth"], 4],
+                    "dtype": "uint8",
+                    "payloadSizeBytes": figure_metadata["sourceBufferBytes"],
+                })
         return summary
 
     def describe(self, handle):
@@ -165,6 +177,8 @@ class SafeObjectInspector:
         if dataframes.is_exact_dataframe(value):
             metadata = dataframes.summary_metadata(value)
             return f"DataFrame(rows={metadata['rows']}, columns={metadata['columns']})"
+        if matplotlib_figures.adapter_kind(value) is not None:
+            return matplotlib_figures.safe_preview(value)
         if exact is types.ModuleType:
             name = types.ModuleType.__getattribute__(value, "__name__")
             name = bounded_text(name, "<unnamed>")
@@ -239,6 +253,16 @@ class SafeObjectInspector:
                 f"rows:{frame_metadata['rows']}",
                 f"columns:{frame_metadata['columns']}",
                 f"sample:{dataframes.sample_fingerprint(value)}",
+            ))
+        elif adapter in ("matplotlib.Figure", "matplotlib.Axes"):
+            figure_metadata = matplotlib_figures.summary_metadata(value)
+            availability = figure_metadata["availability"]
+            parts.extend((
+                f"render-state:{availability['state']}",
+                f"render-reason:{availability['reason']}",
+                f"source-width:{figure_metadata['sourceWidth']}",
+                f"source-height:{figure_metadata['sourceHeight']}",
+                f"sample:{matplotlib_figures.sample_fingerprint(value)}",
             ))
         else:
             instance_dict = _safe_instance_dict(value)
