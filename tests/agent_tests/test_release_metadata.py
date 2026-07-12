@@ -51,6 +51,13 @@ def png_dimensions(data):
     return struct.unpack_from(">II", data, 16)
 
 
+def markdown_section(source, heading):
+    marker = f"## {heading}"
+    start = source.index(marker)
+    next_heading = source.find("\n## ", start + len(marker))
+    return source[start:] if next_heading == -1 else source[start:next_heading]
+
+
 class ReleaseMetadataTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -183,6 +190,65 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertIn("name: PyMonitor-unsigned", ci)
         self.assertIn("name: PyMonitor-signed", release_workflow)
         self.assertIn('title "PyMonitor $env:GITHUB_REF_NAME"', release_workflow)
+
+    def test_readme_has_end_user_install_quick_start_and_help_contract(self):
+        readme = (self.root / "README.md").read_text(encoding="utf-8")
+
+        features = markdown_section(readme, "주요 기능 한눈에 보기")
+        for expected in (
+            "변수 찾기",
+            "Object Tree",
+            "DataFrame",
+            "실행 중 변화 추적",
+            "Managed Launch",
+            "Quick Attach",
+            "읽기 전용",
+        ):
+            self.assertIn(expected, features)
+
+        install = markdown_section(readme, "설치 및 제거")
+        for expected in (
+            "PyMonitor-26.7.11-win-x64.msi",
+            "PyMonitor-26.7.11-win-x64.zip",
+            "Get-FileHash",
+            '"$file.sha256"',
+            "별도 .NET 10 runtime을 설치할 필요가 없",
+            "대상 CPython 3.10~3.14",
+            "대상 Python 또는 대상 venv/Conda 환경",
+            "자동 업데이트 기능은 없",
+            "설정 > 앱 > 설치된 앱 > PyMonitor > 제거",
+            "Portable 제거",
+            "%LOCALAPPDATA%\\PyMonitor\\settings.json",
+        ):
+            self.assertIn(expected, install)
+
+        quick_start = markdown_section(readme, "5분 빠른 시작")
+        for expected in (
+            "os.getpid()",
+            "Rescan",
+            "Quick Attach",
+            "CPython 3.14+",
+            "CPython 3.10~3.13",
+            "Modules > `__main__`",
+            "`F5`",
+            "**Launch**",
+        ):
+            self.assertIn(expected, quick_start)
+
+        help_section = markdown_section(readme, "F1 검색 도움말")
+        for expected in (
+            "`F1`",
+            "**Help**",
+            "PyMonitor Help",
+            "modeless",
+            "제목, 키워드, 요약, 상세 설명, 따라하기 단계, 예제 전체",
+            "대소문자를 구분하지 않",
+            "공백으로 나눈 여러 단어를 모두 포함",
+            "`Ctrl+F`",
+            "Variables",
+            "도움말 검색란",
+        ):
+            self.assertIn(expected, help_section)
 
     def test_supported_runtime_agent_tests_provision_render_dependencies(self):
         matrix = (self.root / "scripts" / "Test-PythonMatrix.ps1").read_text(
