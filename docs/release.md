@@ -186,8 +186,9 @@ $password = Read-Host 'PFX password' -AsSecureString
 timestamp digests, DigiCert's RFC 3161 timestamp endpoint, and verifies every
 signature. For a self-signed PFX, the GitHub workflow temporarily adds only its
 public certificate to the ephemeral runner's current-user Root store so that
-`signtool verify /pa` can validate the signature, then removes that certificate
-and the decoded PFX in `finally`. Ordinary CI artifacts are explicitly named
+`signtool verify /pa` can validate the signature. It uses non-interactive
+`certutil -f`, separates certificate preparation from the long build step, and
+removes the certificate and decoded PFX in an `always()` cleanup step. Ordinary CI artifacts are explicitly named
 `unsigned`; only a trusted stable tagged workflow supplies assets consumed by
 the in-app updater.
 

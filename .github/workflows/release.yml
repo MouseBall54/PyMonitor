@@ -61,7 +61,7 @@ jobs:
         run: |
           & $env:PYTHON312_EXECUTABLE -m pip install --disable-pip-version-check numpy pandas matplotlib
           & $env:PYTHON312_EXECUTABLE -c "import matplotlib, numpy, pandas"
-      - name: Build, test, and sign release
+      - name: Prepare signing certificate
         id: signing
         shell: pwsh
         env:
@@ -69,8 +69,9 @@ jobs:
           CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
           $certificatePath = Join-Path $env:RUNNER_TEMP "release-signing.pfx"
-          $temporaryRootThumbprint = $null
+          $publicCertificatePath = Join-Path $env:RUNNER_TEMP "release-signing.cer"
           $signingCertificate = $null
+          $temporaryRootThumbprint = $null
           try {
             [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:CERTIFICATE_BASE64))
             $signingCertificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new(
@@ -88,66 +89,60 @@ jobs:
 
             if ($isSelfSigned) {
               # signtool /pa must trust the chain while it verifies the signature. Add only
-              # the public certificate to this ephemeral runner and remove it in finally.
-              $rootStore = [Security.Cryptography.X509Certificates.X509Store]::new(
-                [Security.Cryptography.X509Certificates.StoreName]::Root,
-                [Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
-              try {
-                $rootStore.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-                $existing = $rootStore.Certificates.Find(
-                  [Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
-                  $signingCertificate.Thumbprint,
-                  $false)
-                if ($existing.Count -eq 0) {
-                  $publicCertificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new(
-                    $signingCertificate.Export(
-                      [Security.Cryptography.X509Certificates.X509ContentType]::Cert))
-                  try {
-                    $rootStore.Add($publicCertificate)
-                    $temporaryRootThumbprint = $publicCertificate.Thumbprint
-                  }
-                  finally {
-                    $publicCertificate.Dispose()
-                  }
-                }
+              # the public certificate to this ephemeral runner. certutil -f is explicitly
+              # non-interactive, unlike certificate-store APIs that can wait for desktop UI.
+              [IO.File]::WriteAllBytes(
+                $publicCertificatePath,
+                $signingCertificate.Export(
+                  [Security.Cryptography.X509Certificates.X509ContentType]::Cert))
+              & certutil.exe -user -addstore -f Root $publicCertificatePath
+              if ($LASTEXITCODE -ne 0) {
+                throw "The self-signed certificate could not be added to the runner trust store."
               }
-              finally {
-                $rootStore.Close()
-              }
+              $temporaryRootThumbprint = $signingCertificate.Thumbprint
               Write-Host "Self-signed certificate detected; its public certificate is trusted only on this ephemeral runner."
             }
-
-            $password = ConvertTo-SecureString $env:CERTIFICATE_PASSWORD -AsPlainText -Force
-            .\scripts\Build-Release.ps1 `
-              -CertificatePath $certificatePath `
-              -CertificatePassword $password `
-              -GitHubRepository $env:GITHUB_REPOSITORY
+            Add-Content $env:GITHUB_OUTPUT "temporary_root_thumbprint=$temporaryRootThumbprint"
+          }
+          catch {
+            if ($temporaryRootThumbprint) {
+              & certutil.exe -user -delstore Root $temporaryRootThumbprint | Out-Null
+            }
+            Remove-Item -LiteralPath $certificatePath -Force -ErrorAction SilentlyContinue
+            throw
           }
           finally {
-            if ($temporaryRootThumbprint) {
-              $rootStore = [Security.Cryptography.X509Certificates.X509Store]::new(
-                [Security.Cryptography.X509Certificates.StoreName]::Root,
-                [Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
-              try {
-                $rootStore.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-                $matches = $rootStore.Certificates.Find(
-                  [Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
-                  $temporaryRootThumbprint,
-                  $false)
-                foreach ($match in $matches) {
-                  $rootStore.Remove($match)
-                  $match.Dispose()
-                }
-              }
-              finally {
-                $rootStore.Close()
-              }
-            }
             if ($signingCertificate) {
               $signingCertificate.Dispose()
             }
-            Remove-Item -LiteralPath $certificatePath -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $publicCertificatePath -Force -ErrorAction SilentlyContinue
           }
+      - name: Build, test, and sign release
+        shell: pwsh
+        env:
+          CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $certificatePath = Join-Path $env:RUNNER_TEMP "release-signing.pfx"
+          $password = ConvertTo-SecureString $env:CERTIFICATE_PASSWORD -AsPlainText -Force
+          Write-Host "Starting complete release build, test, packaging, and signing pipeline."
+          .\scripts\Build-Release.ps1 `
+            -CertificatePath $certificatePath `
+            -CertificatePassword $password `
+            -GitHubRepository $env:GITHUB_REPOSITORY
+      - name: Remove temporary signing material
+        if: always()
+        shell: pwsh
+        env:
+          TEMPORARY_ROOT_THUMBPRINT: ${{ steps.signing.outputs.temporary_root_thumbprint }}
+        run: |
+          if ($env:TEMPORARY_ROOT_THUMBPRINT) {
+            & certutil.exe -user -delstore Root $env:TEMPORARY_ROOT_THUMBPRINT
+            if ($LASTEXITCODE -ne 0) {
+              throw "The temporary self-signed root certificate could not be removed."
+            }
+          }
+          $certificatePath = Join-Path $env:RUNNER_TEMP "release-signing.pfx"
+          Remove-Item -LiteralPath $certificatePath -Force -ErrorAction SilentlyContinue
       - name: Create GitHub release
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh

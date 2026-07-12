@@ -88,8 +88,9 @@ gh run download $runId --name PyMonitor-signed --dir $dryRunDir
 
 `workflow_dispatch`는 Release를 만들지 않습니다. 워크플로는 자체 서명 인증서를
 자동 감지하여 공개 인증서만 GitHub Runner의 현재 사용자 Root 저장소에 임시로
-등록하고, `signtool verify /pa`가 끝나면 `finally`에서 인증서와 PFX를 제거합니다.
-서명 검증을 끄거나 unsigned 파일을 대신 게시하지 않습니다.
+비대화형 `certutil -f`로 등록합니다. 별도의 `always()` cleanup step이
+`signtool verify /pa` 이후 인증서와 PFX를 제거합니다. 서명 검증을 끄거나 unsigned
+파일을 대신 게시하지 않습니다.
 
 ## 4. Release 태그 게시
 
