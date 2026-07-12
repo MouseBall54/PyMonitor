@@ -185,10 +185,11 @@ $password = Read-Host 'PFX password' -AsSecureString
 `Sign-Artifacts.ps1` uses the x64 Windows SDK `signtool.exe`, SHA-256 file and
 timestamp digests, DigiCert's RFC 3161 timestamp endpoint, and verifies every
 signature. For a self-signed PFX, the GitHub workflow temporarily adds only its
-public certificate to the ephemeral runner's current-user Root store so that
-`signtool verify /pa` can validate the signature. It uses non-interactive
-`certutil -f`, separates certificate preparation from the long build step, and
-removes the certificate and decoded PFX in an `always()` cleanup step. Ordinary CI artifacts are explicitly named
+public certificate to the ephemeral hosted runner's `LocalMachine\Root` store
+with non-interactive `Import-Certificate` so that `signtool verify /pa` can
+validate the signature. Certificate preparation has a two-minute timeout, is
+separate from the long build step, and an `always()` cleanup step removes the
+certificate and decoded PFX. Ordinary CI artifacts are explicitly named
 `unsigned`; only a trusted stable tagged workflow supplies assets consumed by
 the in-app updater.
 

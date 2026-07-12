@@ -63,6 +63,7 @@ jobs:
           & $env:PYTHON312_EXECUTABLE -c "import matplotlib, numpy, pandas"
       - name: Prepare signing certificate
         id: signing
+        timeout-minutes: 2
         shell: pwsh
         env:
           CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
@@ -89,24 +90,28 @@ jobs:
 
             if ($isSelfSigned) {
               # signtool /pa must trust the chain while it verifies the signature. Add only
-              # the public certificate to this ephemeral runner. certutil -f is explicitly
-              # non-interactive, unlike certificate-store APIs that can wait for desktop UI.
+              # the public certificate to this ephemeral runner's machine Root store. The
+              # hosted Windows runner is an administrator and is discarded after the job.
               [IO.File]::WriteAllBytes(
                 $publicCertificatePath,
                 $signingCertificate.Export(
                   [Security.Cryptography.X509Certificates.X509ContentType]::Cert))
-              & certutil.exe -user -addstore -f Root $publicCertificatePath
-              if ($LASTEXITCODE -ne 0) {
-                throw "The self-signed certificate could not be added to the runner trust store."
+              $importedCertificate = Import-Certificate `
+                -FilePath $publicCertificatePath `
+                -CertStoreLocation 'Cert:\LocalMachine\Root'
+              if (-not $importedCertificate `
+                  -or $importedCertificate.Thumbprint -ne $signingCertificate.Thumbprint) {
+                throw "The self-signed certificate was not imported into the runner trust store."
               }
-              $temporaryRootThumbprint = $signingCertificate.Thumbprint
+              $temporaryRootThumbprint = $importedCertificate.Thumbprint
               Write-Host "Self-signed certificate detected; its public certificate is trusted only on this ephemeral runner."
             }
             Add-Content $env:GITHUB_OUTPUT "temporary_root_thumbprint=$temporaryRootThumbprint"
           }
           catch {
             if ($temporaryRootThumbprint) {
-              & certutil.exe -user -delstore Root $temporaryRootThumbprint | Out-Null
+              Remove-Item -LiteralPath "Cert:\LocalMachine\Root\$temporaryRootThumbprint" `
+                -Force -ErrorAction SilentlyContinue
             }
             Remove-Item -LiteralPath $certificatePath -Force -ErrorAction SilentlyContinue
             throw
@@ -118,6 +123,7 @@ jobs:
             Remove-Item -LiteralPath $publicCertificatePath -Force -ErrorAction SilentlyContinue
           }
       - name: Build, test, and sign release
+        timeout-minutes: 20
         shell: pwsh
         env:
           CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
@@ -136,8 +142,9 @@ jobs:
           TEMPORARY_ROOT_THUMBPRINT: ${{ steps.signing.outputs.temporary_root_thumbprint }}
         run: |
           if ($env:TEMPORARY_ROOT_THUMBPRINT) {
-            & certutil.exe -user -delstore Root $env:TEMPORARY_ROOT_THUMBPRINT
-            if ($LASTEXITCODE -ne 0) {
+            $rootCertificatePath = "Cert:\LocalMachine\Root\$env:TEMPORARY_ROOT_THUMBPRINT"
+            Remove-Item -LiteralPath $rootCertificatePath -Force -ErrorAction Stop
+            if (Test-Path -LiteralPath $rootCertificatePath) {
               throw "The temporary self-signed root certificate could not be removed."
             }
           }
