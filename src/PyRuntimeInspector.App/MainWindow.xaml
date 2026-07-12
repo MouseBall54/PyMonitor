@@ -752,37 +752,197 @@
                                                       ItemsSource="{Binding ObjectRoots}"
                                                       SelectedItemChanged="ObjectTree_SelectedItemChanged"
                                                       TreeViewItem.Expanded="ObjectTreeItem_Expanded"
+                                                      VirtualizingPanel.IsVirtualizing="True"
+                                                      VirtualizingPanel.VirtualizationMode="Recycling"
+                                                      ScrollViewer.CanContentScroll="True"
+                                                      ScrollViewer.HorizontalScrollBarVisibility="Auto"
                                                       AutomationProperties.Name="Object member tree">
                                                 <TreeView.ItemContainerStyle>
                                                     <Style TargetType="{x:Type TreeViewItem}" BasedOn="{StaticResource {x:Type TreeViewItem}}">
                                                         <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
                                                         <Setter Property="Visibility" Value="{Binding IsSearchVisible, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                                        <Setter Property="AutomationProperties.Name" Value="{Binding AccessibilityName}" />
+                                                        <Setter Property="AutomationProperties.HelpText" Value="{Binding HierarchyHelpText}" />
                                                     </Style>
                                                 </TreeView.ItemContainerStyle>
                                                 <TreeView.Resources>
                                                     <HierarchicalDataTemplate DataType="{x:Type vm:ObjectTreeNode}" ItemsSource="{Binding Children}">
-                                                        <Grid Margin="1,2">
-                                                            <Grid.ColumnDefinitions>
-                                                                <ColumnDefinition Width="Auto" />
-                                                                <ColumnDefinition Width="Auto" />
-                                                                <ColumnDefinition Width="*" />
-                                                            </Grid.ColumnDefinitions>
-                                                            <TextBlock Text="{Binding Label}">
-                                                                <TextBlock.Style>
-                                                                    <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
-                                                                        <Setter Property="FontWeight" Value="SemiBold" />
-                                                                        <Style.Triggers>
-                                                                            <DataTrigger Binding="{Binding IsSearchMatch}" Value="True">
-                                                                                <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
-                                                                                <Setter Property="TextDecorations" Value="Underline" />
-                                                                            </DataTrigger>
-                                                                        </Style.Triggers>
-                                                                    </Style>
-                                                                </TextBlock.Style>
-                                                            </TextBlock>
-                                                            <TextBlock Grid.Column="1" Text="{Binding TypeName}" Style="{StaticResource MutedText}" FontSize="11" Margin="8,0" />
-                                                            <TextBlock Grid.Column="2" Text="{Binding Preview}" Style="{StaticResource MutedText}" FontFamily="Cascadia Mono" FontSize="11" TextTrimming="CharacterEllipsis" ToolTip="{Binding Preview}" />
-                                                        </Grid>
+                                                        <Border x:Name="ObjectHierarchyRow"
+                                                                CornerRadius="4"
+                                                                Padding="3,2"
+                                                                Margin="1"
+                                                                ToolTip="{Binding HierarchyHelpText}">
+                                                            <Border.Style>
+                                                                <Style TargetType="{x:Type Border}">
+                                                                    <Setter Property="Background" Value="Transparent" />
+                                                                    <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+                                                                    <Setter Property="BorderThickness" Value="2,0,0,0" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding Kind}" Value="{x:Static vm:ObjectNodeKind.Group}">
+                                                                            <Setter Property="Background" Value="{DynamicResource SubtleBackground}" />
+                                                                            <Setter Property="BorderBrush" Value="{DynamicResource SecondaryText}" />
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding Kind}" Value="{x:Static vm:ObjectNodeKind.LoadMore}">
+                                                                            <Setter Property="Background" Value="{DynamicResource WarningBackground}" />
+                                                                            <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding IsSearchAncestor}" Value="True">
+                                                                            <Setter Property="Background" Value="{DynamicResource SubtleBackground}" />
+                                                                            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding IsSearchMatch}" Value="True">
+                                                                            <Setter Property="Background" Value="{DynamicResource HoverBrush}" />
+                                                                            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType={x:Type TreeViewItem}}}" Value="True">
+                                                                            <Setter Property="Background" Value="{DynamicResource HoverBrush}" />
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType={x:Type TreeViewItem}}}" Value="True">
+                                                                            <Setter Property="Background" Value="{DynamicResource SelectionBrush}" />
+                                                                            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Border.Style>
+                                                            <Grid>
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="14" />
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                    <ColumnDefinition Width="*" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <Grid x:Name="ObjectHierarchyConnector"
+                                                                      Width="14"
+                                                                      Margin="0,0,4,0"
+                                                                      IsHitTestVisible="False">
+                                                                    <Grid.Style>
+                                                                        <Style TargetType="{x:Type Grid}">
+                                                                            <Setter Property="Opacity" Value="1" />
+                                                                            <Style.Triggers>
+                                                                                <DataTrigger Binding="{Binding Parent}" Value="{x:Null}">
+                                                                                    <Setter Property="Opacity" Value="0" />
+                                                                                </DataTrigger>
+                                                                            </Style.Triggers>
+                                                                        </Style>
+                                                                    </Grid.Style>
+                                                                    <Border Width="1"
+                                                                            HorizontalAlignment="Center"
+                                                                            Background="{DynamicResource BorderBrush}" />
+                                                                    <Border Width="8"
+                                                                            Height="1"
+                                                                            HorizontalAlignment="Right"
+                                                                            VerticalAlignment="Top"
+                                                                            Margin="0,9,0,0"
+                                                                            Background="{DynamicResource BorderBrush}" />
+                                                                </Grid>
+                                                                <Border x:Name="ObjectHierarchyBadge"
+                                                                        Grid.Column="1"
+                                                                        MinWidth="30"
+                                                                        Padding="5,1"
+                                                                        CornerRadius="4"
+                                                                        VerticalAlignment="Top"
+                                                                        ToolTip="{Binding HierarchyHelpText}">
+                                                                    <Border.Style>
+                                                                        <Style TargetType="{x:Type Border}">
+                                                                            <Setter Property="Background" Value="{DynamicResource RaisedBackground}" />
+                                                                            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+                                                                            <Setter Property="BorderThickness" Value="1" />
+                                                                            <Style.Triggers>
+                                                                                <DataTrigger Binding="{Binding Depth}" Value="0">
+                                                                                    <Setter Property="Background" Value="{DynamicResource SelectionBrush}" />
+                                                                                    <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                                                                </DataTrigger>
+                                                                                <DataTrigger Binding="{Binding Kind}" Value="{x:Static vm:ObjectNodeKind.Group}">
+                                                                                    <Setter Property="Background" Value="{DynamicResource SubtleBackground}" />
+                                                                                    <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+                                                                                </DataTrigger>
+                                                                                <DataTrigger Binding="{Binding Kind}" Value="{x:Static vm:ObjectNodeKind.LoadMore}">
+                                                                                    <Setter Property="Background" Value="{DynamicResource WarningBackground}" />
+                                                                                    <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
+                                                                                </DataTrigger>
+                                                                            </Style.Triggers>
+                                                                        </Style>
+                                                                    </Border.Style>
+                                                                    <TextBlock HorizontalAlignment="Center"
+                                                                               FontSize="10"
+                                                                               FontWeight="SemiBold">
+                                                                        <TextBlock.Style>
+                                                                            <Style TargetType="{x:Type TextBlock}" BasedOn="{StaticResource MutedText}">
+                                                                                <Setter Property="Text" Value="{Binding LevelLabel}" />
+                                                                                <Style.Triggers>
+                                                                                    <DataTrigger Binding="{Binding Kind}" Value="{x:Static vm:ObjectNodeKind.Group}">
+                                                                                        <Setter Property="Text" Value="GROUP" />
+                                                                                        <Setter Property="FontSize" Value="9" />
+                                                                                    </DataTrigger>
+                                                                                    <DataTrigger Binding="{Binding Kind}" Value="{x:Static vm:ObjectNodeKind.LoadMore}">
+                                                                                        <Setter Property="Text" Value="MORE" />
+                                                                                        <Setter Property="FontSize" Value="9" />
+                                                                                    </DataTrigger>
+                                                                                    <DataTrigger Binding="{Binding Kind}" Value="{x:Static vm:ObjectNodeKind.Status}">
+                                                                                        <Setter Property="Text" Value="INFO" />
+                                                                                        <Setter Property="FontSize" Value="9" />
+                                                                                    </DataTrigger>
+                                                                                </Style.Triggers>
+                                                                            </Style>
+                                                                        </TextBlock.Style>
+                                                                    </TextBlock>
+                                                                </Border>
+                                                                <Grid Grid.Column="2" Margin="8,0,0,0">
+                                                                    <Grid.RowDefinitions>
+                                                                        <RowDefinition Height="Auto" />
+                                                                        <RowDefinition Height="Auto" />
+                                                                    </Grid.RowDefinitions>
+                                                                    <Grid>
+                                                                        <Grid.ColumnDefinitions>
+                                                                            <ColumnDefinition Width="*" />
+                                                                            <ColumnDefinition Width="Auto" />
+                                                                        </Grid.ColumnDefinitions>
+                                                                        <TextBlock Text="{Binding Label}"
+                                                                                   TextTrimming="CharacterEllipsis">
+                                                                            <TextBlock.Style>
+                                                                                <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                                                                    <Setter Property="FontWeight" Value="SemiBold" />
+                                                                                    <Style.Triggers>
+                                                                                        <DataTrigger Binding="{Binding IsSearchMatch}" Value="True">
+                                                                                            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                                                                                            <Setter Property="TextDecorations" Value="Underline" />
+                                                                                        </DataTrigger>
+                                                                                    </Style.Triggers>
+                                                                                </Style>
+                                                                            </TextBlock.Style>
+                                                                        </TextBlock>
+                                                                        <TextBlock Grid.Column="1"
+                                                                                   Text="{Binding TypeName}"
+                                                                                   Style="{StaticResource MutedText}"
+                                                                                   FontSize="11"
+                                                                                   Margin="8,0,0,0"
+                                                                                   MaxWidth="88"
+                                                                                   TextTrimming="CharacterEllipsis" />
+                                                                    </Grid>
+                                                                    <Grid Grid.Row="1" Margin="0,1,0,0">
+                                                                        <Grid.ColumnDefinitions>
+                                                                            <ColumnDefinition Width="Auto" />
+                                                                            <ColumnDefinition Width="*" />
+                                                                        </Grid.ColumnDefinitions>
+                                                                        <TextBlock Text="{Binding ParentContext}"
+                                                                                   Style="{StaticResource MutedText}"
+                                                                                   FontSize="10"
+                                                                                   FontStyle="Italic"
+                                                                                   MaxWidth="170"
+                                                                                   TextTrimming="CharacterEllipsis"
+                                                                                   ToolTip="{Binding HierarchyHelpText}" />
+                                                                        <TextBlock Grid.Column="1"
+                                                                                   Text="{Binding Preview}"
+                                                                                   Style="{StaticResource MutedText}"
+                                                                                   FontFamily="Cascadia Mono"
+                                                                                   FontSize="11"
+                                                                                   Margin="10,0,0,0"
+                                                                                   TextTrimming="CharacterEllipsis"
+                                                                                   ToolTip="{Binding Preview}" />
+                                                                    </Grid>
+                                                                </Grid>
+                                                            </Grid>
+                                                        </Border>
                                                     </HierarchicalDataTemplate>
                                                 </TreeView.Resources>
                                             </TreeView>
@@ -874,36 +1034,191 @@
                                                           VirtualizingPanel.IsVirtualizing="True"
                                                           VirtualizingPanel.VirtualizationMode="Recycling"
                                                           ScrollViewer.CanContentScroll="True"
+                                                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                                           AutomationProperties.Name="Class members methods and parameters">
                                                     <TreeView.ItemContainerStyle>
                                                         <Style TargetType="{x:Type TreeViewItem}" BasedOn="{StaticResource {x:Type TreeViewItem}}">
                                                             <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
                                                             <Setter Property="Visibility" Value="{Binding IsSearchVisible, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                                            <Setter Property="AutomationProperties.Name" Value="{Binding AccessibilityName}" />
+                                                            <Setter Property="AutomationProperties.HelpText" Value="{Binding HierarchyHelpText}" />
                                                         </Style>
                                                     </TreeView.ItemContainerStyle>
                                                     <TreeView.Resources>
                                                         <HierarchicalDataTemplate DataType="{x:Type vm:ClassTreeNode}" ItemsSource="{Binding Children}">
-                                                            <StackPanel Margin="1,2">
-                                                                <StackPanel Orientation="Horizontal">
-                                                                    <TextBlock Text="{Binding Label}">
-                                                                        <TextBlock.Style>
-                                                                            <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
-                                                                                <Setter Property="FontWeight" Value="SemiBold" />
+                                                            <Border x:Name="ClassHierarchyRow"
+                                                                    CornerRadius="4"
+                                                                    Padding="3,2"
+                                                                    Margin="1"
+                                                                    ToolTip="{Binding HierarchyHelpText}">
+                                                                <Border.Style>
+                                                                    <Style TargetType="{x:Type Border}">
+                                                                        <Setter Property="Background" Value="Transparent" />
+                                                                        <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+                                                                        <Setter Property="BorderThickness" Value="2,0,0,0" />
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding Kind}" Value="group">
+                                                                                <Setter Property="Background" Value="{DynamicResource SubtleBackground}" />
+                                                                                <Setter Property="BorderBrush" Value="{DynamicResource SecondaryText}" />
+                                                                            </DataTrigger>
+                                                                            <DataTrigger Binding="{Binding Kind}" Value="metadata-group">
+                                                                                <Setter Property="Background" Value="{DynamicResource SubtleBackground}" />
+                                                                                <Setter Property="BorderBrush" Value="{DynamicResource SecondaryText}" />
+                                                                            </DataTrigger>
+                                                                            <DataTrigger Binding="{Binding Kind}" Value="parameters">
+                                                                                <Setter Property="Background" Value="{DynamicResource SubtleBackground}" />
+                                                                                <Setter Property="BorderBrush" Value="{DynamicResource SecondaryText}" />
+                                                                            </DataTrigger>
+                                                                            <DataTrigger Binding="{Binding Kind}" Value="status">
+                                                                                <Setter Property="Background" Value="{DynamicResource WarningBackground}" />
+                                                                                <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
+                                                                            </DataTrigger>
+                                                                            <DataTrigger Binding="{Binding IsSearchAncestor}" Value="True">
+                                                                                <Setter Property="Background" Value="{DynamicResource SubtleBackground}" />
+                                                                                <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                                                            </DataTrigger>
+                                                                            <DataTrigger Binding="{Binding IsSearchMatch}" Value="True">
+                                                                                <Setter Property="Background" Value="{DynamicResource HoverBrush}" />
+                                                                                <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                                                            </DataTrigger>
+                                                                            <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType={x:Type TreeViewItem}}}" Value="True">
+                                                                                <Setter Property="Background" Value="{DynamicResource HoverBrush}" />
+                                                                            </DataTrigger>
+                                                                            <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType={x:Type TreeViewItem}}}" Value="True">
+                                                                                <Setter Property="Background" Value="{DynamicResource SelectionBrush}" />
+                                                                                <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </Border.Style>
+                                                                <Grid>
+                                                                    <Grid.ColumnDefinitions>
+                                                                        <ColumnDefinition Width="14" />
+                                                                        <ColumnDefinition Width="Auto" />
+                                                                        <ColumnDefinition Width="*" />
+                                                                    </Grid.ColumnDefinitions>
+                                                                    <Grid x:Name="ClassHierarchyConnector"
+                                                                          Width="14"
+                                                                          Margin="0,0,4,0"
+                                                                          IsHitTestVisible="False">
+                                                                        <Grid.Style>
+                                                                            <Style TargetType="{x:Type Grid}">
+                                                                                <Setter Property="Opacity" Value="1" />
                                                                                 <Style.Triggers>
-                                                                                    <DataTrigger Binding="{Binding IsSearchMatch}" Value="True">
-                                                                                        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
-                                                                                        <Setter Property="TextDecorations" Value="Underline" />
+                                                                                    <DataTrigger Binding="{Binding Parent}" Value="{x:Null}">
+                                                                                        <Setter Property="Opacity" Value="0" />
                                                                                     </DataTrigger>
                                                                                 </Style.Triggers>
                                                                             </Style>
-                                                                        </TextBlock.Style>
-                                                                    </TextBlock>
-                                                                    <TextBlock Text="{Binding Kind}" Style="{StaticResource MutedText}" FontSize="11" Margin="8,0" />
-                                                                    <TextBlock Text="{Binding DeclaredBy}" Style="{StaticResource MutedText}" FontSize="11" />
-                                                                </StackPanel>
-                                                                <TextBlock Text="{Binding Detail}" Style="{StaticResource MutedText}" FontFamily="Cascadia Mono" FontSize="11" TextWrapping="Wrap" MaxWidth="700" />
-                                                                <TextBlock Text="{Binding Source}" Style="{StaticResource MutedText}" FontSize="11" TextTrimming="CharacterEllipsis" ToolTip="{Binding Source}" />
-                                                            </StackPanel>
+                                                                        </Grid.Style>
+                                                                        <Border Width="1"
+                                                                                HorizontalAlignment="Center"
+                                                                                Background="{DynamicResource BorderBrush}" />
+                                                                        <Border Width="8"
+                                                                                Height="1"
+                                                                                HorizontalAlignment="Right"
+                                                                                VerticalAlignment="Top"
+                                                                                Margin="0,9,0,0"
+                                                                                Background="{DynamicResource BorderBrush}" />
+                                                                    </Grid>
+                                                                    <Border x:Name="ClassHierarchyBadge"
+                                                                            Grid.Column="1"
+                                                                            MinWidth="30"
+                                                                            Padding="5,1"
+                                                                            CornerRadius="4"
+                                                                            VerticalAlignment="Top"
+                                                                            ToolTip="{Binding HierarchyHelpText}">
+                                                                        <Border.Style>
+                                                                            <Style TargetType="{x:Type Border}">
+                                                                                <Setter Property="Background" Value="{DynamicResource RaisedBackground}" />
+                                                                                <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+                                                                                <Setter Property="BorderThickness" Value="1" />
+                                                                                <Style.Triggers>
+                                                                                    <DataTrigger Binding="{Binding Depth}" Value="0">
+                                                                                        <Setter Property="Background" Value="{DynamicResource SelectionBrush}" />
+                                                                                        <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                                                                    </DataTrigger>
+                                                                                </Style.Triggers>
+                                                                            </Style>
+                                                                        </Border.Style>
+                                                                        <TextBlock Text="{Binding LevelLabel}"
+                                                                                   HorizontalAlignment="Center"
+                                                                                   Style="{StaticResource MutedText}"
+                                                                                   FontSize="10"
+                                                                                   FontWeight="SemiBold" />
+                                                                    </Border>
+                                                                    <Grid Grid.Column="2" Margin="8,0,0,0">
+                                                                        <Grid.RowDefinitions>
+                                                                            <RowDefinition Height="Auto" />
+                                                                            <RowDefinition Height="Auto" />
+                                                                            <RowDefinition Height="Auto" />
+                                                                            <RowDefinition Height="Auto" />
+                                                                        </Grid.RowDefinitions>
+                                                                        <Grid>
+                                                                            <Grid.ColumnDefinitions>
+                                                                                <ColumnDefinition Width="*" />
+                                                                                <ColumnDefinition Width="Auto" />
+                                                                            </Grid.ColumnDefinitions>
+                                                                            <TextBlock Text="{Binding Label}"
+                                                                                       TextTrimming="CharacterEllipsis">
+                                                                                <TextBlock.Style>
+                                                                                    <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                                                                        <Setter Property="FontWeight" Value="SemiBold" />
+                                                                                        <Style.Triggers>
+                                                                                            <DataTrigger Binding="{Binding IsSearchMatch}" Value="True">
+                                                                                                <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                                                                                                <Setter Property="TextDecorations" Value="Underline" />
+                                                                                            </DataTrigger>
+                                                                                        </Style.Triggers>
+                                                                                    </Style>
+                                                                                </TextBlock.Style>
+                                                                            </TextBlock>
+                                                                            <TextBlock Grid.Column="1"
+                                                                                       Text="{Binding Kind}"
+                                                                                       Style="{StaticResource MutedText}"
+                                                                                       FontSize="11"
+                                                                                       Margin="8,0,0,0"
+                                                                                       MaxWidth="90"
+                                                                                       TextTrimming="CharacterEllipsis" />
+                                                                        </Grid>
+                                                                        <Grid Grid.Row="1" Margin="0,1,0,0">
+                                                                            <Grid.ColumnDefinitions>
+                                                                                <ColumnDefinition Width="*" />
+                                                                                <ColumnDefinition Width="Auto" />
+                                                                            </Grid.ColumnDefinitions>
+                                                                            <TextBlock Text="{Binding DeclaredBy}"
+                                                                                       Style="{StaticResource MutedText}"
+                                                                                       FontSize="11"
+                                                                                       TextTrimming="CharacterEllipsis" />
+                                                                            <TextBlock Grid.Column="1"
+                                                                                       Text="{Binding ParentContext}"
+                                                                                       Style="{StaticResource MutedText}"
+                                                                                       FontSize="10"
+                                                                                       FontStyle="Italic"
+                                                                                       Margin="8,0,0,0"
+                                                                                       MaxWidth="170"
+                                                                                       TextTrimming="CharacterEllipsis"
+                                                                                       ToolTip="{Binding HierarchyHelpText}" />
+                                                                        </Grid>
+                                                                        <TextBlock Text="{Binding Detail}"
+                                                                                   Grid.Row="2"
+                                                                                   Style="{StaticResource MutedText}"
+                                                                                   FontFamily="Cascadia Mono"
+                                                                                   FontSize="11"
+                                                                                   TextWrapping="Wrap"
+                                                                                   MaxHeight="34"
+                                                                                   TextTrimming="CharacterEllipsis"
+                                                                                   ToolTip="{Binding Detail}" />
+                                                                        <TextBlock Text="{Binding Source}"
+                                                                                   Grid.Row="3"
+                                                                                   Style="{StaticResource MutedText}"
+                                                                                   FontSize="11"
+                                                                                   TextTrimming="CharacterEllipsis"
+                                                                                   ToolTip="{Binding Source}" />
+                                                                    </Grid>
+                                                                </Grid>
+                                                            </Border>
                                                         </HierarchicalDataTemplate>
                                                     </TreeView.Resources>
                                                 </TreeView>

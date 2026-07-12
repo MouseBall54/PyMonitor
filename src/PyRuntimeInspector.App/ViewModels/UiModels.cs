@@ -190,6 +190,7 @@ public sealed class ObjectTreeNode : ObservableObject
     private bool _isLoaded;
     private bool _isSearchVisible = true;
     private bool _isSearchMatch;
+    private bool _isSearchAncestor;
 
     public required string Label { get; init; }
     public string Origin { get; init; } = "";
@@ -209,10 +210,26 @@ public sealed class ObjectTreeNode : ObservableObject
     public bool IsLoaded { get => _isLoaded; set => SetProperty(ref _isLoaded, value); }
     public bool IsSearchVisible { get => _isSearchVisible; set => SetProperty(ref _isSearchVisible, value); }
     public bool IsSearchMatch { get => _isSearchMatch; set => SetProperty(ref _isSearchMatch, value); }
+    public bool IsSearchAncestor { get => _isSearchAncestor; set => SetProperty(ref _isSearchAncestor, value); }
     public bool CanNavigate => Kind == ObjectNodeKind.Object && Value is not null && !IsCycle && !IsExpired;
     public string TypeName => Value?.TypeName ?? "";
     public string Preview => Value?.SafePreview ?? "";
     public string Address => Value?.Address ?? "";
+    public string LevelLabel => $"L{Depth}";
+    public string ParentContext => Kind switch
+    {
+        ObjectNodeKind.Object when Parent is null => "Object root",
+        ObjectNodeKind.Object => $"Object parent: {Parent!.Label}",
+        ObjectNodeKind.Group => $"Section of: {Parent?.Label ?? "current object"}",
+        ObjectNodeKind.LoadMore => $"More children of: {Parent?.Label ?? "current object"}",
+        _ => $"Status for: {Parent?.Label ?? "current object"}",
+    };
+    public string AccessibilityName => Kind == ObjectNodeKind.Object
+        ? $"{Label}, {TypeName}, object level {Depth}, {ParentContext}"
+        : $"{Label}, {Kind}, {ParentContext}";
+    public string HierarchyHelpText => string.IsNullOrWhiteSpace(Path)
+        ? AccessibilityName
+        : $"{AccessibilityName}. Path: {Path}";
 }
 
 public sealed class ClassTreeNode : ObservableObject
@@ -227,11 +244,22 @@ public sealed class ClassTreeNode : ObservableObject
     public string Detail { get; init; } = "";
     public string DeclaredBy { get; init; } = "";
     public string Source { get; init; } = "";
+    public int Depth { get; internal set; }
+    public ClassTreeNode? Parent { get; internal set; }
     public ObservableCollection<ClassTreeNode> Children { get; } = [];
     public bool IsExpanded { get => _isExpanded; set => SetProperty(ref _isExpanded, value); }
     public bool IsSearchVisible { get => _isSearchVisible; set => SetProperty(ref _isSearchVisible, value); }
     public bool IsSearchMatch { get => _isSearchMatch; set => SetProperty(ref _isSearchMatch, value); }
     public bool IsSearchAncestor { get => _isSearchAncestor; set => SetProperty(ref _isSearchAncestor, value); }
+    public string LevelLabel => $"L{Depth}";
+    public string ParentContext => Parent is null ? "Class tree root" : $"Tree parent: {Parent.Label}";
+    public string HierarchyPath => Parent is null ? Label : $"{Parent.HierarchyPath} > {Label}";
+    public string AccessibilityName => $"{Label}, {Kind}, tree level {Depth}, {ParentContext}";
+    public string HierarchyHelpText =>
+        $"{AccessibilityName}. Hierarchy: {HierarchyPath}"
+        + (string.IsNullOrWhiteSpace(DeclaredBy) ? "" : $". Declared by: {DeclaredBy}")
+        + (string.IsNullOrWhiteSpace(Detail) ? "" : $". Detail: {Detail}")
+        + (string.IsNullOrWhiteSpace(Source) ? "" : $". Source: {Source}");
 }
 
 public sealed record ObjectChildRow(

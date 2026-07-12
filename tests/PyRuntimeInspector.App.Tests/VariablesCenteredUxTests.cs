@@ -119,6 +119,20 @@ public sealed class VariablesCenteredUxTests
         var history = viewModel.NavigationHistoryLabel;
         var path = viewModel.SelectedObjectPath;
 
+        Assert.Equal(0, root.Depth);
+        Assert.Equal("L0", root.LevelLabel);
+        Assert.Equal("Object root", root.ParentContext);
+        Assert.Null(root.Parent);
+        Assert.Contains("object level 0", root.AccessibilityName, StringComparison.Ordinal);
+        Assert.Equal(root, group.Parent);
+        Assert.Equal(0, group.Depth);
+        Assert.Equal("Section of: dict_test", group.ParentContext);
+        Assert.Equal(root, child.Parent);
+        Assert.Equal(1, child.Depth);
+        Assert.Equal("L1", child.LevelLabel);
+        Assert.Equal("Object parent: dict_test", child.ParentContext);
+        Assert.Contains(child.Path, child.HierarchyHelpText, StringComparison.Ordinal);
+
         viewModel.ObjectChildrenSearchText = "CHILD";
 
         Assert.Equal("child", Assert.Single(viewModel.FilteredObjectChildren).Name);
@@ -134,6 +148,9 @@ public sealed class VariablesCenteredUxTests
         Assert.False(child.IsSearchVisible);
         Assert.True(deep.IsSearchVisible);
         Assert.True(deep.IsSearchMatch);
+        Assert.False(deep.IsSearchAncestor);
+        Assert.True(group.IsSearchAncestor);
+        Assert.True(root.IsSearchAncestor);
         Assert.False(loop.IsSearchVisible);
         Assert.Contains("1", viewModel.ObjectTreeSearchResultLabel);
         Assert.Same(root, Assert.Single(viewModel.ObjectRoots));
@@ -154,6 +171,9 @@ public sealed class VariablesCenteredUxTests
         Assert.Equal("", viewModel.ObjectTreeSearchText);
         Assert.All(group.Children, node => Assert.True(node.IsSearchVisible));
         Assert.All(group.Children, node => Assert.False(node.IsSearchMatch));
+        Assert.All(group.Children, node => Assert.False(node.IsSearchAncestor));
+        Assert.False(group.IsSearchAncestor);
+        Assert.False(root.IsSearchAncestor);
         Assert.False(group.IsExpanded);
         Assert.Equal(requestCount, session.Requests.Count);
     }
@@ -235,6 +255,26 @@ public sealed class VariablesCenteredUxTests
         var inheritedGroup = Assert.Single(viewModel.ClassTree, node => node.Label == "Inherited members");
         var inheritedName = Assert.Single(inheritedGroup.Children, node => node.Label == "name");
         var truncatedStatus = Assert.Single(viewModel.ClassTree, node => node.Kind == "status");
+        Assert.Equal(0, overview.Depth);
+        Assert.Equal("L0", overview.LevelLabel);
+        Assert.Null(overview.Parent);
+        Assert.Equal("Class tree root", overview.ParentContext);
+        Assert.Equal(overview, metaclass.Parent);
+        Assert.Equal(1, metaclass.Depth);
+        Assert.Equal(methods, render.Parent);
+        Assert.Equal(1, render.Depth);
+        Assert.Equal(render, parameters.Parent);
+        Assert.Equal(2, parameters.Depth);
+        Assert.Equal(parameters, width.Parent);
+        Assert.Equal(3, width.Depth);
+        Assert.Equal("L3", width.LevelLabel);
+        Assert.Equal("Tree parent: Parameters", width.ParentContext);
+        Assert.Equal("Instance methods > render > Parameters > width", width.HierarchyPath);
+        Assert.Contains("tree level 3", width.AccessibilityName, StringComparison.Ordinal);
+        Assert.Contains(render.DeclaredBy, render.HierarchyHelpText, StringComparison.Ordinal);
+        Assert.Contains(render.Detail, render.HierarchyHelpText, StringComparison.Ordinal);
+        Assert.Contains(render.Source, render.HierarchyHelpText, StringComparison.Ordinal);
+        Assert.Equal(0, truncatedStatus.Depth);
         overview.IsExpanded = true;
         methods.IsExpanded = false;
         render.IsExpanded = false;

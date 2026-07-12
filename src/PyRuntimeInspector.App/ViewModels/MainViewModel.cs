@@ -2482,6 +2482,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                 Detail = $"Showing {memberRows.Count:N0} of {total} members (limit {limit:N0})",
             });
         }
+        SetClassTreeHierarchy(ClassTree, parent: null, depth: 0);
         _classTreeLoadedSearchableCount = ClassTree.Sum(CountClassTreeSearchableNodes);
         if (!string.IsNullOrWhiteSpace(ClassTreeSearchText)
             && _classTreeExpansionBeforeSearch.Count == 0)
@@ -3960,6 +3961,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
         var branchMatches = selfMatches || descendantMatches;
         node.IsSearchMatch = selfMatches;
+        node.IsSearchAncestor = descendantMatches && !selfMatches;
         node.IsSearchVisible = isRoot || branchMatches;
         if (descendantMatches)
             node.IsExpanded = true;
@@ -3970,6 +3972,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     {
         node.IsSearchVisible = true;
         node.IsSearchMatch = false;
+        node.IsSearchAncestor = false;
         foreach (var child in node.Children)
             ResetObjectTreeSearchState(child);
     }
@@ -4076,6 +4079,19 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private static int CountClassTreeSearchableNodes(ClassTreeNode node) =>
         (IsClassTreeSearchableNode(node) ? 1 : 0)
         + node.Children.Sum(CountClassTreeSearchableNodes);
+
+    private static void SetClassTreeHierarchy(
+        IEnumerable<ClassTreeNode> nodes,
+        ClassTreeNode? parent,
+        int depth)
+    {
+        foreach (var node in nodes)
+        {
+            node.Parent = parent;
+            node.Depth = depth;
+            SetClassTreeHierarchy(node.Children, node, depth + 1);
+        }
+    }
 
     private void CaptureClassTreeExpansion()
     {

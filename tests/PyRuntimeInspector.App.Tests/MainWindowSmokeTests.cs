@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Threading;
 using System.Windows;
 using System.Windows.Automation;
+using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
@@ -201,9 +202,76 @@ public sealed class MainWindowSmokeTests
                 Assert.Equal("FilteredObjectChildren", immediateChildrenBinding.Path.Path);
                 var objectTree = LogicalDescendants<TreeView>(window)
                     .Single(tree => AutomationProperties.GetName(tree) == "Object member tree");
+                Assert.True(VirtualizingPanel.GetIsVirtualizing(objectTree));
+                Assert.Equal(VirtualizationMode.Recycling, VirtualizingPanel.GetVirtualizationMode(objectTree));
+                Assert.True(ScrollViewer.GetCanContentScroll(objectTree));
+                Assert.Equal(ScrollBarVisibility.Auto, ScrollViewer.GetHorizontalScrollBarVisibility(objectTree));
                 Assert.Contains(objectTree.ItemContainerStyle.Setters.OfType<Setter>(), setter =>
                     setter.Property == UIElement.VisibilityProperty
                     && setter.Value is Binding { Path.Path: "IsSearchVisible" });
+                Assert.Contains(objectTree.ItemContainerStyle.Setters.OfType<Setter>(), setter =>
+                    setter.Property == Control.HorizontalContentAlignmentProperty
+                    && Equals(setter.Value, HorizontalAlignment.Stretch));
+                var objectItemNameSetter = Assert.Single(
+                    objectTree.ItemContainerStyle.Setters.OfType<Setter>(),
+                    setter => setter.Property == AutomationProperties.NameProperty);
+                Assert.Equal("AccessibilityName", Assert.IsType<Binding>(objectItemNameSetter.Value).Path.Path);
+                var objectItemHelpSetter = Assert.Single(
+                    objectTree.ItemContainerStyle.Setters.OfType<Setter>(),
+                    setter => setter.Property == AutomationProperties.HelpTextProperty);
+                Assert.Equal("HierarchyHelpText", Assert.IsType<Binding>(objectItemHelpSetter.Value).Path.Path);
+                var accessibleObjectNode = new ObjectTreeNode { Label = "root" };
+                var accessibleObjectItem = new TreeViewItem
+                {
+                    DataContext = accessibleObjectNode,
+                    Style = objectTree.ItemContainerStyle,
+                };
+                accessibleObjectItem.ApplyTemplate();
+                var objectItemPeer = new TreeViewItemAutomationPeer(accessibleObjectItem);
+                Assert.Equal(accessibleObjectNode.AccessibilityName, objectItemPeer.GetName());
+                Assert.Equal(accessibleObjectNode.HierarchyHelpText, objectItemPeer.GetHelpText());
+                var objectTemplate = Assert.Single(
+                    objectTree.Resources.Values.OfType<HierarchicalDataTemplate>());
+                var objectHierarchyRow = Assert.IsType<Border>(objectTemplate.LoadContent());
+                Assert.Equal("ObjectHierarchyRow", objectHierarchyRow.Name);
+                Assert.Null(BindingOperations.GetBindingBase(objectHierarchyRow, AutomationProperties.NameProperty));
+                Assert.Null(BindingOperations.GetBindingBase(objectHierarchyRow, AutomationProperties.HelpTextProperty));
+                objectHierarchyRow.DataContext = new ObjectTreeNode
+                {
+                    Label = new string('o', 250),
+                    Path = new string('p', 250),
+                };
+                objectHierarchyRow.Measure(new Size(330, double.PositiveInfinity));
+                Assert.InRange(objectHierarchyRow.DesiredSize.Width, 0, 330);
+                var objectConnector = LogicalDescendants<Grid>(objectHierarchyRow)
+                    .Single(grid => grid.Name == "ObjectHierarchyConnector");
+                Assert.False(objectConnector.IsHitTestVisible);
+                Assert.Contains(objectConnector.Style.Triggers.OfType<DataTrigger>(), trigger =>
+                    trigger.Binding is Binding { Path.Path: "Parent" }
+                    && trigger.Value is null);
+                var objectBadge = LogicalDescendants<Border>(objectHierarchyRow)
+                    .Single(border => border.Name == "ObjectHierarchyBadge");
+                Assert.Equal(VerticalAlignment.Top, objectBadge.VerticalAlignment);
+                Assert.Contains(objectBadge.Style.Triggers.OfType<DataTrigger>(), trigger =>
+                    trigger.Binding is Binding { Path.Path: "Kind" }
+                    && Equals(trigger.Value, ObjectNodeKind.Group));
+                var objectBadgeText = LogicalDescendants<TextBlock>(objectBadge)
+                    .Single(text => text.Style.Setters.OfType<Setter>().Any(setter =>
+                        setter.Property == TextBlock.TextProperty
+                        && setter.Value is Binding { Path.Path: "LevelLabel" }));
+                Assert.Contains(objectBadgeText.Style.Triggers.OfType<DataTrigger>(), trigger =>
+                    trigger.Binding is Binding { Path.Path: "Kind" }
+                    && Equals(trigger.Value, ObjectNodeKind.Group)
+                    && trigger.Setters.OfType<Setter>().Any(setter =>
+                        setter.Property == TextBlock.TextProperty
+                        && Equals(setter.Value, "GROUP")));
+                Assert.Contains(LogicalDescendants<TextBlock>(objectHierarchyRow), text =>
+                    BindingOperations.GetBindingBase(text, TextBlock.TextProperty)
+                        is Binding { Path.Path: "ParentContext" });
+                Assert.Contains(objectHierarchyRow.Style.Triggers.OfType<DataTrigger>(), trigger =>
+                    trigger.Binding is Binding { Path.Path: "IsSearchAncestor" });
+                Assert.Contains(objectHierarchyRow.Style.Triggers.OfType<DataTrigger>(), trigger =>
+                    trigger.Binding is Binding { Path.Path: "IsSearchMatch" });
 
                 var classTab = LogicalDescendants<TabItem>(window)
                     .Single(tab => string.Equals(tab.Header?.ToString(), "Class and Methods", StringComparison.Ordinal));
@@ -297,6 +365,7 @@ public sealed class MainWindowSmokeTests
                 Assert.True(VirtualizingPanel.GetIsVirtualizing(classTree));
                 Assert.Equal(VirtualizationMode.Recycling, VirtualizingPanel.GetVirtualizationMode(classTree));
                 Assert.True(ScrollViewer.GetCanContentScroll(classTree));
+                Assert.Equal(ScrollBarVisibility.Disabled, ScrollViewer.GetHorizontalScrollBarVisibility(classTree));
                 var classExpandedSetter = Assert.Single(
                     classTree.ItemContainerStyle.Setters.OfType<Setter>(),
                     setter => setter.Property == TreeViewItem.IsExpandedProperty);
@@ -306,10 +375,71 @@ public sealed class MainWindowSmokeTests
                 Assert.Contains(classTree.ItemContainerStyle.Setters.OfType<Setter>(), setter =>
                     setter.Property == UIElement.VisibilityProperty
                     && setter.Value is Binding { Path.Path: "IsSearchVisible" });
+                Assert.Contains(classTree.ItemContainerStyle.Setters.OfType<Setter>(), setter =>
+                    setter.Property == Control.HorizontalContentAlignmentProperty
+                    && Equals(setter.Value, HorizontalAlignment.Stretch));
+                var classItemNameSetter = Assert.Single(
+                    classTree.ItemContainerStyle.Setters.OfType<Setter>(),
+                    setter => setter.Property == AutomationProperties.NameProperty);
+                Assert.Equal("AccessibilityName", Assert.IsType<Binding>(classItemNameSetter.Value).Path.Path);
+                var classItemHelpSetter = Assert.Single(
+                    classTree.ItemContainerStyle.Setters.OfType<Setter>(),
+                    setter => setter.Property == AutomationProperties.HelpTextProperty);
+                Assert.Equal("HierarchyHelpText", Assert.IsType<Binding>(classItemHelpSetter.Value).Path.Path);
+                var accessibleClassNode = new ClassTreeNode { Label = "Methods", Kind = "group" };
+                var accessibleClassItem = new TreeViewItem
+                {
+                    DataContext = accessibleClassNode,
+                    Style = classTree.ItemContainerStyle,
+                };
+                accessibleClassItem.ApplyTemplate();
+                var classItemPeer = new TreeViewItemAutomationPeer(accessibleClassItem);
+                Assert.Equal(accessibleClassNode.AccessibilityName, classItemPeer.GetName());
+                Assert.Equal(accessibleClassNode.HierarchyHelpText, classItemPeer.GetHelpText());
 
                 var classTemplate = Assert.Single(
                     classTree.Resources.Values.OfType<HierarchicalDataTemplate>());
-                var classTemplateRoot = Assert.IsAssignableFrom<DependencyObject>(classTemplate.LoadContent());
+                var classHierarchyRow = Assert.IsType<Border>(classTemplate.LoadContent());
+                var classTemplateRoot = Assert.IsAssignableFrom<DependencyObject>(classHierarchyRow);
+                Assert.Equal("ClassHierarchyRow", classHierarchyRow.Name);
+                Assert.Null(BindingOperations.GetBindingBase(classHierarchyRow, AutomationProperties.NameProperty));
+                Assert.Null(BindingOperations.GetBindingBase(classHierarchyRow, AutomationProperties.HelpTextProperty));
+                classHierarchyRow.DataContext = new ClassTreeNode
+                {
+                    Label = new string('c', 250),
+                    Kind = new string('k', 80),
+                    DeclaredBy = new string('d', 250),
+                    Detail = new string('x', 500),
+                    Source = new string('s', 250),
+                };
+                classHierarchyRow.Measure(new Size(330, double.PositiveInfinity));
+                Assert.InRange(classHierarchyRow.DesiredSize.Width, 0, 330);
+                var classConnector = LogicalDescendants<Grid>(classHierarchyRow)
+                    .Single(grid => grid.Name == "ClassHierarchyConnector");
+                Assert.False(classConnector.IsHitTestVisible);
+                Assert.Contains(classConnector.Style.Triggers.OfType<DataTrigger>(), trigger =>
+                    trigger.Binding is Binding { Path.Path: "Parent" }
+                    && trigger.Value is null);
+                var classConnectorArm = LogicalDescendants<Border>(classConnector)
+                    .Single(border => border.Height == 1);
+                Assert.Equal(VerticalAlignment.Top, classConnectorArm.VerticalAlignment);
+                Assert.Equal(9, classConnectorArm.Margin.Top);
+                var classBadge = LogicalDescendants<Border>(classHierarchyRow)
+                    .Single(border => border.Name == "ClassHierarchyBadge");
+                Assert.Equal(VerticalAlignment.Top, classBadge.VerticalAlignment);
+                var classBadgeText = LogicalDescendants<TextBlock>(classBadge)
+                    .Single(text => BindingOperations.GetBindingBase(text, TextBlock.TextProperty)
+                        is Binding { Path.Path: "LevelLabel" });
+                Assert.Equal("LevelLabel", Assert.IsType<Binding>(BindingOperations.GetBindingBase(
+                    classBadgeText,
+                    TextBlock.TextProperty)).Path.Path);
+                Assert.Contains(LogicalDescendants<TextBlock>(classHierarchyRow), text =>
+                    BindingOperations.GetBindingBase(text, TextBlock.TextProperty)
+                        is Binding { Path.Path: "ParentContext" });
+                Assert.Contains(classHierarchyRow.Style.Triggers.OfType<DataTrigger>(), trigger =>
+                    trigger.Binding is Binding { Path.Path: "IsSearchAncestor" });
+                Assert.Contains(classHierarchyRow.Style.Triggers.OfType<DataTrigger>(), trigger =>
+                    trigger.Binding is Binding { Path.Path: "IsSearchMatch" });
                 var classLabel = LogicalDescendants<TextBlock>(classTemplateRoot)
                     .Single(text => BindingOperations.GetBindingBase(text, TextBlock.TextProperty)
                         is Binding { Path.Path: "Label" });
@@ -322,6 +452,12 @@ public sealed class MainWindowSmokeTests
                     setter.Property == TextBlock.TextDecorationsProperty);
                 Assert.DoesNotContain(classLabel.Style.Triggers.OfType<DataTrigger>(), trigger =>
                     trigger.Binding is Binding { Path.Path: "IsSearchAncestor" });
+                var classDetail = LogicalDescendants<TextBlock>(classTemplateRoot)
+                    .Single(text => BindingOperations.GetBindingBase(text, TextBlock.TextProperty)
+                        is Binding { Path.Path: "Detail" });
+                Assert.Equal("Detail", Assert.IsType<Binding>(BindingOperations.GetBindingBase(
+                    classDetail,
+                    FrameworkElement.ToolTipProperty)).Path.Path);
 
                 var noClassResults = LogicalDescendants<Border>(classTab)
                     .Single(border => AutomationProperties.GetName(border) == "No class member search results");
