@@ -2,6 +2,7 @@ import gc
 import time
 
 from .runtime_info import timestamp
+from .safe_metadata import type_module, type_name
 from .safe_objects import _page
 
 
@@ -29,16 +30,16 @@ def list_objects(inspector, query="", offset=0, page_size=100, max_objects=DEFAU
         if index >= scanned_count:
             break
         cls = type(value)
-        type_name = type.__getattribute__(cls, "__name__")
-        module_name = type.__getattribute__(cls, "__module__")
-        qualified_name = f"{module_name}.{type_name}"
+        value_type_name = type_name(cls)
+        module_name = type_module(cls)
+        qualified_name = f"{module_name}.{value_type_name}"
         address = hex(id(value))
         if folded_query and not any(
             folded_query in candidate.casefold()
-            for candidate in (type_name, module_name, qualified_name, address)
+            for candidate in (value_type_name, module_name, qualified_name, address)
         ):
             continue
-        matches.append((module_name.casefold(), type_name.casefold(), id(value), qualified_name, value))
+        matches.append((module_name.casefold(), value_type_name.casefold(), id(value), qualified_name, value))
 
     matches.sort(key=lambda item: item[:3])
     page = matches[offset:offset + page_size]

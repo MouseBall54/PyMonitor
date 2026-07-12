@@ -4,10 +4,12 @@ import sys
 import threading
 import time
 
+from .safe_metadata import type_name
+
 from .runtime_info import timestamp
 
 
-_TOOL_NAME = "PyRuntimeInspector"
+_TOOL_NAME = "PyMonitor"
 _CANDIDATE_TOOL_IDS = (3, 4)
 _SUPPORTED_EVENTS = (
     "PY_START",
@@ -234,4 +236,4 @@ def _record(event_name, code, instruction_offset, line_number, detail=None):
 
 def _safe_exception_type(exception):
     exception_type = type(exception)
-    return type.__getattribute__(exception_type, "__name__")
+    return type_name(exception_type)

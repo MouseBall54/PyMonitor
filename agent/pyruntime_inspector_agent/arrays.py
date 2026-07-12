@@ -5,22 +5,60 @@ import types
 
 _MAX_IMAGE_DIMENSION = 1024
 _MAX_HISTOGRAM_SAMPLES = 1_000_000
+_PY_TPFLAGS_HEAPTYPE = 1 << 9
+_NDARRAY_GETSET_ATTRIBUTES = (
+    "shape",
+    "dtype",
+    "ndim",
+    "strides",
+    "size",
+    "nbytes",
+    "flags",
+    "base",
+    "__array_interface__",
+)
 
 
 def _numpy_module():
-    module = sys.modules.get("numpy")
+    try:
+        module = dict.get(sys.modules, "numpy")
+    except TypeError:
+        return None
     if type(module) is not types.ModuleType:
         return None
     namespace = types.ModuleType.__getattribute__(module, "__dict__")
-    ndarray = namespace.get("ndarray")
-    return module if type(ndarray) is type else None
+    ndarray = dict.get(namespace, "ndarray")
+    if type(ndarray) is not type:
+        return None
+    try:
+        flags = type.__getattribute__(ndarray, "__flags__")
+        module_name = type.__getattribute__(ndarray, "__module__")
+        type_name = type.__getattribute__(ndarray, "__name__")
+        qualified_name = type.__getattribute__(ndarray, "__qualname__")
+        descriptors = (
+            type.__getattribute__(ndarray, attribute)
+            for attribute in _NDARRAY_GETSET_ATTRIBUTES
+        )
+    except AttributeError:
+        return None
+    if (
+        type(flags) is not int
+        or flags & _PY_TPFLAGS_HEAPTYPE
+        or module_name != "numpy"
+        or type_name != "ndarray"
+        or qualified_name != "ndarray"
+        or any(type(descriptor) is not types.GetSetDescriptorType for descriptor in descriptors)
+    ):
+        return None
+    return module
 
 
 def is_exact_ndarray(value):
     module = _numpy_module()
     if module is None:
         return False
-    ndarray = types.ModuleType.__getattribute__(module, "__dict__")["ndarray"]
+    namespace = types.ModuleType.__getattribute__(module, "__dict__")
+    ndarray = dict.__getitem__(namespace, "ndarray")
     return type(value) is ndarray
 
 
@@ -182,25 +220,25 @@ def histogram(
     if type(channel) is not int or not 0 <= channel < channels:
         raise ValueError("channel is outside the selected array view.")
     selected = image if channels == 1 else image[:, :, channel]
-    flat = selected.reshape(-1)
-    sample_step = max(1, (flat.size + _MAX_HISTOGRAM_SAMPLES - 1) // _MAX_HISTOGRAM_SAMPLES)
-    sample = flat[::sample_step].copy(order="C")
-    numpy = _numpy_module()
+    sample, sample_step = _bounded_flat_sample(selected, _MAX_HISTOGRAM_SAMPLES)
     if value.dtype.kind == "f":
-        nan_count = int(numpy.isnan(sample).sum())
-        positive_inf_count = int(numpy.isposinf(sample).sum())
-        negative_inf_count = int(numpy.isneginf(sample).sum())
-        finite = sample[numpy.isfinite(sample)]
+        nan_mask = sample != sample
+        positive_inf_mask = sample == math.inf
+        negative_inf_mask = sample == -math.inf
+        nan_count = int(nan_mask.sum())
+        positive_inf_count = int(positive_inf_mask.sum())
+        negative_inf_count = int(negative_inf_mask.sum())
+        finite = sample[~(nan_mask | positive_inf_mask | negative_inf_mask)]
     else:
         nan_count = positive_inf_count = negative_inf_count = 0
         finite = sample
     if finite.size:
-        counts, edges = numpy.histogram(finite, bins=bins)
         minimum = float(finite.min())
         maximum = float(finite.max())
+        counts, edges = _uniform_histogram(finite, bins, minimum, maximum)
     else:
-        counts = numpy.zeros(bins, dtype=numpy.int64)
-        edges = numpy.linspace(0.0, 1.0, bins + 1)
+        counts = [0] * bins
+        edges = [index / bins for index in range(bins + 1)]
         minimum = maximum = None
     return {
         "layout": selected_layout,
@@ -208,8 +246,8 @@ def histogram(
         "sliceIndex": selected_index,
         "channel": channel,
         "bins": bins,
-        "counts": [int(item) for item in counts.tolist()],
-        "binEdges": [float(item) for item in edges.tolist()],
+        "counts": counts,
+        "binEdges": edges,
         "sampleCount": int(sample.size),
         "sampleStep": int(sample_step),
         "finiteCount": int(finite.size),
@@ -267,11 +305,33 @@ def _select_image(value, layout, slice_axis, slice_index):
         selected_index = value.shape[selected_axis] // 2 if slice_index is None else int(slice_index)
         if not 0 <= selected_index < value.shape[selected_axis]:
             raise ValueError("sliceIndex is out of range.")
-        image = value.take(selected_index, axis=selected_axis)
+        selector = [slice(None)] * value.ndim
+        selector[selected_axis] = selected_index
+        image = value[tuple(selector)]
         channels = 1
     else:
         raise ValueError("The array shape and requested layout are not supported.")
     return image, channels, selected_layout, selected_axis, selected_index
+
+
+def _bounded_flat_sample(value, maximum_samples):
+    total = int(value.size)
+    sample_step = max(1, (total + maximum_samples - 1) // maximum_samples)
+    return value.flat[::sample_step].copy(order="C"), sample_step
+
+
+def _uniform_histogram(values, bins, minimum, maximum):
+    lower = minimum - 0.5 if minimum == maximum else minimum
+    upper = maximum + 0.5 if minimum == maximum else maximum
+    width = (upper - lower) / bins
+    counts = [0] * bins
+    for raw in values.flat:
+        value = float(raw)
+        index = bins - 1 if value == upper else int((value - lower) / width)
+        counts[min(bins - 1, max(0, index))] += 1
+    edges = [lower + width * index for index in range(bins + 1)]
+    edges[-1] = upper
+    return counts, edges
 
 
 def _render(image, channels, color_order, enabled_channels, normalization, percentile_low, percentile_high):
@@ -319,7 +379,6 @@ def _render(image, channels, color_order, enabled_channels, normalization, perce
 
 
 def _normalize(snapshot, mode, percentile_low, percentile_high):
-    numpy = _numpy_module()
     kind = snapshot.dtype.kind
     if kind == "u" and snapshot.dtype.itemsize == 1 and mode in ("AUTO", "NONE"):
         return snapshot, {
@@ -331,7 +390,7 @@ def _normalize(snapshot, mode, percentile_low, percentile_high):
             "negativeInfinityCount": 0,
         }
     if kind == "b":
-        return snapshot.astype(numpy.uint8) * 255, {
+        return snapshot.astype("uint8") * 255, {
             "mode": "BOOL",
             "displayMinimum": 0.0,
             "displayMaximum": 1.0,
@@ -343,26 +402,38 @@ def _normalize(snapshot, mode, percentile_low, percentile_high):
         minimum, maximum = 0.0, 255.0
     else:
         selected_mode = "PERCENTILE" if mode == "AUTO" else mode
-        finite_mask = numpy.isfinite(snapshot)
-        finite = snapshot[finite_mask]
+        if kind == "f":
+            finite = snapshot[(snapshot == snapshot) & (snapshot != math.inf) & (snapshot != -math.inf)]
+        else:
+            finite = snapshot.reshape(-1)
         if finite.size == 0:
             minimum, maximum = 0.0, 1.0
         elif selected_mode == "PERCENTILE":
-            minimum, maximum = [float(item) for item in numpy.percentile(finite, [float(percentile_low), float(percentile_high)])]
+            minimum, maximum = _linear_percentiles(
+                finite,
+                float(percentile_low),
+                float(percentile_high),
+            )
         else:
             minimum, maximum = float(finite.min()), float(finite.max())
         mode = selected_mode
-    source = snapshot.astype(numpy.float64, copy=False)
+    source = snapshot.astype("float64", copy=False)
     if maximum <= minimum:
-        rendered = numpy.zeros(snapshot.shape, dtype=numpy.uint8)
+        rendered = snapshot.astype("uint8", copy=True)
+        rendered[...] = 0
     else:
         scaled = (source - minimum) * (255.0 / (maximum - minimum))
-        scaled = numpy.nan_to_num(scaled, nan=0.0, posinf=255.0, neginf=0.0)
-        rendered = numpy.clip(scaled, 0.0, 255.0).astype(numpy.uint8)
+        if kind == "f":
+            scaled[scaled != scaled] = 0.0
+            scaled[scaled == math.inf] = 255.0
+            scaled[scaled == -math.inf] = 0.0
+        scaled[scaled < 0.0] = 0.0
+        scaled[scaled > 255.0] = 255.0
+        rendered = scaled.astype("uint8")
     if kind == "f":
-        nan_count = int(numpy.isnan(snapshot).sum())
-        positive_inf_count = int(numpy.isposinf(snapshot).sum())
-        negative_inf_count = int(numpy.isneginf(snapshot).sum())
+        nan_count = int((snapshot != snapshot).sum())
+        positive_inf_count = int((snapshot == math.inf).sum())
+        negative_inf_count = int((snapshot == -math.inf).sum())
     else:
         nan_count = positive_inf_count = negative_inf_count = 0
     return rendered, {
@@ -377,13 +448,33 @@ def _normalize(snapshot, mode, percentile_low, percentile_high):
     }
 
 
+def _linear_percentiles(values, low, high):
+    flattened = values.reshape(-1).copy(order="C")
+    count = int(flattened.size)
+    positions = ((count - 1) * low / 100.0, (count - 1) * high / 100.0)
+    lower_indexes = [math.floor(position) for position in positions]
+    upper_indexes = [math.ceil(position) for position in positions]
+    flattened.partition(tuple(sorted(set(lower_indexes + upper_indexes))))
+    result = []
+    for position, lower_index, upper_index in zip(positions, lower_indexes, upper_indexes):
+        lower_value = float(flattened[lower_index])
+        if lower_index == upper_index:
+            result.append(lower_value)
+            continue
+        upper_value = float(flattened[upper_index])
+        result.append(lower_value + (upper_value - lower_value) * (position - lower_index))
+    return result
+
+
 def _label_map(snapshot):
-    numpy = _numpy_module()
-    labels = snapshot.astype(numpy.int64, copy=False)
-    red = ((labels * 37 + 17) % 256).astype(numpy.uint8)
-    green = ((labels * 73 + 29) % 256).astype(numpy.uint8)
-    blue = ((labels * 109 + 47) % 256).astype(numpy.uint8)
-    rendered = numpy.stack((red, green, blue), axis=2)
+    labels = snapshot.astype("int64", copy=False)
+    red = ((labels * 37 + 17) % 256).astype("uint8")
+    green = ((labels * 73 + 29) % 256).astype("uint8")
+    blue = ((labels * 109 + 47) % 256).astype("uint8")
+    rendered = labels[:, :, None].repeat(3, axis=2).astype("uint8", copy=False)
+    rendered[:, :, 0] = red
+    rendered[:, :, 1] = green
+    rendered[:, :, 2] = blue
     rendered[labels == 0] = 0
     return rendered, {
         "mode": "LABEL",

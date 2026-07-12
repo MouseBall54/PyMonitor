@@ -3,7 +3,7 @@ import os
 import socket
 import threading
 
-from . import arrays, classes, gc_objects, memory, modules, monitoring
+from . import arrays, classes, dataframes, gc_objects, memory, modules, monitoring
 from .frames import list_frames, list_scope, list_threads
 from .handles import HandleStore, ObjectExpiredError
 from .monitoring import MonitoringError
@@ -11,7 +11,12 @@ from .protocol import PROTOCOL_VERSION, ProtocolError, read_frame, write_frame
 from .runtime_info import get_runtime_info
 from .safe_objects import SafeObjectInspector
 
-AGENT_VERSION = "0.1.0"
+AGENT_VERSION = "26.7.11"
+_MAX_REQUEST_ID_LENGTH = 128
+_MAX_METHOD_LENGTH = 128
+_MAX_RESULT_STRING_CHARS = 4096
+_MAX_RESULT_TEXT_CHARS = 256 * 1024
+_MAX_RESULT_COLLECTION_ITEMS = 2000
 _active_agent = None
 _active_agent_lock = threading.Lock()
 
@@ -30,7 +35,14 @@ class InspectorAgent:
         self._attach_mode = attach_mode
         self._handles = HandleStore()
         self._objects = SafeObjectInspector(self._handles)
-        self._thread = threading.Thread(target=self._run, name="PyRuntimeInspectorAgent", daemon=True)
+        self._thread = threading.Thread(target=self._run, name="PyMonitorAgent", daemon=True)
+        # debugpy/pydevd suspends ordinary application threads when a breakpoint
+        # is hit.  These marker attributes are the debugger's documented
+        # internal opt-out and keep the read-only inspector transport responsive
+        # while the debuggee's application threads are paused.  They are plain
+        # Thread attributes and are harmless when no debugger is installed.
+        self._thread.pydev_do_not_trace = True
+        self._thread.is_pydev_daemon_thread = True
         self._stopped = threading.Event()
 
     def start(self):
@@ -68,7 +80,10 @@ class InspectorAgent:
                 or request.get("messageType") != "request"
                 or type(request_id) is not str
                 or not request_id
+                or len(request_id) > _MAX_REQUEST_ID_LENGTH
                 or type(method) is not str
+                or not method
+                or len(method) > _MAX_METHOD_LENGTH
                 or binary
             ):
                 self._send_error(sock, request_id, "INVALID_REQUEST", "The request envelope is invalid.")
@@ -126,7 +141,13 @@ class InspectorAgent:
         if method == "objects.describe":
             return self._objects.describe(params["handleId"]), b"", False
         if method == "objects.listChildren":
-            return self._objects.list_children(params["handleId"], params.get("offset", 0), params.get("pageSize", 100)), b"", False
+            return self._objects.list_children(
+                params["handleId"],
+                params.get("offset", 0),
+                params.get("pageSize", 100),
+                params.get("depth", 0),
+                params.get("ancestorIdentityTokens"),
+            ), b"", False
         if method == "objects.release":
             return {"released": self._handles.release(params["handleId"])}, b"", False
         if method == "classes.describe":
@@ -182,6 +203,16 @@ class InspectorAgent:
                 params.get("sliceAxis"),
                 params.get("sliceIndex"),
             ), b"", False
+        if method == "dataframes.describe":
+            return dataframes.describe(self._handles.get(params["handleId"])), b"", False
+        if method == "dataframes.preview":
+            return dataframes.preview(
+                self._handles.get(params["handleId"]),
+                params.get("rowOffset", 0),
+                params.get("rowCount", 50),
+                params.get("columnOffset", 0),
+                params.get("columnCount", 20),
+            ), b"", False
         if method == "memory.status":
             return memory.status(), b"", False
         if method == "memory.start":
@@ -219,11 +250,61 @@ class InspectorAgent:
 
     @staticmethod
     def _send_result(sock, request_id, result, binary=b""):
-        write_frame(sock, {"protocolVersion": PROTOCOL_VERSION, "messageType": "response", "requestId": request_id, "ok": True, "result": result}, binary)
+        bounded_result, truncated = _bound_result(result)
+        if truncated and type(bounded_result) is dict:
+            bounded_result = dict(bounded_result)
+            bounded_result["responseTruncated"] = True
+        write_frame(sock, {"protocolVersion": PROTOCOL_VERSION, "messageType": "response", "requestId": request_id, "ok": True, "result": bounded_result}, binary)
 
     @staticmethod
     def _send_error(sock, request_id, code, message):
-        write_frame(sock, {"protocolVersion": PROTOCOL_VERSION, "messageType": "response", "requestId": request_id, "ok": False, "error": {"code": code, "message": message, "details": {}}})
+        bounded_error, _ = _bound_result({"code": code, "message": message, "details": {}})
+        safe_request_id = request_id if type(request_id) is str and len(request_id) <= _MAX_REQUEST_ID_LENGTH else None
+        write_frame(sock, {"protocolVersion": PROTOCOL_VERSION, "messageType": "response", "requestId": safe_request_id, "ok": False, "error": bounded_error})
+
+
+def _bound_result(value):
+    state = {"remaining": _MAX_RESULT_TEXT_CHARS, "truncated": False}
+    return _bound_result_value(value, state), state["truncated"]
+
+
+def _bound_result_value(value, state):
+    if type(value) is str:
+        allowed = min(_MAX_RESULT_STRING_CHARS, state["remaining"])
+        if len(value) <= allowed:
+            state["remaining"] -= len(value)
+            return value
+        state["truncated"] = True
+        if allowed <= 0:
+            return ""
+        clipped = value[:max(0, allowed - 1)] + "…"
+        state["remaining"] -= len(clipped)
+        return clipped
+    if value is None or type(value) in (bool, int, float):
+        return value
+    if type(value) is dict:
+        result = {}
+        for index, (key, item) in enumerate(dict.items(value)):
+            if index >= _MAX_RESULT_COLLECTION_ITEMS:
+                state["truncated"] = True
+                break
+            if type(key) is not str:
+                state["truncated"] = True
+                continue
+            bounded_key = key[:_MAX_RESULT_STRING_CHARS]
+            if bounded_key != key:
+                state["truncated"] = True
+            result[bounded_key] = _bound_result_value(item, state)
+        return result
+    if type(value) in (list, tuple):
+        if len(value) > _MAX_RESULT_COLLECTION_ITEMS:
+            state["truncated"] = True
+        return [
+            _bound_result_value(item, state)
+            for item in value[:_MAX_RESULT_COLLECTION_ITEMS]
+        ]
+    state["truncated"] = True
+    return None
 
 
 def start_inspector(host=None, port=None, token=None, attach_mode=None):

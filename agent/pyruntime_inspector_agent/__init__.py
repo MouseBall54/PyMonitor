@@ -3,4 +3,4 @@
 from .server import start_inspector
 
 __all__ = ["start_inspector"]
-__version__ = "0.1.0"
+__version__ = "26.7.11"

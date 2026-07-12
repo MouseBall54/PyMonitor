@@ -17,19 +17,45 @@ class HandleStore:
         self._ttl_seconds = ttl_seconds
         self._session = uuid.uuid4().hex
         self._entries = collections.OrderedDict()
+        self._handles_by_identity = {}
         self._lock = threading.RLock()
 
     def put(self, value):
-        handle = f"{self._session}:{uuid.uuid4().hex}"
-        try:
-            stored = (True, weakref.ref(value))
-        except TypeError:
-            stored = (False, value)
+        identity = id(value)
         with self._lock:
             self._prune_locked()
-            self._entries[handle] = (time.monotonic() + self._ttl_seconds, stored)
+            existing_handle = self._handles_by_identity.get(identity)
+            if existing_handle is not None:
+                existing = self._entries.pop(existing_handle, None)
+                if existing is not None:
+                    _, _, is_weak, stored = existing
+                    current = stored() if is_weak else stored
+                    if current is value:
+                        self._entries[existing_handle] = (
+                            time.monotonic() + self._ttl_seconds,
+                            identity,
+                            is_weak,
+                            stored,
+                        )
+                        return existing_handle
+                self._handles_by_identity.pop(identity, None)
+
+            handle = f"{self._session}:{uuid.uuid4().hex}"
+            try:
+                is_weak, stored = True, weakref.ref(value)
+            except TypeError:
+                is_weak, stored = False, value
+            self._entries[handle] = (
+                time.monotonic() + self._ttl_seconds,
+                identity,
+                is_weak,
+                stored,
+            )
+            self._handles_by_identity[identity] = handle
             while len(self._entries) > self._max_entries:
-                self._entries.popitem(last=False)
+                evicted_handle, (_, evicted_identity, _, _) = self._entries.popitem(last=False)
+                if self._handles_by_identity.get(evicted_identity) == evicted_handle:
+                    self._handles_by_identity.pop(evicted_identity, None)
         return handle
 
     def get(self, handle):
@@ -40,20 +66,34 @@ class HandleStore:
             entry = self._entries.pop(handle, None)
             if entry is None:
                 raise ObjectExpiredError("The selected object is no longer available.")
-            expires_at, (is_weak, stored) = entry
+            expires_at, identity, is_weak, stored = entry
             value = stored() if is_weak else stored
             if value is None or expires_at <= time.monotonic():
+                if self._handles_by_identity.get(identity) == handle:
+                    self._handles_by_identity.pop(identity, None)
                 raise ObjectExpiredError("The selected object is no longer available.")
-            self._entries[handle] = (time.monotonic() + self._ttl_seconds, (is_weak, stored))
+            self._entries[handle] = (
+                time.monotonic() + self._ttl_seconds,
+                identity,
+                is_weak,
+                stored,
+            )
             return value
 
     def release(self, handle):
         with self._lock:
-            return self._entries.pop(handle, None) is not None
+            entry = self._entries.pop(handle, None)
+            if entry is None:
+                return False
+            _, identity, _, _ = entry
+            if self._handles_by_identity.get(identity) == handle:
+                self._handles_by_identity.pop(identity, None)
+            return True
 
     def clear(self):
         with self._lock:
             self._entries.clear()
+            self._handles_by_identity.clear()
 
     def __len__(self):
         with self._lock:
@@ -63,8 +103,10 @@ class HandleStore:
     def _prune_locked(self):
         now = time.monotonic()
         expired = []
-        for handle, (expires_at, (is_weak, stored)) in self._entries.items():
+        for handle, (expires_at, identity, is_weak, stored) in self._entries.items():
             if expires_at <= now or (is_weak and stored() is None):
-                expired.append(handle)
-        for handle in expired:
+                expired.append((handle, identity))
+        for handle, identity in expired:
             self._entries.pop(handle, None)
+            if self._handles_by_identity.get(identity) == handle:
+                self._handles_by_identity.pop(identity, None)

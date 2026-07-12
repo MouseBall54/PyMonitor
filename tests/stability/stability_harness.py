@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 
+from pyruntime_inspector_agent import __version__ as AGENT_VERSION
 from pyruntime_inspector_agent.protocol import read_frame, write_frame
 
 
@@ -88,7 +89,7 @@ def find_large_array_handle(client):
         {
             "frameHandle": worker_frame["frameHandle"],
             "scopeType": "globals",
-            "pageSize": 1000,
+            "pageSize": 200,
         },
     )
     return next(
@@ -125,7 +126,7 @@ def run_session(python_executable, duration_seconds, memory_growth_limit, exerci
         connection.settimeout(20)
         client = Client(connection)
         hello, _ = client.request("session.hello", {"token": token})
-        if hello["agentVersion"] != "0.1.0":
+        if hello["agentVersion"] != AGENT_VERSION:
             raise AssertionError(f"Unexpected Agent version: {hello['agentVersion']}")
 
         runtime, _ = client.request("runtime.getInfo")

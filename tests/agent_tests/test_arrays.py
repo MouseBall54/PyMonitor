@@ -1,4 +1,7 @@
 import unittest
+from unittest import mock
+import sys
+import types
 
 import numpy as np
 
@@ -10,6 +13,63 @@ from pyruntime_inspector_agent.safe_objects import SafeObjectInspector
 class ArrayTests(unittest.TestCase):
     def setUp(self):
         self.inspector = SafeObjectInspector(HandleStore())
+
+    def test_fake_numpy_module_and_heap_array_never_run_properties(self):
+        calls = []
+
+        class ndarray:
+            __module__ = "numpy"
+
+            @property
+            def shape(self):
+                calls.append("shape")
+                raise AssertionError("fake ndarray shape must not run")
+
+            @property
+            def dtype(self):
+                calls.append("dtype")
+                raise AssertionError("fake ndarray dtype must not run")
+
+        fake_numpy = types.ModuleType("numpy")
+        fake_numpy.ndarray = ndarray
+        value = ndarray()
+
+        with mock.patch.dict(sys.modules, {"numpy": fake_numpy}):
+            self.assertFalse(arrays.is_exact_ndarray(value))
+            summary = self.inspector.summarize(value)
+
+        self.assertIsNone(summary["adapterKind"])
+        self.assertEqual([], calls)
+
+    def test_array_adapter_never_calls_mutable_numpy_module_symbols(self):
+        calls = []
+
+        def hostile(*args, **kwargs):
+            calls.append((args, kwargs))
+            raise AssertionError("mutable numpy module symbol must not run")
+
+        float_image = np.array([[np.nan, 0.0, 1.0, np.inf]], dtype=np.float32)
+        labels = np.array([[0, 1], [2, 3]], dtype=np.int32)
+        patched = {
+            name: hostile
+            for name in (
+                "isnan", "isposinf", "isneginf", "isfinite", "histogram",
+                "zeros", "linspace", "empty", "arange", "unravel_index",
+                "percentile", "nan_to_num", "clip", "stack", "uint8",
+                "float64", "int64", "intp",
+            )
+        }
+
+        with mock.patch.multiple(np, **patched):
+            histogram = arrays.histogram(float_image, bins=4, layout="GRAY")
+            preview = arrays.preview(float_image, 4, 1, "GRAY", normalization="PERCENTILE")
+            label_preview = arrays.preview(labels, 2, 2, "GRAY", normalization="LABEL")
+
+        self.assertEqual(2, histogram["finiteCount"])
+        self.assertEqual(2, sum(histogram["counts"]))
+        self.assertEqual(4, len(preview[1]))
+        self.assertEqual(12, len(label_preview[1]))
+        self.assertEqual([], calls)
 
     def test_describe_separates_object_and_buffer_addresses(self):
         image = np.zeros((6, 5, 3), dtype=np.uint8)
@@ -94,3 +154,39 @@ class ArrayTests(unittest.TestCase):
         metadata, binary = arrays.preview(large, 1024, 1024, "HWC", normalization="MINMAX")
         self.assertLessEqual(len(binary), 1024 * 1024 * 4)
         self.assertEqual(4, metadata["rowStep"])
+
+    def test_large_strided_volume_is_sliced_as_a_view_before_preview_sampling(self):
+        storage = np.array([73], dtype=np.uint8)
+        volume = np.lib.stride_tricks.as_strided(
+            storage,
+            shape=(8, 4096, 4096),
+            strides=(0, 0, 0),
+            writeable=False,
+        )
+
+        selected, channels, layout, axis, index = arrays._select_image(
+            volume, "VOLUME", 0, 3)
+
+        self.assertTrue(np.shares_memory(volume, selected))
+        self.assertEqual((4096, 4096), selected.shape)
+        self.assertEqual((1, "VOLUME", 0, 3), (channels, layout, axis, index))
+        metadata, binary = arrays.preview(
+            volume, 32, 16, "VOLUME", slice_axis=0, slice_index=3)
+        self.assertEqual(32 * 16, len(binary))
+        self.assertEqual((256, 128), (metadata["rowStep"], metadata["columnStep"]))
+        self.assertEqual({73}, set(binary))
+
+    def test_histogram_samples_large_non_contiguous_view_before_copying(self):
+        row = np.arange(8192, dtype=np.uint16)
+        image = np.broadcast_to(row, (4096, row.size))[:, ::2]
+        self.assertFalse(image.flags.c_contiguous)
+        maximum_samples = 257
+
+        with mock.patch.object(arrays, "_MAX_HISTOGRAM_SAMPLES", maximum_samples):
+            result = arrays.histogram(image, bins=16, layout="GRAY")
+
+        expected_step = (image.size + maximum_samples - 1) // maximum_samples
+        self.assertEqual(expected_step, result["sampleStep"])
+        self.assertLessEqual(result["sampleCount"], maximum_samples)
+        self.assertEqual(result["sampleCount"], sum(result["counts"]))
+        self.assertEqual("uint16", result["dtype"])

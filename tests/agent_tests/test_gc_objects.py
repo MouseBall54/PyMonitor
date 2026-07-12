@@ -39,6 +39,30 @@ class GcObjectTests(unittest.TestCase):
         self.assertIn("Dangerous object", by_type["items"][0]["value"]["safePreview"])
         self.assertEqual(0, Dangerous.attribute_reads)
 
+    def test_non_string_class_module_never_runs_target_formatting(self):
+        class HostileText:
+            calls = 0
+
+            def __format__(self, specification):
+                type(self).calls += 1
+                raise AssertionError("module formatting must not run")
+
+            def __str__(self):
+                type(self).calls += 1
+                raise AssertionError("module conversion must not run")
+
+        class Host:
+            pass
+
+        Host.__module__ = HostileText()
+        value = Host()
+        with mock.patch.object(gc_objects.gc, "get_objects", return_value=[value]):
+            result = gc_objects.list_objects(self.inspector, query="<unknown>.host")
+
+        self.assertEqual(1, result["total"])
+        self.assertEqual("<unknown>.Host", result["items"][0]["name"])
+        self.assertEqual(0, HostileText.calls)
+
     def test_reports_scan_truncation_without_forcing_collection(self):
         values = [Alpha(), Zulu(), Dangerous()]
         with mock.patch.object(gc_objects.gc, "get_objects", return_value=values), \
