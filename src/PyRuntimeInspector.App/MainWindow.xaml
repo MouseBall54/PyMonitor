@@ -32,6 +32,7 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
@@ -76,11 +77,19 @@
                                         <DataTrigger Binding="{Binding IsConnected}" Value="True">
                                             <Setter Property="Fill" Value="{DynamicResource SuccessBrush}" />
                                         </DataTrigger>
+                                        <DataTrigger Binding="{Binding IsAwaitingBootstrap}" Value="True">
+                                            <Setter Property="Fill" Value="{DynamicResource WarningBrush}" />
+                                        </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
                             </Ellipse.Style>
                         </Ellipse>
-                        <TextBlock Text="{Binding Status}" FontWeight="SemiBold" VerticalAlignment="Center" MaxWidth="210" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding Status}"
+                                   ToolTip="{Binding Status}"
+                                   FontWeight="SemiBold"
+                                   VerticalAlignment="Center"
+                                   MaxWidth="210"
+                                   TextTrimming="CharacterEllipsis" />
                     </StackPanel>
                 </Grid>
 
@@ -88,14 +97,42 @@
                     <Button Content="Quick Attach"
                             Command="{Binding QuickAttachCommand}"
                             Style="{StaticResource PrimaryButton}"
-                            ToolTip="Attach to the selected Python process"
+                            ToolTip="Attach to the selected Python process. CPython 3.10–3.13 requires one paste into the VS Code Debug Console or Python REPL."
                             AutomationProperties.Name="Quick attach to selected Python process" />
                     <Button Content="Refresh" Command="{Binding RefreshCommand}" ToolTip="Refresh the current snapshot (F5)" />
-                    <Button Content="Detach" Command="{Binding DetachCommand}" />
+                    <Button Content="Detach" Command="{Binding DetachCommand}" ToolTip="Detach the Agent or cancel a pending Quick Attach" />
                     <Button Content="About" Click="About_Click" AutomationProperties.Name="About PyMonitor" />
                 </StackPanel>
 
-                <Expander Grid.Row="1"
+                <Border Grid.Row="1"
+                        Grid.ColumnSpan="3"
+                        Margin="0,8,0,0"
+                        Padding="10,7"
+                        CornerRadius="6"
+                        Background="{DynamicResource WarningBackground}"
+                        BorderBrush="{DynamicResource WarningBrush}"
+                        BorderThickness="1"
+                        Visibility="{Binding IsAwaitingBootstrap, Converter={StaticResource BooleanToVisibilityConverter}}"
+                        ToolTip="{Binding BootstrapInstructions}"
+                        AutomationProperties.Name="Quick Attach manual bootstrap instructions"
+                        AutomationProperties.LiveSetting="Polite">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Manual step required"
+                                   Foreground="{DynamicResource WarningBrush}"
+                                   FontWeight="SemiBold"
+                                   Margin="0,0,10,0" />
+                        <TextBlock Grid.Column="1"
+                                   Text="{Binding BootstrapInstructions}"
+                                   Foreground="{DynamicResource PrimaryText}"
+                                   TextWrapping="Wrap" />
+                    </Grid>
+                </Border>
+
+                <Expander Grid.Row="2"
                           Grid.ColumnSpan="3"
                           Header="Advanced connection and preferences"
                           Margin="0,7,0,0"
@@ -1185,7 +1222,7 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding Status}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxWidth="320" />
+                    <TextBlock Text="{Binding Status}" ToolTip="{Binding Status}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxWidth="320" />
                     <TextBlock Text="{Binding ConnectionMode}" Style="{StaticResource MutedText}" TextTrimming="CharacterEllipsis" MaxWidth="175" Margin="10,0,0,0" ToolTip="Connection method" />
                     <TextBlock Text="{Binding ErrorMessage}" Foreground="{DynamicResource DangerBrush}" TextTrimming="CharacterEllipsis" MaxWidth="430" Margin="12,0,0,0" ToolTip="{Binding ErrorMessage}" />
                 </StackPanel>
@@ -1214,7 +1251,15 @@
                         <ProgressBar.Style>
                             <Style TargetType="ProgressBar">
                                 <Setter Property="Visibility" Value="Collapsed" />
-                                <Style.Triggers><DataTrigger Binding="{Binding IsBusy}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
+                                <Style.Triggers>
+                                    <MultiDataTrigger>
+                                        <MultiDataTrigger.Conditions>
+                                            <Condition Binding="{Binding IsBusy}" Value="True" />
+                                            <Condition Binding="{Binding IsAwaitingBootstrap}" Value="False" />
+                                        </MultiDataTrigger.Conditions>
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </MultiDataTrigger>
+                                </Style.Triggers>
                             </Style>
                         </ProgressBar.Style>
                     </ProgressBar>

@@ -59,6 +59,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private const int MaxDetachHandleReleaseBatch = 32;
     private static readonly TimeSpan ChangeHighlightDuration = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan DetachHandleReleaseBudget = TimeSpan.FromMilliseconds(750);
+    private static readonly TimeSpan DefaultOnePasteAttachTimeout = TimeSpan.FromSeconds(120);
+    private readonly TimeSpan _onePasteAttachTimeout;
     private double _fitViewportWidth;
     private double _fitViewportHeight;
     private bool _fitMode = true;
@@ -76,6 +78,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private string _errorMessage = "";
     private bool _isConnected;
     private bool _isBusy;
+    private bool _isAwaitingBootstrap;
     private string _pythonVersion = "—";
     private string _architecture = "—";
     private string _executable = "—";
@@ -233,8 +236,12 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         IProcessDiscovery processDiscovery,
         IManagedPythonLauncher? launcher = null,
         ILiveAttachService? liveAttachService = null,
-        IClipboardService? clipboardService = null)
+        IClipboardService? clipboardService = null,
+        TimeSpan? onePasteAttachTimeout = null)
     {
+        _onePasteAttachTimeout = onePasteAttachTimeout ?? DefaultOnePasteAttachTimeout;
+        if (_onePasteAttachTimeout <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(onePasteAttachTimeout), "Quick Attach timeout must be positive.");
         _session = session;
         _processDiscovery = processDiscovery;
         _launcher = launcher ?? new ManagedPythonLauncher();
@@ -451,6 +458,13 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                 UpdateCommandStates();
         }
     }
+    public bool IsAwaitingBootstrap
+    {
+        get => _isAwaitingBootstrap;
+        private set => SetProperty(ref _isAwaitingBootstrap, value);
+    }
+    public string BootstrapInstructions =>
+        "Paste the copied bootstrap into the paused target's VS Code Debug Console, or into its Python >>> REPL, then press Enter. Do not paste it into a shell prompt. Use Detach to cancel.";
     public string PythonVersion { get => _pythonVersion; private set => SetProperty(ref _pythonVersion, value); }
     public string Architecture { get => _architecture; private set => SetProperty(ref _architecture, value); }
     public string Executable { get => _executable; private set => SetProperty(ref _executable, value); }
@@ -1072,17 +1086,19 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         ErrorMessage = "";
         IsBusy = true;
         _connectionCts = new CancellationTokenSource();
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(_connectionCts.Token);
+        timeoutCts.CancelAfter(_onePasteAttachTimeout);
         Task<JsonObject>? attachTask = null;
         try
         {
-            attachTask = _session.AttachAsync(port, Token, SelectedProcess.Id, _connectionCts.Token);
+            attachTask = _session.AttachAsync(port, Token, SelectedProcess.Id, timeoutCts.Token);
             _clipboardService.SetText(ReplBootstrap.Build(agentDirectory, port, Token));
-            var version = SelectedProcess.PythonVersion is Version selectedVersion
-                ? $"{selectedVersion.Major}.{selectedVersion.Minor}"
-                : "3.10–3.13";
-            Status = $"Bootstrap copied — paste once into Python {version} and press Enter";
+            IsAwaitingBootstrap = true;
+            ConnectionMode = "Quick Attach · awaiting bootstrap";
+            Status = "Bootstrap copied · paste it into Debug Console or Python REPL";
 
             var runtime = await attachTask;
+            IsAwaitingBootstrap = false;
             ApplyRuntime(runtime);
             IsConnected = true;
             ConnectionMode = "Quick Attach · REPL bootstrap";
@@ -1090,9 +1106,16 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             await LoadRuntimeTreeAsync(_connectionCts.Token, autoSelectMain: true);
             StartRefreshLoop();
         }
+        catch (OperationCanceledException) when (!_connectionCts.IsCancellationRequested)
+        {
+            Status = "Quick attach timed out";
+            ErrorMessage = $"No Agent connected within {_onePasteAttachTimeout.TotalSeconds:0.#} seconds. Run Quick Attach again, paste the copied line into the target's VS Code Debug Console or Python REPL, and press Enter.";
+            _connectionCts.Cancel();
+        }
         catch (OperationCanceledException)
         {
             Status = "Quick attach cancelled";
+            ErrorMessage = "";
         }
         catch (Exception exception)
         {
@@ -1102,10 +1125,13 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
         finally
         {
+            IsAwaitingBootstrap = false;
             if (!IsConnected && attachTask is not null)
             {
                 try { await attachTask; } catch { }
             }
+            if (!IsConnected)
+                ConnectionMode = "Not connected";
             IsBusy = false;
             UpdateCommandStates();
         }
@@ -1190,6 +1216,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
     private async Task DetachAsync()
     {
+        var cancellingQuickAttach = IsAwaitingBootstrap;
         _connectionCts?.Cancel();
         _refreshCts?.Cancel();
         try
@@ -1198,7 +1225,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
         finally
         {
-            ResetConnection("Disconnected");
+            ResetConnection(cancellingQuickAttach ? "Quick attach cancelled" : "Disconnected");
         }
     }
 
@@ -3690,6 +3717,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         CancelSearchDebounce();
         IsConnected = false;
         IsBusy = false;
+        IsAwaitingBootstrap = false;
         Status = status;
         RuntimeRoots.Clear();
         Variables.Clear();

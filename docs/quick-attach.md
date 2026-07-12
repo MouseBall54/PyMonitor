@@ -14,6 +14,13 @@ CPython process.
 5. Inspect automatically opens `Modules / __main__` in Variables; no keep-alive
    loop or active user frame is required.
 
+While CPython 3.10-3.13 is waiting for that manual paste, PyMonitor shows an
+**awaiting bootstrap** instruction banner instead of treating the wait as a
+normal loading operation. Paste into VS Code's **Debug Console** or the target
+Python `>>>` REPL, not an integrated shell prompt. **Detach** cancels the pending
+attempt. If no Agent connects within 120 seconds, the listener is closed and
+Quick Attach can be run again.
+
 ## Plain `cmd.exe` Python REPL
 
 Launching `python` in Command Prompt and assigning a variable, for example

@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Net;
+using System.Net.Sockets;
 using System.Text.Json.Nodes;
 using PyRuntimeInspector.App.Services;
 using PyRuntimeInspector.App.ViewModels;
@@ -143,17 +145,112 @@ public sealed class MainViewModelTests
         Assert.Contains("port=", bootstrap);
         Assert.Contains("token=", bootstrap);
         Assert.DoesNotContain('\n', bootstrap);
+        Assert.True(viewModel.IsAwaitingBootstrap);
+        Assert.True(viewModel.IsBusy);
+        Assert.Equal("Quick Attach · awaiting bootstrap", viewModel.ConnectionMode);
+        Assert.Contains("VS Code Debug Console", viewModel.BootstrapInstructions);
+        Assert.Contains("Python >>> REPL", viewModel.BootstrapInstructions);
 
         session.CompleteAttach();
         await quickAttach;
 
         Assert.True(viewModel.IsConnected);
+        Assert.False(viewModel.IsAwaitingBootstrap);
         Assert.Equal("Quick Attach · REPL bootstrap", viewModel.ConnectionMode);
         Assert.Equal("Modules / __main__", viewModel.Breadcrumb);
         Assert.Equal(0, viewModel.SelectedWorkspaceTabIndex);
         Assert.Contains(viewModel.Variables, row => row.Name == "example_value" && row.SafePreview == "1235");
         Assert.Contains(viewModel.Variables, row => row.Name == "edd" && row.SafePreview == "121");
         Assert.Null(liveAttach.Options);
+    }
+
+    [Fact]
+    public async Task QuickAttachBootstrapTimeoutCleansUpAndAllowsRetry()
+    {
+        var session = new FakeSession { DelayAttach = true };
+        var clipboard = new FakeClipboardService();
+        await using var viewModel = new MainViewModel(
+            session,
+            new FakeProcessDiscovery(),
+            clipboardService: clipboard,
+            onePasteAttachTimeout: TimeSpan.FromMilliseconds(100))
+        {
+            SelectedProcess = new ProcessItem(1234, "python", Environment.ProcessPath, new Version(3, 12, 9)),
+        };
+
+        await viewModel.QuickAttachCommand.ExecuteAsync().WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.False(viewModel.IsConnected);
+        Assert.False(viewModel.IsBusy);
+        Assert.False(viewModel.IsAwaitingBootstrap);
+        Assert.Equal("Quick attach timed out", viewModel.Status);
+        Assert.Equal("Not connected", viewModel.ConnectionMode);
+        Assert.Contains("VS Code Debug Console", viewModel.ErrorMessage);
+        Assert.True(viewModel.QuickAttachCommand.CanExecute(null));
+        Assert.Equal(1, session.AttachCallCount);
+
+        var retry = viewModel.QuickAttachCommand.ExecuteAsync();
+        Assert.Equal(2, session.AttachCallCount);
+        Assert.True(viewModel.IsAwaitingBootstrap);
+        session.CompleteAttach();
+        await retry.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.True(viewModel.IsConnected);
+        Assert.False(viewModel.IsBusy);
+        Assert.False(viewModel.IsAwaitingBootstrap);
+        Assert.Equal("Connected · showing __main__ globals", viewModel.Status);
+        Assert.Equal("", viewModel.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task QuickAttachBootstrapTimeoutReleasesListenerPort()
+    {
+        var port = ReservePort();
+        await using var viewModel = new MainViewModel(
+            new InspectorSession(),
+            new FakeProcessDiscovery(),
+            clipboardService: new FakeClipboardService(),
+            onePasteAttachTimeout: TimeSpan.FromMilliseconds(100))
+        {
+            PortText = port.ToString(),
+            SelectedProcess = new ProcessItem(1234, "python", Environment.ProcessPath, new Version(3, 12, 9)),
+        };
+
+        await viewModel.QuickAttachCommand.ExecuteAsync().WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal("Quick attach timed out", viewModel.Status);
+        Assert.False(viewModel.IsBusy);
+        Assert.True(viewModel.QuickAttachCommand.CanExecute(null));
+        var probe = new TcpListener(IPAddress.Loopback, port);
+        probe.Start();
+        probe.Stop();
+    }
+
+    [Fact]
+    public async Task CancellingPendingQuickAttachIsNotReportedAsTimeout()
+    {
+        var session = new FakeSession { DelayAttach = true };
+        await using var viewModel = new MainViewModel(
+            session,
+            new FakeProcessDiscovery(),
+            clipboardService: new FakeClipboardService(),
+            onePasteAttachTimeout: TimeSpan.FromSeconds(5))
+        {
+            SelectedProcess = new ProcessItem(1234, "python", Environment.ProcessPath, new Version(3, 12, 9)),
+        };
+
+        var quickAttach = viewModel.QuickAttachCommand.ExecuteAsync();
+        await EventuallyAsync(() => viewModel.IsAwaitingBootstrap);
+
+        await viewModel.DetachCommand.ExecuteAsync();
+        await quickAttach.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.False(viewModel.IsConnected);
+        Assert.False(viewModel.IsBusy);
+        Assert.False(viewModel.IsAwaitingBootstrap);
+        Assert.Equal("Quick attach cancelled", viewModel.Status);
+        Assert.Equal("Not connected", viewModel.ConnectionMode);
+        Assert.Equal("", viewModel.ErrorMessage);
     }
 
     [Fact]
@@ -342,6 +439,15 @@ public sealed class MainViewModelTests
         Assert.True(predicate());
     }
 
+    private static int ReservePort()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        return port;
+    }
+
     private sealed class FakeProcessDiscovery : IProcessDiscovery
     {
         public IReadOnlyList<ProcessItem> GetPythonProcesses() => [];
@@ -363,6 +469,7 @@ public sealed class MainViewModelTests
         public event EventHandler<string>? Disconnected;
         public bool IsConnected { get; private set; }
         public bool DelayAttach { get; init; }
+        public int AttachCallCount { get; private set; }
         public int GcRequestCount { get; private set; }
         public int GcDetailRequestCount { get; private set; }
         public string? GcQuery { get; private set; }
@@ -370,8 +477,9 @@ public sealed class MainViewModelTests
 
         public Task<JsonObject> AttachAsync(int port, string token, int? expectedPid, CancellationToken cancellationToken)
         {
+            AttachCallCount++;
             if (DelayAttach)
-                return CompleteStateWhenAttachedAsync(_attach.Task);
+                return CompleteStateWhenAttachedAsync(_attach.Task, cancellationToken);
             IsConnected = true;
             return Task.FromResult(Runtime());
         }
@@ -632,9 +740,9 @@ public sealed class MainViewModelTests
             Disconnected?.Invoke(this, message);
         }
 
-        private async Task<JsonObject> CompleteStateWhenAttachedAsync(Task<JsonObject> task)
+        private async Task<JsonObject> CompleteStateWhenAttachedAsync(Task<JsonObject> task, CancellationToken cancellationToken)
         {
-            var result = await task;
+            var result = await task.WaitAsync(cancellationToken);
             IsConnected = true;
             return result;
         }
