@@ -214,11 +214,21 @@ public sealed class MainWindowSmokeTests
                 var classSearch = LogicalDescendants<TextBox>(classTab)
                     .Single(textBox => AutomationProperties.GetName(textBox)
                         == "Search class members methods and parameters");
+                var classSearchToolbar = LogicalDescendants<Border>(classTab)
+                    .Single(border => AutomationProperties.GetName(border) == "Class member search toolbar");
+                var classSearchLabel = LogicalDescendants<TextBlock>(classSearchToolbar)
+                    .Single(text => AutomationProperties.GetName(text) == "Find class members");
+                Assert.Equal("Find members", classSearchLabel.Text);
+                Assert.Same(classSearchLabel, AutomationProperties.GetLabeledBy(classSearch));
+                Assert.Equal(31, classSearch.Height);
+                Assert.Equal(VerticalAlignment.Center, classSearch.VerticalAlignment);
+                Assert.Equal(VerticalAlignment.Center, classSearch.VerticalContentAlignment);
                 var classSearchBinding = Assert.IsType<Binding>(BindingOperations
                     .GetBindingBase(classSearch, TextBox.TextProperty));
                 Assert.Equal("ClassTreeSearchText", classSearchBinding.Path.Path);
                 Assert.Equal(UpdateSourceTrigger.PropertyChanged, classSearchBinding.UpdateSourceTrigger);
                 var searchScope = classSearch.ToolTip?.ToString() ?? "";
+                Assert.Equal(searchScope, AutomationProperties.GetHelpText(classSearch));
                 Assert.Contains("already loaded", searchScope, StringComparison.OrdinalIgnoreCase);
                 Assert.Contains("class details", searchScope, StringComparison.OrdinalIgnoreCase);
                 Assert.Contains("safety limit", searchScope, StringComparison.OrdinalIgnoreCase);
@@ -234,6 +244,40 @@ public sealed class MainWindowSmokeTests
                     .Single(button => AutomationProperties.GetName(button) == "Clear class member search");
                 var classViewModel = Assert.IsType<MainViewModel>(window.DataContext);
                 Assert.Same(classViewModel.ClearClassTreeSearchCommand, clearClassSearch.Command);
+                Assert.Equal(VerticalAlignment.Center, clearClassSearch.VerticalAlignment);
+                Assert.True(clearClassSearch.MinHeight >= 31);
+                var classSummary = LogicalDescendants<TextBlock>(classTab)
+                    .Single(text => BindingOperations.GetBindingBase(text, TextBlock.TextProperty)
+                        is Binding { Path.Path: "ClassSummary" });
+                var classTree = LogicalDescendants<TreeView>(classTab)
+                    .Single(tree => AutomationProperties.GetName(tree) == "Class members methods and parameters");
+                Assert.Equal(0, Grid.GetRow(classSummary));
+                Assert.Equal(1, Grid.GetRow(classSearchToolbar));
+
+                var originalClassSummary = classSummary.Text;
+                var originalSearchWidth = classSearch.ActualWidth;
+                var originalTreeHeight = classTree.ActualHeight;
+                var originalToolbarBounds = classSearchToolbar.TransformToAncestor(window).TransformBounds(
+                    new Rect(0, 0, classSearchToolbar.ActualWidth, classSearchToolbar.ActualHeight));
+                classSummary.SetCurrentValue(TextBlock.TextProperty, string.Join(Environment.NewLine, Enumerable.Repeat(
+                    "A deliberately long class description that must not stretch the search field.", 10)));
+                window.UpdateLayout();
+                Assert.Contains("deliberately long class description", classSummary.Text, StringComparison.Ordinal);
+                Assert.InRange(classSummary.ActualHeight, 15.5, 16.5);
+                Assert.InRange(classSearch.ActualHeight, 30.5, 31.5);
+                Assert.InRange(classSearchToolbar.ActualHeight, 31, 42);
+                var summaryBounds = classSummary.TransformToAncestor(window).TransformBounds(
+                    new Rect(0, 0, classSummary.ActualWidth, classSummary.ActualHeight));
+                var toolbarBounds = classSearchToolbar.TransformToAncestor(window).TransformBounds(
+                    new Rect(0, 0, classSearchToolbar.ActualWidth, classSearchToolbar.ActualHeight));
+                Assert.True(toolbarBounds.Top >= summaryBounds.Bottom,
+                    $"Class search toolbar overlaps the description: summary={summaryBounds}, toolbar={toolbarBounds}.");
+                Assert.InRange(Math.Abs(toolbarBounds.Top - originalToolbarBounds.Top), 0, 0.5);
+                Assert.InRange(Math.Abs(classSearch.ActualWidth - originalSearchWidth), 0, 0.5);
+                Assert.InRange(Math.Abs(classTree.ActualHeight - originalTreeHeight), 0, 0.5);
+                Assert.NotNull(BindingOperations.GetBindingBase(classSummary, TextBlock.TextProperty));
+                classSummary.SetCurrentValue(TextBlock.TextProperty, originalClassSummary);
+                window.UpdateLayout();
                 var classSearchStatus = LogicalDescendants<TextBlock>(classTab)
                     .Single(text => AutomationProperties.GetLiveSetting(text) == AutomationLiveSetting.Polite);
                 var classStatusBinding = Assert.IsType<Binding>(BindingOperations
@@ -247,8 +291,6 @@ public sealed class MainWindowSmokeTests
                 var classStatusTargetUpdates = 0;
                 classSearchStatus.TargetUpdated += (_, _) => classStatusTargetUpdates++;
 
-                var classTree = LogicalDescendants<TreeView>(classTab)
-                    .Single(tree => AutomationProperties.GetName(tree) == "Class members methods and parameters");
                 var classItemsBinding = Assert.IsType<Binding>(BindingOperations
                     .GetBindingBase(classTree, ItemsControl.ItemsSourceProperty));
                 Assert.Equal("ClassTree", classItemsBinding.Path.Path);
@@ -294,6 +336,8 @@ public sealed class MainWindowSmokeTests
                 Assert.Contains("safety limit", emptyClassText, StringComparison.OrdinalIgnoreCase);
 
                 AssertElementIsVisibleAndInside(classSearch, window, "Class search", "minimum supported viewport");
+                AssertElementIsVisibleAndInside(classSearchLabel, window, "Class search label", "minimum supported viewport");
+                AssertElementIsVisibleAndInside(classSearchToolbar, window, "Class search toolbar", "minimum supported viewport");
                 AssertElementIsVisibleAndInside(clearClassSearch, window, "Clear class search", "minimum supported viewport");
                 AssertElementIsVisibleAndInside(classSearchStatus, window, "Class search status", "minimum supported viewport");
                 AssertElementIsVisibleAndInside(classTree, window, "Class member tree", "minimum supported viewport");

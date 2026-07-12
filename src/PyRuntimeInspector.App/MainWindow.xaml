@@ -803,42 +803,70 @@
                                                     Padding="7"
                                                     Margin="0,0,0,7">
                                                 <Grid>
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="*" />
-                                                        <ColumnDefinition Width="1.1*" MinWidth="90" />
-                                                        <ColumnDefinition Width="Auto" />
-                                                        <ColumnDefinition Width="Auto" />
-                                                    </Grid.ColumnDefinitions>
+                                                    <Grid.RowDefinitions>
+                                                        <RowDefinition Height="16" />
+                                                        <RowDefinition Height="Auto" />
+                                                    </Grid.RowDefinitions>
                                                     <TextBlock Text="{Binding ClassSummary}"
-                                                               VerticalAlignment="Center"
+                                                               MaxHeight="16"
+                                                               TextWrapping="NoWrap"
                                                                TextTrimming="CharacterEllipsis"
-                                                               ToolTip="{Binding ClassSummary}" />
-                                                    <TextBox Grid.Column="1"
-                                                             Text="{Binding ClassTreeSearchText, UpdateSourceTrigger=PropertyChanged}"
-                                                             MinWidth="90"
-                                                             Margin="10,0,0,0"
-                                                             ToolTip="Search already loaded class details by name, kind, declaring class, signature or detail, source, and parameters; results stay within the inspector safety limit"
-                                                             AutomationProperties.Name="Search class members methods and parameters" />
-                                                    <Button Grid.Column="2"
-                                                            Content="Clear"
-                                                            Command="{Binding ClearClassTreeSearchCommand}"
-                                                            Style="{StaticResource QuietButton}"
-                                                            Padding="7,3"
-                                                            MinHeight="25"
-                                                            AutomationProperties.Name="Clear class member search" />
-                                                    <TextBlock x:Name="ClassTreeSearchStatusText"
-                                                               Grid.Column="3"
-                                                               Text="{Binding ClassTreeSearchResultLabel, NotifyOnTargetUpdated=True}"
-                                                               Style="{StaticResource MutedText}"
-                                                               VerticalAlignment="Center"
-                                                               HorizontalAlignment="Right"
-                                                               Margin="8,0,0,0"
-                                                               MaxWidth="90"
-                                                               TextTrimming="CharacterEllipsis"
-                                                               ToolTip="{Binding ClassTreeSearchResultLabel}"
-                                                               AutomationProperties.Name="{Binding ClassTreeSearchResultLabel}"
-                                                               AutomationProperties.LiveSetting="Polite"
-                                                               TargetUpdated="ClassTreeSearchStatus_TargetUpdated" />
+                                                               ToolTip="{Binding ClassSummary}"
+                                                               AutomationProperties.Name="Selected class description" />
+                                                    <Border Grid.Row="1"
+                                                            BorderBrush="{DynamicResource BorderBrush}"
+                                                            BorderThickness="0,1,0,0"
+                                                            Margin="0,7,0,0"
+                                                            Padding="0,7,0,0"
+                                                            AutomationProperties.Name="Class member search toolbar">
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="Auto" />
+                                                                <ColumnDefinition Width="*" MinWidth="90" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock x:Name="ClassMemberSearchLabel"
+                                                                       Text="Find members"
+                                                                       Style="{StaticResource SectionLabel}"
+                                                                       VerticalAlignment="Center"
+                                                                       Margin="0,0,10,0"
+                                                                       AutomationProperties.Name="Find class members" />
+                                                            <TextBox x:Name="ClassMemberSearchBox"
+                                                                     Grid.Column="1"
+                                                                     Text="{Binding ClassTreeSearchText, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Height="31"
+                                                                     Margin="0"
+                                                                     VerticalAlignment="Center"
+                                                                     VerticalContentAlignment="Center"
+                                                                     ToolTip="Search already loaded class details by name, kind, declaring class, signature or detail, source, and parameters; results stay within the inspector safety limit"
+                                                                     AutomationProperties.Name="Search class members methods and parameters"
+                                                                     AutomationProperties.LabeledBy="{Binding ElementName=ClassMemberSearchLabel}"
+                                                                     AutomationProperties.HelpText="Search already loaded class details by name, kind, declaring class, signature or detail, source, and parameters; results stay within the inspector safety limit" />
+                                                            <Button Grid.Column="2"
+                                                                    Content="Clear"
+                                                                    Command="{Binding ClearClassTreeSearchCommand}"
+                                                                    Style="{StaticResource QuietButton}"
+                                                                    Margin="6,0,0,0"
+                                                                    Padding="7,3"
+                                                                    MinHeight="31"
+                                                                    VerticalAlignment="Center"
+                                                                    AutomationProperties.Name="Clear class member search" />
+                                                            <TextBlock x:Name="ClassTreeSearchStatusText"
+                                                                       Grid.Column="3"
+                                                                       Text="{Binding ClassTreeSearchResultLabel, NotifyOnTargetUpdated=True}"
+                                                                       Style="{StaticResource MutedText}"
+                                                                       VerticalAlignment="Center"
+                                                                       HorizontalAlignment="Right"
+                                                                       Margin="10,0,0,0"
+                                                                       MaxWidth="95"
+                                                                       TextTrimming="CharacterEllipsis"
+                                                                       ToolTip="{Binding ClassTreeSearchResultLabel}"
+                                                                       AutomationProperties.Name="{Binding ClassTreeSearchResultLabel}"
+                                                                       AutomationProperties.LiveSetting="Polite"
+                                                                       TargetUpdated="ClassTreeSearchStatus_TargetUpdated" />
+                                                        </Grid>
+                                                    </Border>
                                                 </Grid>
                                             </Border>
                                             <Grid Grid.Row="1">
