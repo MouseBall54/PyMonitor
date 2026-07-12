@@ -505,9 +505,15 @@ public sealed class MainWindowSmokeTests
                 var copyMenu = Assert.IsType<ContextMenu>(copyableValue.ContextMenu);
                 var copyItem = Assert.Single(copyMenu.Items.OfType<MenuItem>(), item =>
                     Equals(item.Header, "Copy value"));
+                // RaiseEvent bypasses WPF's normal input-driven command requery on headless runners.
+                CommandManager.InvalidateRequerySuggested();
                 window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
                 Assert.True(copyMenu.IsOpen);
-                Assert.True(copyItem.IsEnabled);
+                Assert.True(
+                    copyItem.IsEnabled,
+                    $"Copy command disabled: parameter={copyItem.CommandParameter ?? "<null>"}, "
+                    + $"target={copyItem.CommandTarget?.GetType().Name ?? "<null>"}, "
+                    + $"applicationMainWindow={Application.Current?.MainWindow?.GetType().Name ?? "<null>"}.");
                 copyMenu.IsOpen = false;
 
                 var aboutWindow = new AboutWindow(
