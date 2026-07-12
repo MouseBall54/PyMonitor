@@ -48,6 +48,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private RuntimeTreeNode? _currentScope;
     private long _selectionGeneration;
     private long _detailGeneration;
+    private long _arrayPreviewGeneration;
     private long _matplotlibRefreshGeneration;
     private int _pageOffset;
     private int _pageTotal;
@@ -3245,12 +3246,17 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             return;
         try
         {
+            var handle = _arrayHandle;
+            var token = _detailCts?.Token ?? _connectionCts?.Token ?? CancellationToken.None;
+            var previewGeneration = Interlocked.Increment(ref _arrayPreviewGeneration);
             var parameters = BuildArrayViewParameters();
             parameters["x"] = TileX;
             parameters["y"] = TileY;
             parameters["width"] = TileWidth;
             parameters["height"] = TileHeight;
-            var frame = await RequestAsync("arrays.tile", parameters, _detailCts?.Token ?? _connectionCts?.Token ?? CancellationToken.None);
+            var frame = await RequestAsync("arrays.tile", parameters, token);
+            if (!IsCurrentArrayPreviewRequest(previewGeneration, handle, token))
+                return;
             ApplyArrayBitmap(frame);
             _fitMode = false;
             SetZoom(1);
@@ -3304,20 +3310,29 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
     private async Task<bool> LoadArrayPreviewAsync(CancellationToken token, long? expectedGeneration = null)
     {
+        var handle = _arrayHandle;
+        var previewGeneration = Interlocked.Increment(ref _arrayPreviewGeneration);
         var parameters = BuildArrayViewParameters();
         parameters["maxWidth"] = 1024;
         parameters["maxHeight"] = 1024;
         var frame = await RequestAsync("arrays.preview", parameters, token);
-        if (expectedGeneration is long generation
-            && (generation != _detailGeneration || token.IsCancellationRequested))
-        {
-            return false;
-        }
+        if (!IsCurrentArrayPreviewRequest(previewGeneration, handle, token, expectedGeneration))
+            return ArrayPreview is not null;
         ApplyArrayBitmap(frame);
         if (_fitMode)
             ApplyFitZoom();
         return true;
     }
+
+    private bool IsCurrentArrayPreviewRequest(
+        long previewGeneration,
+        string? handle,
+        CancellationToken token,
+        long? expectedDetailGeneration = null) =>
+        previewGeneration == Volatile.Read(ref _arrayPreviewGeneration)
+        && !token.IsCancellationRequested
+        && string.Equals(handle, _arrayHandle, StringComparison.Ordinal)
+        && (expectedDetailGeneration is null || expectedDetailGeneration == _detailGeneration);
 
     private JsonObject BuildArrayViewParameters()
     {
@@ -4529,6 +4544,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
     private void ClearArrayDetails()
     {
+        Interlocked.Increment(ref _arrayPreviewGeneration);
         _arrayPreviewSupported = false;
         ArrayShape = ArrayDType = ArrayStrides = ArrayDataAddress = ArrayOwner = "—";
         ArrayPreview = null;

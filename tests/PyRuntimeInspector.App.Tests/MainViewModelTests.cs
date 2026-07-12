@@ -423,7 +423,7 @@ public sealed class MainViewModelTests
     [Fact]
     public async Task AdvancedArrayCommandsRenderTileHistogramAndNonFinitePixel()
     {
-        var session = new FakeSession();
+        var session = new FakeSession { DelayFirstArrayPreview = true };
         await using var viewModel = new MainViewModel(session, new FakeProcessDiscovery());
         await viewModel.AttachCommand.ExecuteAsync();
         viewModel.SelectedVariable = new VariableRow
@@ -441,10 +441,13 @@ public sealed class MainViewModelTests
             ChangeToken = "array",
             Expandable = true,
         };
-        await EventuallyAsync(() => viewModel.ArrayPreview is not null);
+        await session.FirstArrayPreviewStarted.WaitAsync(TimeSpan.FromSeconds(2));
 
         viewModel.NormalizationMode = "MINMAX";
         await viewModel.ReloadPreviewCommand.ExecuteAsync();
+        Assert.Contains("MINMAX", viewModel.Normalization);
+        session.ReleaseFirstArrayPreview();
+        await EventuallyAsync(() => viewModel.InspectorState == InspectorPaneState.Ready);
         Assert.Contains("MINMAX", viewModel.Normalization);
 
         viewModel.TileX = 3;
@@ -525,6 +528,9 @@ public sealed class MainViewModelTests
         private int _snapshotNumber;
         private bool _monitoring;
         private bool _executionEventCleared;
+        private readonly TaskCompletionSource _firstArrayPreviewStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseFirstArrayPreview = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _arrayPreviewRequestCount;
         public event EventHandler<string>? Disconnected;
         public bool IsConnected { get; private set; }
         public bool DelayAttach { get; init; }
@@ -534,6 +540,10 @@ public sealed class MainViewModelTests
         public int GcDetailRequestCount { get; private set; }
         public string? GcQuery { get; private set; }
         public ConcurrentQueue<string> ReleasedHandles { get; } = [];
+        public bool DelayFirstArrayPreview { get; init; }
+        public Task FirstArrayPreviewStarted => _firstArrayPreviewStarted.Task;
+
+        public void ReleaseFirstArrayPreview() => _releaseFirstArrayPreview.TrySetResult();
 
         public Task<JsonObject> AttachAsync(int port, string token, int? expectedPid, CancellationToken cancellationToken)
         {
@@ -670,6 +680,13 @@ public sealed class MainViewModelTests
                 var originX = method == "arrays.tile" ? parameters!["x"]!.GetValue<int>() : 0;
                 var originY = method == "arrays.tile" ? parameters!["y"]!.GetValue<int>() : 0;
                 var mode = parameters?["normalization"]?.GetValue<string>() ?? "AUTO";
+                if (method == "arrays.preview"
+                    && DelayFirstArrayPreview
+                    && Interlocked.Increment(ref _arrayPreviewRequestCount) == 1)
+                {
+                    _firstArrayPreviewStarted.TrySetResult();
+                    await _releaseFirstArrayPreview.Task.WaitAsync(cancellationToken);
+                }
                 return Frame(new JsonObject
                 {
                     ["width"] = 2,
