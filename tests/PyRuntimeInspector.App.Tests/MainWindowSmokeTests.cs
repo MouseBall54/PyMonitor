@@ -81,6 +81,23 @@ public sealed class MainWindowSmokeTests
                     AssertElementIsVisibleAndInside(button, window, name, "minimum supported viewport");
                 }
 
+                var recoveryBanner = Descendants<Border>(window)
+                    .Single(border => AutomationProperties.GetName(border) == "Quick Attach recovery instructions");
+                var recoveryVisibility = Assert.IsType<Binding>(BindingOperations.GetBindingBase(
+                    recoveryBanner,
+                    UIElement.VisibilityProperty));
+                Assert.Equal("HasConnectionRecovery", recoveryVisibility.Path.Path);
+                Assert.Equal(Visibility.Collapsed, recoveryBanner.Visibility);
+                Assert.Equal(AutomationLiveSetting.Assertive, AutomationProperties.GetLiveSetting(recoveryBanner));
+                var recoveryHelpText = Assert.IsType<Binding>(BindingOperations.GetBindingBase(
+                    recoveryBanner,
+                    AutomationProperties.HelpTextProperty));
+                Assert.Equal("ConnectionRecoveryMessage", recoveryHelpText.Path.Path);
+                var recoveryText = Descendants<TextBlock>(recoveryBanner)
+                    .Single(text => BindingOperations.GetBindingBase(text, TextBlock.TextProperty)
+                        is Binding { Path.Path: "ConnectionRecoveryMessage" });
+                Assert.NotNull(recoveryText);
+
                 var helpButton = primaryActions["Help"];
                 Assert.Equal("Open PyMonitor help", AutomationProperties.GetName(helpButton));
                 Assert.Contains("F1", helpButton.ToolTip?.ToString(), StringComparison.OrdinalIgnoreCase);

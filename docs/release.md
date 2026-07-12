@@ -63,8 +63,11 @@ Any attach/bootstrap or debugger-thread compatibility change that makes an
 already-loaded Agent unsafe to reuse must increment `BOOTSTRAP_ABI` in the
 Python Agent and `ExpectedBootstrapAbi` in the WPF client in the same commit.
 Keep the release metadata test that enforces this equality. The fresh bootstrap
-uses version, ABI, source path, and the complete cached package module tree to
-reject stale same-process reuse before inspection begins.
+uses version, ABI, a coherent cached package module tree, and a bounded runtime
+source manifest with SHA-256 hashes to reject stale same-process reuse before
+inspection begins. A detached cache from another path is reused only when that
+runtime payload is byte-identical; `bootstrap.py` and `managed_launch.py` remain
+fresh entry points and are excluded from the runtime manifest.
 Do not bump the ABI for a UI-only change or a backward-compatible endpoint
 addition that leaves cached-Agent reuse, bootstrap arguments, debugger-thread
 behavior, and hello capabilities compatible.

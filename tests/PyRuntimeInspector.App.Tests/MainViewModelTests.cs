@@ -253,6 +253,65 @@ public sealed class MainViewModelTests
         Assert.Equal("", viewModel.ErrorMessage);
     }
 
+    [Theory]
+    [InlineData("STALE_AGENT", "End the Python debug session")]
+    [InlineData("INCOMPATIBLE_AGENT", "run exit()")]
+    [InlineData("ACTIVE_AGENT_CONFLICT", "Detach it from the original PyMonitor window")]
+    public async Task QuickAttachCompatibilityFailureShowsPersistentRecoverySteps(
+        string code,
+        string expectedInstruction)
+    {
+        var session = new FakeSession
+        {
+            AttachException = new RemoteInspectionException(code, "Agent compatibility test failure."),
+        };
+        var clipboard = new FakeClipboardService();
+        await using var viewModel = new MainViewModel(
+            session,
+            new FakeProcessDiscovery(),
+            clipboardService: clipboard)
+        {
+            SelectedProcess = new ProcessItem(1234, "python", Environment.ProcessPath, new Version(3, 11, 9)),
+        };
+
+        await viewModel.QuickAttachCommand.ExecuteAsync();
+
+        Assert.False(viewModel.IsConnected);
+        Assert.False(viewModel.IsAwaitingBootstrap);
+        Assert.Equal("Quick attach failed", viewModel.Status);
+        Assert.StartsWith(code, viewModel.ErrorMessage, StringComparison.Ordinal);
+        Assert.True(viewModel.HasConnectionRecovery);
+        Assert.Contains(expectedInstruction, viewModel.ConnectionRecoveryMessage, StringComparison.Ordinal);
+        Assert.Contains("Rescan", viewModel.ConnectionRecoveryMessage, StringComparison.Ordinal);
+        Assert.Contains("Quick Attach", viewModel.ConnectionRecoveryMessage, StringComparison.Ordinal);
+        Assert.NotNull(clipboard.Text);
+    }
+
+    [Fact]
+    public async Task Python314CompatibilityFailureStopsBeforeManualBootstrapFallback()
+    {
+        var session = new FakeSession
+        {
+            AttachException = new RemoteInspectionException("STALE_AGENT", "Runtime sources differ."),
+        };
+        var clipboard = new FakeClipboardService();
+        await using var viewModel = new MainViewModel(
+            session,
+            new FakeProcessDiscovery(),
+            liveAttachService: new FakeLiveAttachService(() => { }),
+            clipboardService: clipboard)
+        {
+            SelectedProcess = new ProcessItem(1234, "python", Environment.ProcessPath, new Version(3, 14, 6)),
+        };
+
+        await viewModel.QuickAttachCommand.ExecuteAsync();
+
+        Assert.Equal("Live attach failed", viewModel.Status);
+        Assert.True(viewModel.HasConnectionRecovery);
+        Assert.Equal(1, session.AttachCallCount);
+        Assert.Null(clipboard.Text);
+    }
+
     [Fact]
     public async Task QuickAttachForPython314UsesLiveAttachWithoutClipboardBootstrap()
     {
@@ -469,6 +528,7 @@ public sealed class MainViewModelTests
         public event EventHandler<string>? Disconnected;
         public bool IsConnected { get; private set; }
         public bool DelayAttach { get; init; }
+        public Exception? AttachException { get; init; }
         public int AttachCallCount { get; private set; }
         public int GcRequestCount { get; private set; }
         public int GcDetailRequestCount { get; private set; }
@@ -478,6 +538,8 @@ public sealed class MainViewModelTests
         public Task<JsonObject> AttachAsync(int port, string token, int? expectedPid, CancellationToken cancellationToken)
         {
             AttachCallCount++;
+            if (AttachException is not null)
+                return Task.FromException<JsonObject>(AttachException);
             if (DelayAttach)
                 return CompleteStateWhenAttachedAsync(_attach.Task, cancellationToken);
             IsConnected = true;

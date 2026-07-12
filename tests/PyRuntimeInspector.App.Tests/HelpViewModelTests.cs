@@ -102,6 +102,22 @@ public sealed class HelpViewModelTests
     }
 
     [Fact]
+    public void QuickAttachHelpExplainsSafeCrossPathReuseAndRecovery()
+    {
+        var topic = Assert.Single(HelpCatalog.Topics, topic => topic.Id == "quick-attach");
+        var content = string.Join('\n',
+            topic.Overview,
+            string.Join('\n', topic.Steps),
+            string.Join('\n', topic.Notes));
+
+        Assert.Contains("다른 폴더", content, StringComparison.Ordinal);
+        Assert.Contains("runtime source manifest", content, StringComparison.Ordinal);
+        Assert.Contains("SHA-256", content, StringComparison.Ordinal);
+        Assert.Contains("detached Agent", content, StringComparison.Ordinal);
+        Assert.Contains("대상 Python을 완전히 종료", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ViewModelRepresentsEmptyQueryNoResultsAndClearSearchStates()
     {
         var viewModel = new HelpViewModel();

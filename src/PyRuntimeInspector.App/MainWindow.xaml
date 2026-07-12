@@ -148,6 +148,35 @@
                     </Grid>
                 </Border>
 
+                <Border Grid.Row="1"
+                        Grid.ColumnSpan="3"
+                        Margin="0,8,0,0"
+                        Padding="10,7"
+                        CornerRadius="6"
+                        Background="{DynamicResource DangerBackground}"
+                        BorderBrush="{DynamicResource DangerBrush}"
+                        BorderThickness="1"
+                        Visibility="{Binding HasConnectionRecovery, Converter={StaticResource BooleanToVisibilityConverter}}"
+                        ToolTip="{Binding ConnectionRecoveryMessage}"
+                        AutomationProperties.Name="Quick Attach recovery instructions"
+                        AutomationProperties.HelpText="{Binding ConnectionRecoveryMessage}"
+                        AutomationProperties.LiveSetting="Assertive">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Reconnect action"
+                                   Foreground="{DynamicResource DangerBrush}"
+                                   FontWeight="SemiBold"
+                                   Margin="0,0,10,0" />
+                        <TextBlock Grid.Column="1"
+                                   Text="{Binding ConnectionRecoveryMessage}"
+                                   Foreground="{DynamicResource PrimaryText}"
+                                   TextWrapping="Wrap" />
+                    </Grid>
+                </Border>
+
                 <Expander Grid.Row="2"
                           Grid.ColumnSpan="3"
                           Header="Advanced connection and preferences"

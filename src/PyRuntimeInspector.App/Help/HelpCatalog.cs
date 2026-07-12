@@ -107,7 +107,8 @@ public static class HelpCatalog
             [
                 "Process 목록 표시와 Agent 연결 완료는 서로 다른 상태입니다.",
                 "3.10~3.13의 bootstrap은 통합 터미널의 C:\\>가 아니라 Python REPL 또는 VS Code Debug Console에서 실행합니다.",
-                "STALE_AGENT 또는 INCOMPATIBLE_AGENT가 나오면 대상 Python을 완전히 종료하고 다시 시작합니다.",
+                "다른 폴더에서 실행해도 version, ABI, runtime source manifest와 SHA-256이 같으면 detached Agent를 자동으로 재사용합니다.",
+                "STALE_AGENT 또는 INCOMPATIBLE_AGENT가 나오면 version, ABI, runtime source 또는 cache가 호환되지 않으므로 대상 Python을 완전히 종료하고 다시 시작합니다.",
             ]),
         new(
             "cooperative-attach",
@@ -425,7 +426,7 @@ public static class HelpCatalog
                 "Not connected: Rescan 후 실제 Python PID를 다시 고르고 Quick Attach 절차를 완료합니다.",
                 "Waiting for bootstrap: 3.10~3.13이면 복사된 한 줄을 대상 Python >>> 또는 Debug Console에서 실행합니다.",
                 "3.14 timeout: 대상이 blocking call에 있으면 Python safe point로 돌아오도록 실행을 진행하거나 REPL에서 Enter를 누릅니다.",
-                "STALE_AGENT/INCOMPATIBLE_AGENT: 대상 Python을 완전히 종료하고 새 프로세스로 다시 연결합니다.",
+                "STALE_AGENT/INCOMPATIBLE_AGENT: version, ABI, runtime source가 다르거나 cache가 partial/mixed이므로 대상 Python을 완전히 종료하고 새 프로세스로 다시 연결합니다.",
                 "ACTIVE_AGENT_CONFLICT: 기존 PyMonitor를 Detach하거나 대상 Python을 재시작합니다.",
                 "DataFrame 비활성: 대상에서 pandas가 로드됐고 선택 값이 exact DataFrame인지 확인합니다.",
                 "Matplotlib unavailable: fig.canvas.draw() 완료 후 Refresh preview를 누릅니다.",

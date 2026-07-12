@@ -67,9 +67,11 @@
   cannot establish a second connection.
 - Quick Attach and Live Attach execute the shipped `bootstrap.py` freshly rather
   than importing a possibly cached bootstrap entry point. Before starting the
-  Agent, it validates the package root's exact version, bootstrap ABI, normalized
-  source path, and every cached module under the package prefix. Partial or mixed
-  caches are rejected.
+  Agent, it validates the package root's exact version, bootstrap ABI, and every
+  cached module under one coherent package root. For a different source path, a
+  bounded manifest and SHA-256 comparison must match every runtime `.py` file;
+  the separately executed `bootstrap.py` and `managed_launch.py` entry points
+  are excluded. Partial, mixed, or source-mismatched caches are rejected.
 - A compatible bootstrap imports only the bundled Agent and starts its daemon
   connection thread. It does not evaluate a user expression or modify inspected
   values.
@@ -81,6 +83,10 @@
   all match the repeated bootstrap. Any different connection setting is rejected
   as `ACTIVE_AGENT_CONFLICT`; the bootstrap never silently redirects an active
   Agent to a new controller.
+- A stopped Agent package with matching version, ABI, runtime source manifest,
+  and hashes can remain loaded from its original path even when the current
+  PyMonitor uses another bundled path. This avoids unsafe module unloading while
+  preventing a different runtime payload from crossing builds.
 
 ## CPython 3.14+ live attach
 

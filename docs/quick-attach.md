@@ -48,29 +48,35 @@ CPython 3.14+ Live Attach uses the same fresh bootstrap path.
 
 Before importing or starting the Agent, the bootstrap snapshots the complete
 `pyruntime_inspector_agent` prefix in `sys.modules`. It validates the cached
-package root's Agent version, bootstrap ABI, and normalized `__init__.py` path,
-requires every cached child module to live under that same shipped package, and
-rejects a partial child-only cache. After import it repeats the path/tree check.
-The authenticated `session.hello` then reports `agentVersion` and
-`bootstrapAbi`, which the WPF client validates before requesting runtime data.
+package root's Agent version and bootstrap ABI, requires every cached child
+module to live under one coherent package root, and rejects a partial or mixed
+cache. When that coherent root is at another path, the bootstrap compares a
+bounded manifest and SHA-256 of every runtime `.py` source except the fresh
+entry points `bootstrap.py` and `managed_launch.py`. A byte-identical detached
+Agent is reused; any runtime source or module-set difference is rejected. After
+import it repeats the same tree check. The authenticated `session.hello` then
+reports `agentVersion` and `bootstrapAbi`, which the WPF client validates before
+requesting runtime data.
 
 ## Cached-Agent errors and recovery
 
 Bootstrap compatibility failures are sent to the waiting listener immediately
 instead of leaving PyMonitor in a loading state:
 
-- `STALE_AGENT`: a cached package has a mismatched version, ABI, path, invalid
-  module object, or partial/mixed module tree.
+- `STALE_AGENT`: a cached package has a mismatched version or ABI, incompatible
+  runtime source manifest, invalid module object, or partial/mixed module tree.
 - `INCOMPATIBLE_AGENT`: the connected Agent's hello version or ABI differs from
   the WPF client's expected contract.
 - `ACTIVE_AGENT_CONFLICT`: an Agent is already active with a different port,
   token, or attach mode.
 
-For `STALE_AGENT` or `INCOMPATIBLE_AGENT`, fully stop and restart the Python
+A detached cache with the same version, ABI, and byte-identical runtime sources
+is reused automatically even when PyMonitor runs from another folder. For
+`STALE_AGENT` or `INCOMPATIBLE_AGENT`, fully stop and restart the Python
 debuggee, then run Quick Attach again. Restarting PyMonitor alone cannot clear
-modules cached inside the target process. For `ACTIVE_AGENT_CONFLICT`, first
-Detach the existing PyMonitor session when possible; otherwise restart the
-debuggee.
+incompatible modules cached inside the target process. For
+`ACTIVE_AGENT_CONFLICT`, first Detach the existing PyMonitor session when
+possible; otherwise restart the debuggee.
 
 Module inspection reads the direct dictionary of an already-loaded exact
 Python module. It does not import modules, invoke attributes, evaluate

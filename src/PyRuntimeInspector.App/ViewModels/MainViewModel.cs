@@ -85,6 +85,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private string _token;
     private string _status = "Disconnected";
     private string _errorMessage = "";
+    private string _connectionRecoveryMessage = "";
     private bool _isConnected;
     private bool _isBusy;
     private bool _isAwaitingBootstrap;
@@ -481,6 +482,16 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public bool ElevateLiveAttach { get => _elevateLiveAttach; set => SetProperty(ref _elevateLiveAttach, value); }
     public string Status { get => _status; private set => SetProperty(ref _status, value); }
     public string ErrorMessage { get => _errorMessage; private set => SetProperty(ref _errorMessage, value); }
+    public string ConnectionRecoveryMessage
+    {
+        get => _connectionRecoveryMessage;
+        private set
+        {
+            if (SetProperty(ref _connectionRecoveryMessage, value))
+                OnPropertyChanged(nameof(HasConnectionRecovery));
+        }
+    }
+    public bool HasConnectionRecovery => !string.IsNullOrWhiteSpace(ConnectionRecoveryMessage);
     public bool IsConnected
     {
         get => _isConnected;
@@ -1169,6 +1180,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     {
         if (SelectedProcess is null || IsConnected || IsBusy)
             return;
+        ConnectionRecoveryMessage = "";
 
         if (SelectedProcess.PythonVersion is Version unsupported
             && (unsupported.Major != 3 || unsupported.Minor < 10))
@@ -1181,7 +1193,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         if (SelectedProcess.PythonVersion is { Major: 3, Minor: >= 14 })
         {
             await LiveAttachAsync();
-            if (IsConnected || Status == "Live attach cancelled")
+            if (IsConnected || Status == "Live attach cancelled" || HasConnectionRecovery)
                 return;
         }
 
@@ -1205,6 +1217,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
         ErrorMessage = "";
+        ConnectionRecoveryMessage = "";
         IsBusy = true;
         _connectionCts = new CancellationTokenSource();
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(_connectionCts.Token);
@@ -1231,17 +1244,20 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         {
             Status = "Quick attach timed out";
             ErrorMessage = $"No Agent connected within {_onePasteAttachTimeout.TotalSeconds:0.#} seconds. Run Quick Attach again, paste the copied line into the target's VS Code Debug Console or Python REPL, and press Enter.";
+            ConnectionRecoveryMessage = "";
             _connectionCts.Cancel();
         }
         catch (OperationCanceledException)
         {
             Status = "Quick attach cancelled";
             ErrorMessage = "";
+            ConnectionRecoveryMessage = "";
         }
         catch (Exception exception)
         {
             Status = "Quick attach failed";
             SetError(exception);
+            SetConnectionRecovery(exception);
             _connectionCts.Cancel();
         }
         finally
@@ -1278,6 +1294,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             return;
 
         ErrorMessage = "";
+        ConnectionRecoveryMessage = "";
         IsBusy = true;
         Status = $"Scheduling live attach to PID {SelectedProcess.Id}";
         _connectionCts = new CancellationTokenSource();
@@ -1322,6 +1339,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         {
             Status = "Live attach failed";
             SetError(exception);
+            SetConnectionRecovery(exception);
             _connectionCts.Cancel();
         }
         finally
@@ -4430,6 +4448,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         IsConnected = false;
         IsBusy = false;
         IsAwaitingBootstrap = false;
+        ConnectionRecoveryMessage = "";
         Status = status;
         RuntimeRoots.Clear();
         Variables.Clear();
@@ -4975,6 +4994,26 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             RemoteInspectionException remote => $"{remote.Code}: {remote.Message}",
             LiveAttachException live => $"{live.Code}: {live.Message}",
             _ => exception.Message,
+        };
+    }
+
+    private void SetConnectionRecovery(Exception exception)
+    {
+        var code = exception switch
+        {
+            RemoteInspectionException remote => remote.Code,
+            LiveAttachException live => live.Code,
+            _ => null,
+        };
+        ConnectionRecoveryMessage = code switch
+        {
+            "STALE_AGENT" or "INCOMPATIBLE_AGENT" =>
+                "The Python process has a different PyMonitor Agent runtime loaded. "
+                + "End the Python debug session or run exit(), start Python again, select Rescan, then run Quick Attach.",
+            "ACTIVE_AGENT_CONFLICT" =>
+                "Another PyMonitor session is still attached to this Python process. "
+                + "Detach it from the original PyMonitor window; if that is unavailable, restart Python, select Rescan, then run Quick Attach.",
+            _ => "",
         };
     }
 

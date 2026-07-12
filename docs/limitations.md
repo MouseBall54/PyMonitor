@@ -56,12 +56,13 @@
   selected REPL, then validates the connected PID.
 - CPython 3.14 Live Attach still needs a Python safe point. An idle interactive
   REPL may require one Enter keypress before the scheduled bootstrap runs.
-- A Python debuggee that still has an incompatible or partial Agent package in
-  `sys.modules` cannot be repaired by restarting PyMonitor alone. Quick Attach
-  reports `STALE_AGENT` or `INCOMPATIBLE_AGENT`; fully stop and restart the
-  debuggee, then attach again. `ACTIVE_AGENT_CONFLICT` means another Agent
-  connection is still active with different settings; detach that session or
-  restart the debuggee.
+- A byte-identical detached Agent package can be reused from another path when
+  its version, bootstrap ABI, runtime source manifest, and hashes match. An
+  incompatible, partial, or mixed package in `sys.modules` cannot be repaired by
+  restarting PyMonitor alone. Quick Attach reports `STALE_AGENT` or
+  `INCOMPATIBLE_AGENT`; fully stop and restart the debuggee, then attach again.
+  `ACTIVE_AGENT_CONFLICT` means another Agent connection is still active with
+  different settings; detach that session or restart the debuggee.
 - Module browsing includes already-loaded exact Python modules only. Namespace
   snapshots can become stale immediately and modules removed during inspection
   return a structured invalid-argument error.

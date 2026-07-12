@@ -99,9 +99,11 @@ with the selected target's own `python.exe`. The helper calls
 remain in a randomly named user temporary directory until the agent connects.
 The helper executes the shipped `bootstrap.py` as a fresh file, adds only the
 shipped agent directory to `sys.path`, validates the cached package root's
-version, bootstrap ABI, and normalized path plus every cached package module's
-path, and starts the agent with `attachMode: live` only when that module tree is
-compatible.
+version, bootstrap ABI, and coherent package module tree, and starts the agent
+with `attachMode: live` only when that module tree is compatible. A detached
+cache from another path is compatible only when the bounded runtime `.py`
+manifest and SHA-256 values match, excluding the separately executed
+`bootstrap.py` and `managed_launch.py` entry points.
 
 The helper can optionally run with the Windows `runas` verb. This elevates only
 the helper, not the WPF process. The target must be CPython 3.14+ and must reach
@@ -114,13 +116,14 @@ verified after authentication. Once connected, the client lists
 already-loaded modules and automatically opens the direct `__main__` namespace;
 this keeps idle REPL globals visible without requiring an active frame.
 
-A stale or partial package cache is reported immediately as `STALE_AGENT`; an
-already-active Agent with different connection settings reports
-`ACTIVE_AGENT_CONFLICT`. The authenticated hello returns `agentVersion` and
-`bootstrapAbi`, and the WPF client rejects a mismatch as `INCOMPATIBLE_AGENT`
-before any runtime inspection. A stale or incompatible cache requires a full
-Python debuggee restart, because restarting only the WPF process does not clear
-the target's `sys.modules`.
+A byte-identical detached Agent can therefore reconnect after PyMonitor moves
+to another folder. A runtime-source mismatch or partial/mixed package cache is
+reported immediately as `STALE_AGENT`; an already-active Agent with different
+connection settings reports `ACTIVE_AGENT_CONFLICT`. The authenticated hello
+returns `agentVersion` and `bootstrapAbi`, and the WPF client rejects a mismatch
+as `INCOMPATIBLE_AGENT` before any runtime inspection. A stale or incompatible
+cache requires a full Python debuggee restart, because restarting only the WPF
+process does not clear the target's `sys.modules`.
 
 ## Phase 4 memory and timeline
 

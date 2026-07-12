@@ -342,6 +342,115 @@ public sealed class QuickAttachReplTests
         }
     }
 
+    [Fact]
+    public async Task ReplBootstrapReusesByteIdenticalAgentAcrossPathsButRejectsChangedRuntimeSources()
+    {
+        var root = FindRepositoryRoot();
+        var temporaryRoot = Path.Combine(Path.GetTempPath(), "PyRuntimeInspector.Tests", Guid.NewGuid().ToString("N"));
+        var firstAgentDirectory = CopyAgentSources(Path.Combine(root, "agent"), Path.Combine(temporaryRoot, "first"));
+        var relocatedAgentDirectory = CopyAgentSources(Path.Combine(root, "agent"), Path.Combine(temporaryRoot, "relocated"));
+        await File.AppendAllTextAsync(
+            Path.Combine(relocatedAgentDirectory, "pyruntime_inspector_agent", "bootstrap.py"),
+            "\n# independently shipped fresh bootstrap\n");
+        var process = StartRepl(root);
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+            var firstPort = ReservePort();
+            var firstToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+            await using (var firstSession = new InspectorSession(TimeSpan.FromSeconds(5)))
+            {
+                var firstAttach = firstSession.AttachAsync(firstPort, firstToken, process.Id, timeout.Token);
+                await process.StandardInput.WriteLineAsync(ReplBootstrap.Build(firstAgentDirectory, firstPort, firstToken));
+                await process.StandardInput.FlushAsync();
+                var firstRuntime = await firstAttach;
+                Assert.Equal(process.Id, firstRuntime["pid"]!.GetValue<int>());
+
+                var conflictPort = ReservePort();
+                while (conflictPort == firstPort)
+                    conflictPort = ReservePort();
+                var conflictToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+                await using (var conflictSession = new InspectorSession(TimeSpan.FromSeconds(5)))
+                {
+                    var conflictAttach = conflictSession.AttachAsync(
+                        conflictPort,
+                        conflictToken,
+                        process.Id,
+                        timeout.Token);
+                    await process.StandardInput.WriteLineAsync(
+                        ReplBootstrap.Build(relocatedAgentDirectory, conflictPort, conflictToken));
+                    await process.StandardInput.FlushAsync();
+                    var conflict = await Assert.ThrowsAsync<RemoteInspectionException>(async () => await conflictAttach);
+                    Assert.Equal("ACTIVE_AGENT_CONFLICT", conflict.Code);
+                }
+
+                var stillActive = await firstSession.RequestAsync("runtime.getInfo", cancellationToken: timeout.Token);
+                Assert.Equal(process.Id, Result(stillActive)["pid"]!.GetValue<int>());
+                await firstSession.DetachAsync();
+            }
+
+            var relocatedPort = ReservePort();
+            var relocatedToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+            await using (var relocatedSession = new InspectorSession(TimeSpan.FromSeconds(5)))
+            {
+                var relocatedAttach = relocatedSession.AttachAsync(
+                    relocatedPort,
+                    relocatedToken,
+                    process.Id,
+                    timeout.Token);
+                await process.StandardInput.WriteLineAsync(
+                    ReplBootstrap.Build(relocatedAgentDirectory, relocatedPort, relocatedToken));
+                await process.StandardInput.FlushAsync();
+                var relocatedRuntime = await relocatedAttach;
+                Assert.Equal(process.Id, relocatedRuntime["pid"]!.GetValue<int>());
+                await relocatedSession.DetachAsync();
+            }
+
+            await File.AppendAllTextAsync(
+                Path.Combine(relocatedAgentDirectory, "pyruntime_inspector_agent", "server.py"),
+                "\n# changed runtime payload\n",
+                timeout.Token);
+
+            var changedPort = ReservePort();
+            var changedToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+            await using (var changedSession = new InspectorSession(TimeSpan.FromSeconds(5)))
+            {
+                var changedAttach = changedSession.AttachAsync(changedPort, changedToken, process.Id, timeout.Token);
+                await process.StandardInput.WriteLineAsync(
+                    ReplBootstrap.Build(relocatedAgentDirectory, changedPort, changedToken));
+                await process.StandardInput.FlushAsync();
+
+                var exception = await Assert.ThrowsAsync<RemoteInspectionException>(async () => await changedAttach);
+                Assert.Equal("STALE_AGENT", exception.Code);
+                Assert.Contains("runtime sources", exception.Message, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("restart the Python debuggee", exception.Message, StringComparison.OrdinalIgnoreCase);
+            }
+
+            Assert.False(process.HasExited);
+            await process.StandardInput.WriteLineAsync("exit()");
+            await process.StandardInput.FlushAsync();
+            await process.WaitForExitAsync(timeout.Token);
+            Assert.Equal(0, process.ExitCode);
+            Assert.Empty(Directory.EnumerateFiles(firstAgentDirectory, "*.pyc", SearchOption.AllDirectories));
+            Assert.Empty(Directory.EnumerateDirectories(firstAgentDirectory, "__pycache__", SearchOption.AllDirectories));
+            Assert.Empty(Directory.EnumerateFiles(relocatedAgentDirectory, "*.pyc", SearchOption.AllDirectories));
+            Assert.Empty(Directory.EnumerateDirectories(relocatedAgentDirectory, "__pycache__", SearchOption.AllDirectories));
+        }
+        finally
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync();
+            process.Dispose();
+            await Task.WhenAll(stdout, stderr);
+            if (Directory.Exists(temporaryRoot))
+                Directory.Delete(temporaryRoot, recursive: true);
+        }
+    }
+
     private static JsonObject Result(ProtocolFrame frame) => frame.Header["result"]!.AsObject();
 
     private static JsonObject Find(JsonArray items, string name) =>

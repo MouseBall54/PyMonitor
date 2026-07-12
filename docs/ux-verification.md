@@ -291,12 +291,14 @@ The reported indefinite load after constructing the BGR array was not caused by
 the 240×320×3 array: its selection and preview complete promptly. The actual
 failure was an older Agent package retained in the paused debuggee's
 `sys.modules`, allowing stale code or a previous listener to survive a new
-bootstrap. The fresh bootstrap now validates the root module and complete cached
-package tree, source path, version, bootstrap ABI, and active connection. Tests
-exercise immediate `STALE_AGENT`, `ACTIVE_AGENT_CONFLICT`, and incompatible
-hello `INCOMPATIBLE_AGENT` responses, including same-path pre-capability and
-partial-cache cases. A Python process already carrying the legacy Agent must be
-fully restarted before attaching again; restarting only PyMonitor is not enough.
+bootstrap. The fresh bootstrap now validates the root module, coherent cached
+package tree, version, bootstrap ABI, bounded runtime source manifest and hashes,
+and active connection. A byte-identical detached Agent can be reused across
+paths; runtime-source differences and partial or mixed caches are rejected.
+Tests exercise immediate `STALE_AGENT`, `ACTIVE_AGENT_CONFLICT`, and incompatible
+hello `INCOMPATIBLE_AGENT` responses. A Python process carrying an incompatible
+Agent must be fully restarted before attaching again; restarting only PyMonitor
+is not enough.
 
 ### Current automated and staging evidence
 

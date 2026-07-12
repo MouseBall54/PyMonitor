@@ -229,8 +229,8 @@ flowchart LR
 
 Agent suite 99개는 CPython 3.10.18, 3.11.9, 3.12.9, 3.13.7,
 3.14.0rc2에서 NumPy·pandas·Matplotlib을 함께 설치한 상태로 통과했습니다
-(런타임별 비지원 기능은 예상대로 skip). .NET Release suite는 App 123개,
-Protocol 5개, Integration 2개로 총 130개가 통과했습니다. VS Code
+(런타임별 비지원 기능은 예상대로 skip). .NET Release suite는 App 129개,
+Protocol 5개, Integration 2개로 총 136개가 통과했습니다. VS Code
 debugpy breakpoint 연결은 CPython 3.12에서 DataFrame/Object Tree와 OpenCV
 gradient·rectangle·text·gray·mask 변경까지 실제 검증했으며, Live Attach는
 로컬 CPython 3.14.0rc2 Windows x64 런타임에서 검증했습니다.
@@ -263,13 +263,14 @@ gradient·rectangle·text·gray·mask 변경까지 실제 검증했으며, Live 
 Python REPL의 `>>>` 프롬프트에 한 번 붙여넣어 실행해야 합니다. 연결 후
 선언하거나 변경한 전역 변수는 `__main__` snapshot을 새로 고칠 때 표시됩니다.
 
-이전에 연결한 Agent가 같은 Python debuggee의 `sys.modules`에 남아 있으면 새
-Quick Attach는 이를 재사용하지 않습니다. Agent version·bootstrap ABI·경로와
-전체 package module tree를 검사하고 `STALE_AGENT`, `INCOMPATIBLE_AGENT` 또는
-`ACTIVE_AGENT_CONFLICT`를 즉시 표시합니다. stale/incompatible 상태에서는
-PyMonitor만 다시 실행하지 말고 Python debuggee를 완전히 종료·재시작한 뒤 다시
-연결합니다. active conflict는 기존 PyMonitor 세션을 Detach하거나 debuggee를
-재시작해 해소합니다.
+이전에 연결한 Agent가 같은 Python debuggee의 `sys.modules`에 남아 있어도,
+version·bootstrap ABI가 같고 `bootstrap.py`와 `managed_launch.py`를 제외한 runtime
+`.py` manifest와 SHA-256 해시가 모두 일치하면 다른 폴더의 detached Agent를 안전하게
+재사용합니다. runtime source가 다르거나 package cache가 partial/mixed이면
+`STALE_AGENT`, hello 계약이 다르면 `INCOMPATIBLE_AGENT`를 즉시 표시합니다.
+이 경우 PyMonitor만 다시 실행하지 말고 Python debuggee를 완전히 종료·재시작한 뒤
+다시 연결합니다. `ACTIVE_AGENT_CONFLICT`는 기존 PyMonitor 세션을 Detach하거나
+debuggee를 재시작해 해소합니다.
 
 상세 동작과 보안 경계는 [Quick Attach](docs/quick-attach.md)를 참고합니다.
 
