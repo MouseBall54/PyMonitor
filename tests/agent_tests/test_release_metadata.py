@@ -1,5 +1,6 @@
 import pathlib
 import re
+import struct
 import unittest
 
 import pyruntime_inspector_agent
@@ -10,10 +11,44 @@ EXPECTED_PRODUCT = "PyMonitor"
 EXPECTED_DEVELOPER = "박영문"
 EXPECTED_VERSION = "26.7.11"
 EXPECTED_UPGRADE_CODE = "{2D73C23D-A566-4D8A-889C-F89FCE4A1377}"
+EXPECTED_ICON_SIZES = [16, 20, 24, 32, 40, 48, 64, 80, 96, 128, 256]
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
 def xml_value(source, name):
     return re.search(rf"<{name}>([^<]+)</{name}>", source).group(1)
+
+
+def ico_frames(data):
+    reserved, image_type, count = struct.unpack_from("<HHH", data)
+    if reserved != 0 or image_type != 1:
+        raise ValueError("Invalid ICO directory header")
+
+    frames = []
+    for index in range(count):
+        offset = 6 + index * 16
+        width, height, _, _, planes, bit_count, length, image_offset = struct.unpack_from(
+            "<BBBBHHII", data, offset
+        )
+        payload = data[image_offset:image_offset + length]
+        if len(payload) != length:
+            raise ValueError("ICO frame payload is truncated")
+        frames.append(
+            {
+                "width": width or 256,
+                "height": height or 256,
+                "planes": planes,
+                "bit_count": bit_count,
+                "payload": payload,
+            }
+        )
+    return frames
+
+
+def png_dimensions(data):
+    if not data.startswith(PNG_SIGNATURE) or data[12:16] != b"IHDR":
+        raise ValueError("Expected a PNG image")
+    return struct.unpack_from(">II", data, 16)
 
 
 class ReleaseMetadataTests(unittest.TestCase):
@@ -60,6 +95,18 @@ class ReleaseMetadataTests(unittest.TestCase):
         app_manifest = (
             self.root / "src" / "PyRuntimeInspector.App" / "app.manifest"
         ).read_text(encoding="utf-8")
+        main_window = (
+            self.root / "src" / "PyRuntimeInspector.App" / "MainWindow.xaml"
+        ).read_text(encoding="utf-8")
+        about_window = (
+            self.root / "src" / "PyRuntimeInspector.App" / "AboutWindow.xaml"
+        ).read_text(encoding="utf-8")
+        icon_path = (
+            self.root / "src" / "PyRuntimeInspector.App" / "Assets" / "app-icon.ico"
+        )
+        icon_master_path = (
+            self.root / "src" / "PyRuntimeInspector.App" / "Assets" / "app-icon.png"
+        )
         package = (
             self.root / "installer" / "PyRuntimeInspector.Installer" / "Package.wxs"
         ).read_text(encoding="utf-8")
@@ -78,8 +125,32 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertIn(f'authors = [{{ name = "{EXPECTED_DEVELOPER}" }}]', pyproject)
         self.assertEqual(EXPECTED_PRODUCT, xml_value(app_project, "AssemblyName"))
         self.assertEqual("app.manifest", xml_value(app_project, "ApplicationManifest"))
+        self.assertIn("<ApplicationIcon>Assets\\app-icon.ico</ApplicationIcon>", app_project)
+        self.assertIn('<Resource Include="Assets\\app-icon.ico" />', app_project)
+        self.assertIn('<Resource Include="Assets\\app-icon.png" />', app_project)
         self.assertIn("PerMonitorV2,PerMonitor", app_manifest)
         self.assertIn('requestedExecutionLevel level="asInvoker"', app_manifest)
+        for window in (main_window, about_window):
+            self.assertNotIn('Icon="Assets/app-icon.ico"', window)
+            self.assertIn('Image Source="Assets/app-icon.png"', window)
+            self.assertIn('RenderOptions.BitmapScalingMode="HighQuality"', window)
+
+        frames = ico_frames(icon_path.read_bytes())
+        self.assertEqual(EXPECTED_ICON_SIZES, [frame["width"] for frame in frames])
+        for expected_size, frame in zip(EXPECTED_ICON_SIZES, frames, strict=True):
+            self.assertEqual(expected_size, frame["height"])
+            self.assertEqual(1, frame["planes"])
+            self.assertEqual(32, frame["bit_count"])
+            self.assertEqual((expected_size, expected_size), png_dimensions(frame["payload"]))
+            self.assertEqual(8, frame["payload"][24])
+            self.assertEqual(6, frame["payload"][25])
+
+        icon_master = icon_master_path.read_bytes()
+        master_width, master_height = png_dimensions(icon_master)
+        self.assertEqual(master_width, master_height)
+        self.assertGreaterEqual(master_width, 1024)
+        self.assertEqual(8, icon_master[24])
+        self.assertEqual(6, icon_master[25])
         self.assertIn(f'Name="{EXPECTED_PRODUCT}"', package)
         self.assertIn(f'Manufacturer="{EXPECTED_DEVELOPER}"', package)
         self.assertIn(f'UpgradeCode="{EXPECTED_UPGRADE_CODE}"', package)

@@ -33,6 +33,19 @@ The public artifacts are named `PyMonitor-26.7.11-win-x64.zip` and
 `PyMonitor-26.7.11-win-x64.zip.sha256`; the application executable is
 `PyMonitor.exe`.
 
+## Icon pipeline
+
+`Assets/app-icon.png` is the transparent high-resolution brand master used by
+the in-app header and About surface with high-quality WPF scaling. Run
+`uv run --with pillow -- python .\scripts\build_app_icon.py` to regenerate the
+Windows icon. The deterministic builder crops excess transparent padding,
+resizes in premultiplied alpha, applies small-size sharpening, and writes 32-bit
+RGBA frames at 16, 20, 24, 32, 40, 48, 64, 80, 96, 128, and 256 pixels.
+
+The multi-frame ICO is embedded in the EXE through `ApplicationIcon`; Windows
+selects the appropriate title-bar, Explorer, and taskbar frame for the current
+DPI. The same ICO is the MSI Apps & Features icon and Start Menu shortcut icon.
+
 ## Compatibility matrix
 
 CI runs all Python Agent tests on standard-GIL x64 CPython 3.10, 3.11, 3.12,

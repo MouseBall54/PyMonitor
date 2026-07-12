@@ -516,6 +516,7 @@ samples/
   test_python_code.py            # VS Code pandas/OpenCV breakpoint sample
 
 scripts/
+  build_app_icon.py              # high-resolution master → optically tuned multi-size ICO
   Build-PortableRelease.ps1      # self-contained directory, ZIP, SHA-256
   Invoke-StabilityTests.ps1      # duration/load/repeated detach gate
   Build-Installer.ps1            # WiX x64 MSI and SHA-256
@@ -544,6 +545,13 @@ Portable ZIP과 MSI까지 포함한 unsigned release build:
 ```powershell
 .\scripts\Build-PortableRelease.ps1
 .\scripts\Build-Installer.ps1
+```
+
+앱 아이콘을 다시 생성할 때는 1024px 이상의 투명 PNG 원본에서 Windows용
+16/20/24/32/40/48/64/80/96/128/256px 프레임을 한 번에 만듭니다.
+
+```powershell
+uv run --with pillow -- python .\scripts\build_app_icon.py
 ```
 
 생성되는 최종 배포 파일은 `PyMonitor.exe`,

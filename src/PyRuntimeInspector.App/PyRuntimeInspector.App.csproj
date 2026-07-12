@@ -17,6 +17,7 @@
   </ItemGroup>
   <ItemGroup>
     <Resource Include="Assets\app-icon.ico" />
+    <Resource Include="Assets\app-icon.png" />
     <Content Include="..\..\agent\pyruntime_inspector_agent\**\*.py">
       <Link>agent\pyruntime_inspector_agent\%(RecursiveDir)%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

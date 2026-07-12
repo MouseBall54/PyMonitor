@@ -23,6 +23,9 @@ integration, App, packaging, and stability evidence.
   defaults without preventing startup.
 - [x] About shows PyMonitor, version `26.7.11`, developer 박영문, Windows x64,
   and the read-only inspection boundary.
+- [x] The title-bar and shell icons use the EXE's 11-frame 16–256px ICO, while
+  the 30px header and 66px About marks use the transparent 1254px PNG master
+  with high-quality scaling; the packaged Release UI was visually inspected.
 
 ## Real Python connection
 
