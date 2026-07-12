@@ -92,6 +92,163 @@ public sealed class VariablesCenteredUxTests
     }
 
     [Fact]
+    public async Task ObjectNameSearchesFilterLoadedNamesIndependentlyWithoutLosingContext()
+    {
+        var session = new UxSession
+        {
+            ObjectChildren = ObjectChildrenResult(),
+            ClassDescription = StructuredClassDescription(),
+        };
+        session.EnqueueScope(ScopeResult(
+            Value("dict_test", "root-handle", "root-identity", "root-metadata", address: "0x100", expandable: true)));
+        await using var viewModel = await ConnectedViewModelAsync(session);
+
+        await viewModel.LoadScopeAsync(ScopeNode(), resetPage: true);
+        var selected = Assert.Single(viewModel.Variables);
+        viewModel.SelectedVariable = selected;
+        await EventuallyAsync(() => viewModel.InspectorState == InspectorPaneState.Ready);
+
+        var root = Assert.Single(viewModel.ObjectRoots);
+        var group = Assert.Single(root.Children, node => node.Kind == ObjectNodeKind.Group);
+        var child = Assert.Single(group.Children, node => node.Value?.Name == "child");
+        var deep = Assert.Single(group.Children, node => node.Value?.Name == "deep");
+        var loop = Assert.Single(group.Children, node => node.Value?.Name == "loop");
+        var requestCount = session.Requests.Count;
+        var history = viewModel.NavigationHistoryLabel;
+        var path = viewModel.SelectedObjectPath;
+
+        viewModel.ObjectChildrenSearchText = "CHILD";
+
+        Assert.Equal("child", Assert.Single(viewModel.FilteredObjectChildren).Name);
+        Assert.Equal(3, viewModel.ObjectChildren.Count);
+        Assert.Contains("1 of 3", viewModel.ObjectChildrenSearchResultLabel);
+
+        group.IsExpanded = false;
+        viewModel.ObjectTreeSearchText = "DEEP";
+
+        Assert.True(root.IsSearchVisible);
+        Assert.True(group.IsSearchVisible);
+        Assert.True(group.IsExpanded);
+        Assert.False(child.IsSearchVisible);
+        Assert.True(deep.IsSearchVisible);
+        Assert.True(deep.IsSearchMatch);
+        Assert.False(loop.IsSearchVisible);
+        Assert.Contains("1", viewModel.ObjectTreeSearchResultLabel);
+        Assert.Same(root, Assert.Single(viewModel.ObjectRoots));
+        Assert.Same(selected, viewModel.SelectedVariable);
+        Assert.Equal(path, viewModel.SelectedObjectPath);
+        Assert.Equal(history, viewModel.NavigationHistoryLabel);
+        Assert.Equal(requestCount, session.Requests.Count);
+
+        viewModel.ClearObjectChildrenSearchCommand.Execute(null);
+
+        Assert.Equal("", viewModel.ObjectChildrenSearchText);
+        Assert.Equal(3, viewModel.FilteredObjectChildren.Count);
+        Assert.Equal("DEEP", viewModel.ObjectTreeSearchText);
+        Assert.False(child.IsSearchVisible);
+
+        viewModel.ClearObjectTreeSearchCommand.Execute(null);
+
+        Assert.Equal("", viewModel.ObjectTreeSearchText);
+        Assert.All(group.Children, node => Assert.True(node.IsSearchVisible));
+        Assert.All(group.Children, node => Assert.False(node.IsSearchMatch));
+        Assert.False(group.IsExpanded);
+        Assert.Equal(requestCount, session.Requests.Count);
+    }
+
+    [Fact]
+    public async Task ObjectNameSearchesSurviveRefreshAndRestorePreSearchExpansion()
+    {
+        var session = new UxSession
+        {
+            ObjectChildren = ObjectChildrenResult(),
+            ClassDescription = StructuredClassDescription(),
+        };
+        var rootValue = Value(
+            "dict_test",
+            "root-handle",
+            "root-identity",
+            "root-metadata",
+            address: "0x100",
+            expandable: true);
+        session.EnqueueScope(ScopeResult((JsonObject)rootValue.DeepClone()));
+        session.EnqueueScope(ScopeResult((JsonObject)rootValue.DeepClone()));
+        await using var viewModel = await ConnectedViewModelAsync(session);
+
+        await viewModel.LoadScopeAsync(ScopeNode(), resetPage: true);
+        viewModel.SelectedVariable = Assert.Single(viewModel.Variables);
+        await EventuallyAsync(() => viewModel.InspectorState == InspectorPaneState.Ready);
+
+        var initialRoot = Assert.Single(viewModel.ObjectRoots);
+        var initialGroup = Assert.Single(initialRoot.Children, node => node.Kind == ObjectNodeKind.Group);
+        initialGroup.IsExpanded = false;
+        viewModel.ObjectChildrenSearchText = "CHILD";
+        viewModel.ObjectTreeSearchText = "DEEP";
+        Assert.True(initialGroup.IsExpanded);
+
+        await viewModel.RefreshCommand.ExecuteAsync();
+
+        Assert.Equal("CHILD", viewModel.ObjectChildrenSearchText);
+        Assert.Equal("child", Assert.Single(viewModel.FilteredObjectChildren).Name);
+        Assert.Equal("DEEP", viewModel.ObjectTreeSearchText);
+        var refreshedRoot = Assert.Single(viewModel.ObjectRoots);
+        var refreshedGroup = Assert.Single(refreshedRoot.Children, node => node.Kind == ObjectNodeKind.Group);
+        var refreshedDeep = Assert.Single(refreshedGroup.Children, node => node.Value?.Name == "deep");
+        var refreshedChild = Assert.Single(refreshedGroup.Children, node => node.Value?.Name == "child");
+        Assert.True(refreshedGroup.IsExpanded);
+        Assert.True(refreshedDeep.IsSearchVisible);
+        Assert.True(refreshedDeep.IsSearchMatch);
+        Assert.False(refreshedChild.IsSearchVisible);
+
+        viewModel.ClearObjectTreeSearchCommand.Execute(null);
+
+        Assert.False(refreshedGroup.IsExpanded);
+        Assert.All(refreshedGroup.Children, node => Assert.True(node.IsSearchVisible));
+    }
+
+    [Fact]
+    public async Task ObjectPathNavigationLabelsAndCopiedValuesPreserveUnderscores()
+    {
+        var session = new UxSession
+        {
+            ObjectChildren = new JsonObject
+            {
+                ["items"] = new JsonArray(
+                    Child("child_value", "child-handle", "child-id", "0x201", depth: 1, canExpand: false)),
+                ["offset"] = 0,
+                ["total"] = 1,
+            },
+            ClassDescription = StructuredClassDescription(),
+        };
+        session.EnqueueScope(ScopeResult(
+            Value("dict_test", "root-handle", "root-identity", "root-metadata", address: "0x100", expandable: true)));
+        var clipboard = new RecordingClipboard();
+        await using var viewModel = await ConnectedViewModelAsync(session, clipboard);
+
+        await viewModel.LoadScopeAsync(ScopeNode(), resetPage: true);
+        viewModel.SelectedVariable = Assert.Single(viewModel.Variables);
+        await EventuallyAsync(() => viewModel.InspectorState == InspectorPaneState.Ready);
+        var root = Assert.Single(viewModel.ObjectRoots);
+        var child = root.Children
+            .Where(node => node.Kind == ObjectNodeKind.Group)
+            .SelectMany(node => node.Children)
+            .Single(node => node.Value?.Name == "child_value");
+
+        await viewModel.SelectObjectNodeAsync(child);
+
+        Assert.EndsWith("dict_test.child_value", viewModel.SelectedObjectPath, StringComparison.Ordinal);
+        Assert.Collection(viewModel.ObjectBreadcrumbs,
+            item => Assert.Equal("dict_test", item.Label),
+            item => Assert.Equal("child_value", item.Label));
+        Assert.Contains("dict_test", viewModel.BackNavigationLabel);
+        Assert.Contains("dict_test", viewModel.ParentNavigationLabel);
+
+        viewModel.CopyDisplayedValue("dict_test.child_value");
+        Assert.Equal("dict_test.child_value", clipboard.Text);
+        Assert.Equal("Value copied", viewModel.Status);
+    }
+
+    [Fact]
     public async Task ObjectNavigationHistoryCapsAt128KeepsBackForwardAndReleasesEvictedHandles()
     {
         const int historyLimit = 128;

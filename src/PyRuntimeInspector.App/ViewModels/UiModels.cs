@@ -179,6 +179,8 @@ public sealed class ObjectTreeNode : ObservableObject
     private bool _isExpanded;
     private bool _isLoading;
     private bool _isLoaded;
+    private bool _isSearchVisible = true;
+    private bool _isSearchMatch;
 
     public required string Label { get; init; }
     public string Origin { get; init; } = "";
@@ -196,6 +198,8 @@ public sealed class ObjectTreeNode : ObservableObject
     public bool IsExpanded { get => _isExpanded; set => SetProperty(ref _isExpanded, value); }
     public bool IsLoading { get => _isLoading; set => SetProperty(ref _isLoading, value); }
     public bool IsLoaded { get => _isLoaded; set => SetProperty(ref _isLoaded, value); }
+    public bool IsSearchVisible { get => _isSearchVisible; set => SetProperty(ref _isSearchVisible, value); }
+    public bool IsSearchMatch { get => _isSearchMatch; set => SetProperty(ref _isSearchMatch, value); }
     public bool CanNavigate => Kind == ObjectNodeKind.Object && Value is not null && !IsCycle && !IsExpired;
     public string TypeName => Value?.TypeName ?? "";
     public string Preview => Value?.SafePreview ?? "";

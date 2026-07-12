@@ -39,15 +39,17 @@
 
         <Style TargetType="TextBlock">
             <Setter Property="Foreground" Value="{DynamicResource PrimaryText}" />
+            <EventSetter Event="PreviewMouseRightButtonUp"
+                         Handler="CopyableTextBlock_OnPreviewMouseRightButtonUp" />
         </Style>
 
-        <Style x:Key="SectionLabel" TargetType="TextBlock">
+        <Style x:Key="SectionLabel" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
             <Setter Property="Foreground" Value="{DynamicResource SecondaryText}" />
             <Setter Property="FontSize" Value="11" />
             <Setter Property="FontWeight" Value="SemiBold" />
         </Style>
 
-        <Style x:Key="MutedText" TargetType="TextBlock">
+        <Style x:Key="MutedText" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
             <Setter Property="Foreground" Value="{DynamicResource SecondaryText}" />
         </Style>
 
@@ -78,7 +80,7 @@
                                 Padding="{TemplateBinding Padding}">
                             <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
                                               VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
-                                              RecognizesAccessKey="True" />
+                                              RecognizesAccessKey="False" />
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
@@ -234,6 +236,8 @@
         </Style>
 
         <Style TargetType="DataGrid">
+            <EventSetter Event="PreviewMouseRightButtonDown"
+                         Handler="DataGrid_OnPreviewMouseRightButtonDown" />
             <Setter Property="Foreground" Value="{DynamicResource PrimaryText}" />
             <Setter Property="Background" Value="{DynamicResource PanelBackground}" />
             <Setter Property="RowBackground" Value="{DynamicResource PanelBackground}" />
@@ -248,6 +252,34 @@
             <Setter Property="SelectionUnit" Value="FullRow" />
             <Setter Property="SelectionMode" Value="Single" />
             <Setter Property="AutoGenerateColumns" Value="False" />
+            <Setter Property="ClipboardCopyMode" Value="ExcludeHeader" />
+            <Setter Property="ContextMenu">
+                <Setter.Value>
+                    <ContextMenu>
+                        <ContextMenu.Resources>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{DynamicResource PrimaryText}" />
+                            </Style>
+                        </ContextMenu.Resources>
+                        <MenuItem Header="Copy selected cells"
+                                  Command="Copy"
+                                  CommandTarget="{Binding PlacementTarget, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                    </ContextMenu>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="ContextMenu">
+            <Setter Property="Foreground" Value="{DynamicResource PrimaryText}" />
+            <Setter Property="Background" Value="{DynamicResource PanelBackground}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+
+        <Style TargetType="MenuItem">
+            <Setter Property="Foreground" Value="{DynamicResource PrimaryText}" />
+            <Setter Property="Background" Value="{DynamicResource PanelBackground}" />
+            <Setter Property="Padding" Value="10,6" />
         </Style>
 
         <Style TargetType="DataGridColumnHeader">

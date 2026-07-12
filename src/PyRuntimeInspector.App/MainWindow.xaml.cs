@@ -12,6 +12,11 @@ namespace PyRuntimeInspector.App;
 
 public partial class MainWindow : Window
 {
+    public static RoutedUICommand CopyDisplayedValueCommand { get; } = new(
+        "Copy displayed value",
+        nameof(CopyDisplayedValueCommand),
+        typeof(MainWindow));
+
     private readonly IAppSettingsService _settingsService;
     private readonly AppSettings _settings;
     private bool _panning;
@@ -44,6 +49,19 @@ public partial class MainWindow : Window
     }
 
     private MainViewModel ViewModel => (MainViewModel)DataContext;
+
+    private void CopyDisplayedValue_CanExecute(object sender, CanExecuteRoutedEventArgs e)
+    {
+        e.CanExecute = e.Parameter is string { Length: > 0 };
+        e.Handled = true;
+    }
+
+    private void CopyDisplayedValue_Executed(object sender, ExecutedRoutedEventArgs e)
+    {
+        if (e.Parameter is string value)
+            ViewModel.CopyDisplayedValue(value);
+        e.Handled = true;
+    }
 
     private void RestoreColumnWidths()
     {

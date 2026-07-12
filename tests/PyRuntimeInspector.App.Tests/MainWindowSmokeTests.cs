@@ -7,6 +7,8 @@ using System.Threading;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Data;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using PyRuntimeInspector.App.Services;
@@ -82,6 +84,10 @@ public sealed class MainWindowSmokeTests
                 {
                     Assert.False(string.IsNullOrWhiteSpace(button.ToolTip?.ToString()));
                     Assert.Equal(button.ToolTip?.ToString(), AutomationProperties.GetHelpText(button));
+                    var presenters = Descendants<ContentPresenter>(button).ToArray();
+                    Assert.NotEmpty(presenters);
+                    Assert.All(presenters, presenter =>
+                        Assert.False(presenter.RecognizesAccessKey));
                 });
                 var ancestry = Descendants<ItemsControl>(window)
                     .Single(control => AutomationProperties.GetName(control) == "Object ancestry breadcrumb");
@@ -90,6 +96,58 @@ public sealed class MainWindowSmokeTests
                     .Single(text => AutomationProperties.GetName(text) == "History 0 / 0").Text);
                 Assert.Equal("No level", Descendants<TextBlock>(window)
                     .Single(text => AutomationProperties.GetName(text) == "No level").Text);
+
+                var objectSearchNames = LogicalDescendants<TextBox>(window)
+                    .Select(AutomationProperties.GetName)
+                    .Where(name => !string.IsNullOrWhiteSpace(name))
+                    .ToHashSet(StringComparer.Ordinal);
+                Assert.Contains("Search immediate child names", objectSearchNames);
+                Assert.Contains("Search loaded Object Tree names", objectSearchNames);
+                var immediateChildren = LogicalDescendants<DataGrid>(window)
+                    .Single(grid => AutomationProperties.GetName(grid) == "Immediate object children");
+                var immediateChildrenBinding = Assert.IsType<Binding>(BindingOperations
+                    .GetBindingBase(immediateChildren, ItemsControl.ItemsSourceProperty));
+                Assert.Equal("FilteredObjectChildren", immediateChildrenBinding.Path.Path);
+                var objectTree = LogicalDescendants<TreeView>(window)
+                    .Single(tree => AutomationProperties.GetName(tree) == "Object member tree");
+                Assert.Contains(objectTree.ItemContainerStyle.Setters.OfType<Setter>(), setter =>
+                    setter.Property == UIElement.VisibilityProperty
+                    && setter.Value is Binding { Path.Path: "IsSearchVisible" });
+
+                var copyableValue = Descendants<TextBlock>(window)
+                    .First(text => text.Text == "No object selected");
+                copyableValue.RaiseEvent(new MouseButtonEventArgs(
+                    Mouse.PrimaryDevice,
+                    Environment.TickCount,
+                    MouseButton.Right)
+                {
+                    RoutedEvent = UIElement.PreviewMouseRightButtonUpEvent,
+                });
+                var copyMenu = Assert.IsType<ContextMenu>(copyableValue.ContextMenu);
+                var copyItem = Assert.Single(copyMenu.Items.OfType<MenuItem>(), item =>
+                    Equals(item.Header, "Copy value"));
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                Assert.True(copyMenu.IsOpen);
+                Assert.True(copyItem.IsEnabled);
+                copyMenu.IsOpen = false;
+
+                var aboutWindow = new AboutWindow { Owner = window };
+                aboutWindow.Show();
+                aboutWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                var aboutText = Descendants<TextBlock>(aboutWindow)
+                    .First(text => !string.IsNullOrWhiteSpace(text.Text));
+                aboutText.RaiseEvent(new MouseButtonEventArgs(
+                    Mouse.PrimaryDevice,
+                    Environment.TickCount,
+                    MouseButton.Right)
+                {
+                    RoutedEvent = UIElement.PreviewMouseRightButtonUpEvent,
+                });
+                var aboutMenu = Assert.IsType<ContextMenu>(aboutText.ContextMenu);
+                aboutWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                Assert.True(Assert.Single(aboutMenu.Items.OfType<MenuItem>()).IsEnabled);
+                aboutMenu.IsOpen = false;
+                aboutWindow.Close();
 
                 var dataFrameTab = LogicalDescendants<TabItem>(window)
                     .Single(tab => string.Equals(tab.Header?.ToString(), "DataFrame", StringComparison.Ordinal));
@@ -200,6 +258,42 @@ public sealed class MainWindowSmokeTests
         var initiallyRealized = CountRealizedRows(variablesGrid, itemCount);
         AssertRealizedRowsAreBounded(initiallyRealized, itemCount, "initial viewport");
         Assert.Null(variablesGrid.ItemContainerGenerator.ContainerFromIndex(itemCount - 1));
+
+        var firstRow = Assert.IsType<DataGridRow>(variablesGrid.ItemContainerGenerator.ContainerFromIndex(0));
+        var emphasizedName = Descendants<TextBlock>(firstRow).Single(text => text.Text == "variable_0");
+        Assert.Equal(FontWeights.SemiBold, emphasizedName.FontWeight);
+        Assert.Equal(Application.Current.Resources["AccentBrush"], emphasizedName.Foreground);
+        Assert.Equal("variable_0", emphasizedName.ToolTip);
+
+        variablesGrid.SelectedIndex = 1;
+        var firstCell = Descendants<DataGridCell>(firstRow).First();
+        variablesGrid.RaiseEvent(new MouseButtonEventArgs(
+            Mouse.PrimaryDevice,
+            Environment.TickCount,
+            MouseButton.Right)
+        {
+            RoutedEvent = UIElement.PreviewMouseRightButtonDownEvent,
+            Source = firstCell,
+        });
+        Assert.Same(firstRow.Item, variablesGrid.SelectedItem);
+
+        var cellRightClick = new MouseButtonEventArgs(
+            Mouse.PrimaryDevice,
+            Environment.TickCount,
+            MouseButton.Right)
+        {
+            RoutedEvent = UIElement.PreviewMouseRightButtonUpEvent,
+        };
+        emphasizedName.RaiseEvent(cellRightClick);
+        Assert.True(cellRightClick.Handled);
+        var cellMenu = Assert.IsType<ContextMenu>(emphasizedName.ContextMenu);
+        var cellMenuHeaders = cellMenu.Items.OfType<MenuItem>()
+            .Select(item => item.Header?.ToString())
+            .ToArray();
+        Assert.Contains("Copy value", cellMenuHeaders);
+        Assert.Contains("Copy selected cells", cellMenuHeaders);
+        Assert.Same(firstRow.Item, variablesGrid.SelectedItem);
+        cellMenu.IsOpen = false;
     }
 
     private static int CountRealizedRows(DataGrid grid, int itemCount) =>

@@ -28,6 +28,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private readonly HashSet<string> _pinnedKeys = [];
     private readonly Dictionary<string, NavigationContext> _pinnedContexts = [];
     private readonly List<NavigationContext> _navigationHistory = [];
+    private readonly Dictionary<string, bool> _objectTreeExpansionBeforeSearch = [];
     private readonly object _handleLifetimeSync = new();
     private readonly HashSet<string> _knownObjectHandles = new(StringComparer.Ordinal);
     private HashSet<string> _referencedObjectHandles = new(StringComparer.Ordinal);
@@ -126,6 +127,10 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private DateTime? _lastSnapshotAt;
     private string _connectionMode = "Not connected";
     private string _searchText = "";
+    private string _objectChildrenSearchText = "";
+    private string _objectTreeSearchText = "";
+    private string _objectChildrenSearchResultLabel = "0 loaded names";
+    private string _objectTreeSearchResultLabel = "0 loaded names";
     private string _scopeFilter = "All scopes";
     private string _changeFilter = "All changes";
     private string _typeFilter = "All types";
@@ -302,6 +307,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         RestartCommand = new AsyncCommand(RestartManagedAsync, () => !IsBusy && (!IsConnected || IsManagedRunning));
         RefreshProcessesCommand = new RelayCommand(RefreshProcesses);
         ClearSearchCommand = new RelayCommand(ClearSearch);
+        ClearObjectChildrenSearchCommand = new RelayCommand(() => ObjectChildrenSearchText = "");
+        ClearObjectTreeSearchCommand = new RelayCommand(() => ObjectTreeSearchText = "");
         ClearFiltersCommand = new RelayCommand(ClearFilters);
         ResetBaselineCommand = new RelayCommand(ResetCurrentBaseline, () => _currentScope is not null);
         TogglePinCommand = new RelayCommand(ToggleSelectedPin, () => _currentObject is not null && !_currentObject.Row.IsRemoved);
@@ -325,6 +332,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public ObservableCollection<VariableRow> Variables { get; } = [];
     public ObservableCollection<VariableRow> FilteredVariables { get; } = [];
     public ObservableCollection<ObjectChildRow> ObjectChildren { get; } = [];
+    public ObservableCollection<ObjectChildRow> FilteredObjectChildren { get; } = [];
     public ObservableCollection<ClassMemberRow> ClassMembers { get; } = [];
     public ObservableCollection<ObjectTreeNode> ObjectRoots { get; } = [];
     public ObservableCollection<ObjectBreadcrumbItem> ObjectBreadcrumbs { get; } = [];
@@ -381,6 +389,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public AsyncCommand RestartCommand { get; }
     public RelayCommand RefreshProcessesCommand { get; }
     public RelayCommand ClearSearchCommand { get; }
+    public RelayCommand ClearObjectChildrenSearchCommand { get; }
+    public RelayCommand ClearObjectTreeSearchCommand { get; }
     public RelayCommand ClearFiltersCommand { get; }
     public RelayCommand ResetBaselineCommand { get; }
     public RelayCommand TogglePinCommand { get; }
@@ -579,6 +589,42 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             }
             ScheduleSearchFilter();
         }
+    }
+    public string ObjectChildrenSearchText
+    {
+        get => _objectChildrenSearchText;
+        set
+        {
+            if (SetProperty(ref _objectChildrenSearchText, value ?? ""))
+                ApplyObjectChildrenSearch();
+        }
+    }
+    public string ObjectTreeSearchText
+    {
+        get => _objectTreeSearchText;
+        set
+        {
+            var next = value ?? "";
+            var wasSearching = !string.IsNullOrWhiteSpace(_objectTreeSearchText);
+            if (!SetProperty(ref _objectTreeSearchText, next))
+                return;
+            var isSearching = !string.IsNullOrWhiteSpace(next);
+            if (!wasSearching && isSearching)
+                CaptureObjectTreeExpansion();
+            else if (wasSearching && !isSearching)
+                RestoreObjectTreeExpansion();
+            ApplyObjectTreeSearch();
+        }
+    }
+    public string ObjectChildrenSearchResultLabel
+    {
+        get => _objectChildrenSearchResultLabel;
+        private set => SetProperty(ref _objectChildrenSearchResultLabel, value);
+    }
+    public string ObjectTreeSearchResultLabel
+    {
+        get => _objectTreeSearchResultLabel;
+        private set => SetProperty(ref _objectTreeSearchResultLabel, value);
     }
     public string PageLabel { get => _pageLabel; private set => SetProperty(ref _pageLabel, value); }
     public string FilterResultLabel { get => _filterResultLabel; private set => SetProperty(ref _filterResultLabel, value); }
@@ -1239,7 +1285,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             if (_currentScope is not null)
                 await LoadScopeAsync(_currentScope);
             if (_currentObject is not null)
-                await LoadObjectContextAsync(_currentObject);
+                await LoadObjectContextAsync(_currentObject, preserveSearches: true);
         }
         catch (Exception exception)
         {
@@ -1848,13 +1894,15 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _navigationIndex = Math.Max(-1, _navigationIndex - overflow);
     }
 
-    private async Task LoadObjectContextAsync(NavigationContext context)
+    private async Task LoadObjectContextAsync(NavigationContext context, bool preserveSearches = false)
     {
         _detailCts?.Cancel();
         _detailCts?.Dispose();
         _detailCts = CancellationTokenSource.CreateLinkedTokenSource(_connectionCts?.Token ?? CancellationToken.None);
         var token = _detailCts.Token;
         var generation = Interlocked.Increment(ref _detailGeneration);
+        if (!preserveSearches)
+            ResetObjectSearches();
         _currentObject = context;
         UpdateObjectNavigationPresentation(context);
         var row = context.Row;
@@ -1873,6 +1921,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         SelectedShallowSize = FormatBytes(row.ShallowSize);
         SelectedPayloadSize = row.PayloadSize is long payload ? FormatBytes(payload) : "—";
         ObjectChildren.Clear();
+        FilteredObjectChildren.Clear();
         ObjectRoots.Clear();
         ClassMembers.Clear();
         ClassTree.Clear();
@@ -1972,6 +2021,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             SelectedObjectStatus = "Object expired · refresh the scope and select it again";
             ObjectRoots.Clear();
             ObjectChildren.Clear();
+            FilteredObjectChildren.Clear();
             RefreshObjectHandleReferences();
         }
         catch (Exception exception)
@@ -2076,7 +2126,10 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         var total = result["total"]?.GetValue<int>() ?? items.Count;
         var isCurrentRoot = ObjectRoots.FirstOrDefault() == parent;
         if (clear && isCurrentRoot)
+        {
             ObjectChildren.Clear();
+            FilteredObjectChildren.Clear();
+        }
 
         foreach (var item in items)
         {
@@ -2144,6 +2197,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
         if (parent.Children.Count == 0)
             parent.Children.Add(StatusNode("No safe child values", parent));
+        ApplyObjectChildrenSearch();
+        ApplyObjectTreeSearch();
     }
 
     private async Task LoadMoreObjectChildrenAsync(ObjectTreeNode loadMore)
@@ -3456,6 +3511,111 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         OnPropertyChanged(nameof(VariableListStatusMessage));
     }
 
+    private void ApplyObjectChildrenSearch()
+    {
+        var query = ObjectChildrenSearchText.Trim();
+        var visible = string.IsNullOrEmpty(query)
+            ? ObjectChildren.ToList()
+            : ObjectChildren
+                .Where(row => row.Name.Contains(query, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        Replace(FilteredObjectChildren, visible);
+        ObjectChildrenSearchResultLabel = string.IsNullOrEmpty(query)
+            ? $"{ObjectChildren.Count:N0} loaded names"
+            : $"{visible.Count:N0} of {ObjectChildren.Count:N0} names match";
+    }
+
+    private void ApplyObjectTreeSearch()
+    {
+        var query = ObjectTreeSearchText.Trim();
+        var matchCount = 0;
+        foreach (var root in ObjectRoots)
+        {
+            if (string.IsNullOrEmpty(query))
+            {
+                ResetObjectTreeSearchState(root);
+                continue;
+            }
+
+            ApplyObjectTreeSearch(root, query, ref matchCount, isRoot: true);
+        }
+        var loadedCount = ObjectRoots.Sum(CountObjectTreeValues);
+        ObjectTreeSearchResultLabel = string.IsNullOrEmpty(query)
+            ? $"{loadedCount:N0} loaded names"
+            : $"{matchCount:N0} of {loadedCount:N0} loaded names match";
+    }
+
+    private static bool ApplyObjectTreeSearch(ObjectTreeNode node, string query, ref int matchCount, bool isRoot = false)
+    {
+        var isObject = node.Kind == ObjectNodeKind.Object && node.Value is not null;
+        var selfMatches = isObject && node.Value!.Name.Contains(query, StringComparison.OrdinalIgnoreCase);
+        if (selfMatches)
+            matchCount++;
+        var descendantMatches = false;
+        foreach (var child in node.Children)
+            descendantMatches |= ApplyObjectTreeSearch(child, query, ref matchCount);
+
+        var branchMatches = selfMatches || descendantMatches;
+        node.IsSearchMatch = selfMatches;
+        node.IsSearchVisible = isRoot || branchMatches;
+        if (descendantMatches)
+            node.IsExpanded = true;
+        return branchMatches;
+    }
+
+    private static void ResetObjectTreeSearchState(ObjectTreeNode node)
+    {
+        node.IsSearchVisible = true;
+        node.IsSearchMatch = false;
+        foreach (var child in node.Children)
+            ResetObjectTreeSearchState(child);
+    }
+
+    private static int CountObjectTreeValues(ObjectTreeNode node) =>
+        (node.Kind == ObjectNodeKind.Object && node.Value is not null ? 1 : 0)
+        + node.Children.Sum(CountObjectTreeValues);
+
+    private void CaptureObjectTreeExpansion()
+    {
+        _objectTreeExpansionBeforeSearch.Clear();
+        foreach (var root in ObjectRoots)
+            CaptureObjectTreeExpansion(root);
+    }
+
+    private void CaptureObjectTreeExpansion(ObjectTreeNode node)
+    {
+        _objectTreeExpansionBeforeSearch[ObjectTreeExpansionKey(node)] = node.IsExpanded;
+        foreach (var child in node.Children)
+            CaptureObjectTreeExpansion(child);
+    }
+
+    private void RestoreObjectTreeExpansion()
+    {
+        foreach (var root in ObjectRoots)
+            RestoreObjectTreeExpansion(root);
+        _objectTreeExpansionBeforeSearch.Clear();
+    }
+
+    private void RestoreObjectTreeExpansion(ObjectTreeNode node)
+    {
+        if (_objectTreeExpansionBeforeSearch.TryGetValue(ObjectTreeExpansionKey(node), out var isExpanded))
+            node.IsExpanded = isExpanded;
+        foreach (var child in node.Children)
+            RestoreObjectTreeExpansion(child);
+    }
+
+    private static string ObjectTreeExpansionKey(ObjectTreeNode node) =>
+        $"{node.Kind}\u001f{node.Depth}\u001f{node.Path}\u001f{node.Label}";
+
+    private void ResetObjectSearches()
+    {
+        ObjectChildrenSearchText = "";
+        ObjectTreeSearchText = "";
+        _objectTreeExpansionBeforeSearch.Clear();
+        ApplyObjectChildrenSearch();
+        ApplyObjectTreeSearch();
+    }
+
     private void ScheduleSearchFilter()
     {
         _searchDebounceCts?.Cancel();
@@ -3585,6 +3745,14 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             return;
         _clipboardService.SetText(_currentObject.Row.Address);
         Status = "Object address copied";
+    }
+
+    public void CopyDisplayedValue(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return;
+        _clipboardService.SetText(value);
+        Status = "Value copied";
     }
 
     private void CopyEnvironment()
@@ -3723,7 +3891,9 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         Variables.Clear();
         FilteredVariables.Clear();
         ObjectChildren.Clear();
+        FilteredObjectChildren.Clear();
         ObjectRoots.Clear();
+        ResetObjectSearches();
         ClassMembers.Clear();
         ClassTree.Clear();
         PinnedObjects.Clear();
@@ -4130,6 +4300,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         ObjectRoots.Clear();
         ObjectBreadcrumbs.Clear();
         ObjectChildren.Clear();
+        FilteredObjectChildren.Clear();
+        ResetObjectSearches();
         ClassTree.Clear();
         ClassMembers.Clear();
         ClearArrayDetails();
