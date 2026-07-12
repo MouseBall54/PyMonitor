@@ -14,8 +14,10 @@ $dotnet = if ($env:DOTNET_EXE) { $env:DOTNET_EXE } else { (Get-Command dotnet -E
 $python = if ($env:PYTHON_EXECUTABLE) { $env:PYTHON_EXECUTABLE } else { (Get-Command python -ErrorAction Stop).Source }
 [xml]$props = Get-Content -LiteralPath (Join-Path $root "Directory.Build.props")
 $version = $props.Project.PropertyGroup.Version
+$productName = $props.Project.PropertyGroup.Product
+$companyName = $props.Project.PropertyGroup.Company
 $artifactRoot = if ($OutputDirectory) { [IO.Path]::GetFullPath($OutputDirectory) } else { Join-Path $root "artifacts" }
-$releaseName = "PyRuntimeInspector-$version-$RuntimeIdentifier"
+$releaseName = "PyMonitor-$version-$RuntimeIdentifier"
 $releaseDirectory = Join-Path $artifactRoot $releaseName
 $archivePath = Join-Path $artifactRoot "$releaseName.zip"
 
@@ -60,7 +62,11 @@ Copy-Item -LiteralPath (Join-Path $root "docs") -Destination $releaseDirectory -
 Copy-Item -LiteralPath (Join-Path $root "agent\pyproject.toml") -Destination (Join-Path $releaseDirectory "agent")
 
 $verification = & (Join-Path $PSScriptRoot "Test-PortableRelease.ps1") `
-    -ReleaseDirectory $releaseDirectory -ExpectedVersion $version -PythonExecutable $python
+    -ReleaseDirectory $releaseDirectory `
+    -ExpectedVersion $version `
+    -ExpectedProductName $productName `
+    -ExpectedCompanyName $companyName `
+    -PythonExecutable $python
 
 $archive = $null
 if (-not $SkipArchive) {

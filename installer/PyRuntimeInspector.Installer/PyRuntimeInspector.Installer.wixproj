@@ -3,8 +3,8 @@
     <OutputType>Package</OutputType>
     <Platform>x64</Platform>
     <InstallerPlatform>x64</InstallerPlatform>
-    <PublishDir Condition="'$(PublishDir)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\PyRuntimeInspector-$(Version)-win-x64</PublishDir>
-    <OutputName>PyRuntimeInspector-$(Version)-win-x64</OutputName>
+    <PublishDir Condition="'$(PublishDir)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\PyMonitor-$(Version)-win-x64</PublishDir>
+    <OutputName>PyMonitor-$(Version)-win-x64</OutputName>
     <DefineConstants>$(DefineConstants);PublishDir=$(PublishDir);ProductVersion=$(Version);RepositoryRoot=$(MSBuildThisFileDirectory)..\..</DefineConstants>
   </PropertyGroup>
 </Project>

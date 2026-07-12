@@ -1,8 +1,9 @@
-# Phase 7 release hardening
+# PyMonitor release hardening
 
 Phase 7 turns the Phase 0-6 implementation into reproducible Windows release
-artifacts. The product version is `0.1.0` and is shared by the .NET assemblies,
-the Python package, and the runtime handshake.
+artifacts. PyMonitor is developed by 박영문. The product version is `26.7.11`
+and is shared by the .NET assemblies, the Python package, and the runtime
+handshake.
 
 ## Portable release
 
@@ -18,6 +19,9 @@ application, bundles `agent/`, `samples/`, the README and docs, rejects PDB,
 PYC and `__pycache__` files, creates a ZIP, and writes a SHA-256 sidecar.
 The extracted directory is intentionally self-contained; the Python Agent is
 loaded from its sibling `agent` directory and is not installed globally.
+The public artifacts are named `PyMonitor-26.7.11-win-x64.zip` and
+`PyMonitor-26.7.11-win-x64.zip.sha256`; the application executable is
+`PyMonitor.exe`.
 
 ## Compatibility matrix
 
@@ -56,6 +60,38 @@ Build the portable directory first, then run:
 WiX Toolset SDK 5.0.2 creates a per-machine x64 MSI with an embedded cabinet,
 Add/Remove Programs icon, major-upgrade protection, and Start Menu shortcut.
 The MSI and its SHA-256 sidecar are written below `artifacts/installer/`.
+Their public names are `PyMonitor-26.7.11-win-x64.msi` and
+`PyMonitor-26.7.11-win-x64.msi.sha256`. `Build-Installer.ps1` also verifies the
+sidecar, MSI product metadata, and an administrative extraction. The verifier
+can be run directly when troubleshooting packaging:
+
+```powershell
+.\scripts\Test-InstallerRelease.ps1 `
+  -InstallerPath .\artifacts\installer\PyMonitor-26.7.11-win-x64.msi
+```
+
+Run the destructive lifecycle check only in an elevated PowerShell session on
+a disposable or explicitly approved Windows machine. It refuses to start if
+either test product is already installed, installs the previous MSI, upgrades
+it in place, verifies the machine-wide files and shortcut, then uninstalls the
+current product and checks that product registration, files, shortcuts, and the
+installer-owned registry value are gone:
+
+```powershell
+.\scripts\Test-InstallerLifecycle.ps1 `
+  -PreviousInstallerPath .\artifacts\phase8\installer\PyRuntimeInspector-0.1.0-win-x64.msi `
+  -InstallerPath .\artifacts\installer\PyMonitor-26.7.11-win-x64.msi
+```
+
+This install → upgrade → uninstall lifecycle has not been run in the current
+non-elevated desktop session and remains a pending manual release gate. MSI
+metadata, hash, and administrative extraction checks do not replace it.
+
+Run the [UX verification checklist](ux-verification.md) against both the
+portable executable and the installed shortcut. In particular, confirm the
+default Light theme, persisted settings, Quick Attach behavior in a real
+`cmd.exe` Python REPL, selection-driven Inspect views, keyboard access, and the
+PyMonitor/version/developer metadata in About and Windows Apps & Features.
 
 ## Authenticode signing
 

@@ -8,7 +8,7 @@ param(
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $portable = & (Join-Path $PSScriptRoot "Build-PortableRelease.ps1") -SkipArchive -SkipTests:$SkipTests
-$exe = Join-Path $portable.ReleaseDirectory "PyRuntimeInspector.exe"
+$exe = Join-Path $portable.ReleaseDirectory "PyMonitor.exe"
 
 if ($CertificatePath) {
     if (-not $CertificatePassword) { throw "CertificatePassword is required when CertificatePath is set." }
@@ -16,7 +16,7 @@ if ($CertificatePath) {
         -Path $exe -CertificatePath $CertificatePath -CertificatePassword $CertificatePassword
 }
 
-$archivePath = Join-Path $root "artifacts\PyRuntimeInspector-$($portable.Version)-win-x64.zip"
+$archivePath = Join-Path $root "artifacts\PyMonitor-$($portable.Version)-win-x64.zip"
 $archive = & (Join-Path $PSScriptRoot "New-PortableArchive.ps1") `
     -ReleaseDirectory $portable.ReleaseDirectory -ArchivePath $archivePath
 $installer = & (Join-Path $PSScriptRoot "Build-Installer.ps1") `
