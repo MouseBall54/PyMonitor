@@ -17,6 +17,12 @@ $env:DOTNET_EXE = 'C:\path\to\dotnet.exe' # only when dotnet is not on PATH
 The script runs Python and .NET tests, publishes a self-contained `win-x64`
 application, bundles `agent/`, `samples/`, the README and docs, rejects PDB,
 PYC and `__pycache__` files, creates a ZIP, and writes a SHA-256 sidecar.
+Before accepting the portable directory, the verifier compares the complete
+`agent/pyruntime_inspector_agent` Python source file set with the repository
+and requires every corresponding file SHA-256 to match. A same-version folder
+left by an earlier build therefore fails verification if an Agent module is
+missing, extra, or stale; do not publish or test from an older same-named
+directory after a newer release has been built elsewhere.
 The extracted directory is intentionally self-contained; the Python Agent is
 loaded from its sibling `agent` directory and is not installed globally.
 Quick Attach, Live Attach, and Managed Launch do not write bytecode caches into

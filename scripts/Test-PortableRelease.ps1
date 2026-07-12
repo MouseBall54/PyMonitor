@@ -10,6 +10,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $releaseRoot = (Resolve-Path -LiteralPath $ReleaseDirectory).Path
+$repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $requiredFiles = @(
     "$ExpectedProductName.exe",
     "$ExpectedProductName.dll",
@@ -31,6 +32,61 @@ foreach ($relativePath in $requiredFiles) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Portable release is missing required file: $relativePath"
     }
+}
+
+function Get-PythonFileMap([string]$Root) {
+    if (-not (Test-Path -LiteralPath $Root -PathType Container)) {
+        throw "Python Agent package directory is missing: $Root"
+    }
+
+    $files = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($file in Get-ChildItem -LiteralPath $Root -Recurse -File -Filter *.py) {
+        $relativePath = [IO.Path]::GetRelativePath($Root, $file.FullName)
+        $files.Add($relativePath, $file.FullName)
+    }
+    return $files
+}
+
+$sourceAgentRoot = Join-Path $repositoryRoot "agent\pyruntime_inspector_agent"
+$releaseAgentRoot = Join-Path $releaseRoot "agent\pyruntime_inspector_agent"
+$sourceAgentFiles = Get-PythonFileMap $sourceAgentRoot
+$releaseAgentFiles = Get-PythonFileMap $releaseAgentRoot
+if ($sourceAgentFiles.Count -eq 0) {
+    throw "Repository Python Agent package contains no Python source files: $sourceAgentRoot"
+}
+
+$missingAgentFiles = @(
+    $sourceAgentFiles.Keys |
+        Where-Object { -not $releaseAgentFiles.ContainsKey($_) } |
+        Sort-Object
+)
+$extraAgentFiles = @(
+    $releaseAgentFiles.Keys |
+        Where-Object { -not $sourceAgentFiles.ContainsKey($_) } |
+        Sort-Object
+)
+if ($missingAgentFiles.Count -gt 0 -or $extraAgentFiles.Count -gt 0) {
+    $differences = @()
+    if ($missingAgentFiles.Count -gt 0) {
+        $differences += "missing: $($missingAgentFiles -join ', ')"
+    }
+    if ($extraAgentFiles.Count -gt 0) {
+        $differences += "extra: $($extraAgentFiles -join ', ')"
+    }
+    throw "Portable release bundled Agent file set does not match repository source ($($differences -join '; '))."
+}
+
+$mismatchedAgentFiles = @(
+    foreach ($relativePath in $sourceAgentFiles.Keys) {
+        $sourceHash = (Get-FileHash -LiteralPath $sourceAgentFiles[$relativePath] -Algorithm SHA256).Hash
+        $releaseHash = (Get-FileHash -LiteralPath $releaseAgentFiles[$relativePath] -Algorithm SHA256).Hash
+        if ($sourceHash -ne $releaseHash) {
+            $relativePath
+        }
+    }
+)
+if ($mismatchedAgentFiles.Count -gt 0) {
+    throw "Portable release bundled Agent SHA-256 does not match repository source: $($mismatchedAgentFiles -join ', ')"
 }
 
 $exe = Get-Item -LiteralPath (Join-Path $releaseRoot "$ExpectedProductName.exe")
@@ -97,5 +153,6 @@ if ($unexpected) {
     ProductName = $exe.VersionInfo.ProductName
     CompanyName = $exe.VersionInfo.CompanyName
     AgentVersion = $actualVersion.Trim()
+    AgentFileCount = $sourceAgentFiles.Count
     FileCount = (Get-ChildItem -LiteralPath $releaseRoot -Recurse -File).Count
 }
