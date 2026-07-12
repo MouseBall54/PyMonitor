@@ -186,6 +186,9 @@ signed tagged workflow supplies the assets consumed by the in-app updater.
 
 ## GitHub release operator runbook
 
+실제 배포 시 복사해서 실행할 수 있는 짧은 순서는
+[내부 GitHub Release 체크리스트](internal-release-checklist.md)를 참고합니다.
+
 ### One-time repository configuration
 
 1. Keep the least-privilege `permissions: contents: write` grant in

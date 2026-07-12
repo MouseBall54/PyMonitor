@@ -614,6 +614,7 @@ wrapper는 다음 순서로 동작합니다.
 - [Phase 5 Advanced Arrays](docs/phase5-arrays.md)
 - [Phase 6 Execution Monitoring](docs/phase6-execution-monitoring.md)
 - [Phase 7 Release Hardening](docs/release.md)
+- [Internal GitHub Release Checklist](docs/internal-release-checklist.md)
 - [Phase 8 GC-tracked Objects](docs/phase8-gc-objects.md)
 - [Quick Attach and REPL Globals](docs/quick-attach.md)
 - [UX Workflow and Verification](docs/ux-verification.md)
