@@ -26,7 +26,7 @@ public sealed class InspectorSessionTests
         {
             var stream = target.GetStream();
             var hello = await ProtocolFraming.ReadAsync(stream, timeout.Token);
-            await WriteSuccessAsync(stream, hello, new JsonObject(), timeout.Token);
+            await WriteSuccessAsync(stream, hello, CompatibleHelloResult(), timeout.Token);
             var runtime = await ProtocolFraming.ReadAsync(stream, timeout.Token);
             await WriteSuccessAsync(stream, runtime, new JsonObject { ["pid"] = Environment.ProcessId }, timeout.Token);
 
@@ -70,7 +70,7 @@ public sealed class InspectorSessionTests
         {
             var stream = target.GetStream();
             var hello = await ProtocolFraming.ReadAsync(stream, timeout.Token);
-            await WriteSuccessAsync(stream, hello, new JsonObject(), timeout.Token);
+            await WriteSuccessAsync(stream, hello, CompatibleHelloResult(), timeout.Token);
             var runtime = await ProtocolFraming.ReadAsync(stream, timeout.Token);
             await WriteSuccessAsync(stream, runtime, new JsonObject { ["pid"] = Environment.ProcessId }, timeout.Token);
 
@@ -93,6 +93,36 @@ public sealed class InspectorSessionTests
         Assert.Equal(0, await targetTask.WaitAsync(timeout.Token));
     }
 
+    [Fact]
+    public async Task AttachRejectsAgentWithoutCurrentBootstrapCapabilityBeforeRuntimeRequest()
+    {
+        var port = ReservePort();
+        await using var session = new InspectorSession();
+        using var target = new TcpClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        var attachTask = session.AttachAsync(port, "test-token", expectedPid: null, timeout.Token);
+        await target.ConnectAsync(IPAddress.Loopback, port, timeout.Token);
+        var targetTask = Task.Run(async () =>
+        {
+            var stream = target.GetStream();
+            var hello = await ProtocolFraming.ReadAsync(stream, timeout.Token);
+            await WriteSuccessAsync(stream, hello, new JsonObject
+            {
+                ["agentVersion"] = ReplBootstrap.ExpectedAgentVersion,
+            }, timeout.Token);
+            var buffer = new byte[1];
+            return await stream.ReadAsync(buffer, timeout.Token);
+        });
+
+        var exception = await Assert.ThrowsAsync<RemoteInspectionException>(async () => await attachTask);
+
+        Assert.Equal("INCOMPATIBLE_AGENT", exception.Code);
+        Assert.Contains("bootstrap ABI unknown", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(session.IsConnected);
+        Assert.Equal(0, await targetTask.WaitAsync(timeout.Token));
+    }
+
     private static Task WriteSuccessAsync(
         Stream stream,
         ProtocolFrame request,
@@ -104,6 +134,12 @@ public sealed class InspectorSessionTests
             ["ok"] = true,
             ["result"] = result,
         }, cancellationToken: cancellationToken);
+
+    private static JsonObject CompatibleHelloResult() => new()
+    {
+        ["agentVersion"] = ReplBootstrap.ExpectedAgentVersion,
+        ["bootstrapAbi"] = ReplBootstrap.ExpectedBootstrapAbi,
+    };
 
     private static int ReservePort()
     {

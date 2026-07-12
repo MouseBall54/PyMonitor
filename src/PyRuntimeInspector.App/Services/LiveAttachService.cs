@@ -179,18 +179,25 @@ finish({"ok": True}, 0)
     {
         var agentDirectory = Convert.ToBase64String(Encoding.UTF8.GetBytes(Path.GetFullPath(options.AgentDirectory)));
         var token = Convert.ToBase64String(Encoding.UTF8.GetBytes(options.InspectorToken));
+        var expectedVersion = Convert.ToBase64String(Encoding.UTF8.GetBytes(ReplBootstrap.ExpectedAgentVersion));
         return $$"""
 import base64
+import os
+import runpy
 import sys
 
 _agent_directory = base64.b64decode("{{agentDirectory}}").decode("utf-8")
+_bootstrap_path = os.path.join(_agent_directory, "pyruntime_inspector_agent", "bootstrap.py")
 _pymonitor_previous_dont_write_bytecode = sys.dont_write_bytecode
 try:
     sys.dont_write_bytecode = True
     if _agent_directory not in sys.path:
         sys.path.insert(0, _agent_directory)
-    from pyruntime_inspector_agent import start_inspector as _start_inspector
-    _start_inspector(
+    _start_bootstrap = runpy.run_path(_bootstrap_path, run_name="_pymonitor_fresh_bootstrap")["start_bootstrap"]
+    _start_bootstrap(
+        agent_directory=_agent_directory,
+        expected_version=base64.b64decode("{{expectedVersion}}").decode("utf-8"),
+        expected_bootstrap_abi={{ReplBootstrap.ExpectedBootstrapAbi}},
         host="127.0.0.1",
         port={{options.InspectorPort}},
         token=base64.b64decode("{{token}}").decode("utf-8"),
@@ -199,7 +206,7 @@ try:
 finally:
     sys.dont_write_bytecode = _pymonitor_previous_dont_write_bytecode
     del _pymonitor_previous_dont_write_bytecode
-del _agent_directory, _start_inspector
+del _agent_directory, _bootstrap_path, _start_bootstrap
 """;
     }
 

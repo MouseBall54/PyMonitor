@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 
+from pyruntime_inspector_agent import __bootstrap_abi__ as BOOTSTRAP_ABI
 from pyruntime_inspector_agent import __version__ as AGENT_VERSION
 from pyruntime_inspector_agent.protocol import read_frame, write_frame
 
@@ -128,6 +129,8 @@ def run_session(python_executable, duration_seconds, memory_growth_limit, exerci
         hello, _ = client.request("session.hello", {"token": token})
         if hello["agentVersion"] != AGENT_VERSION:
             raise AssertionError(f"Unexpected Agent version: {hello['agentVersion']}")
+        if hello["bootstrapAbi"] != BOOTSTRAP_ABI:
+            raise AssertionError(f"Unexpected bootstrap ABI: {hello['bootstrapAbi']}")
 
         runtime, _ = client.request("runtime.getInfo")
         if runtime["implementationName"] != "cpython":

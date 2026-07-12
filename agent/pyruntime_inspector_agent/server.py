@@ -12,6 +12,7 @@ from .runtime_info import get_runtime_info
 from .safe_objects import SafeObjectInspector
 
 AGENT_VERSION = "26.7.11"
+BOOTSTRAP_ABI = 2
 _MAX_REQUEST_ID_LENGTH = 128
 _MAX_METHOD_LENGTH = 128
 _MAX_RESULT_STRING_CHARS = 4096
@@ -19,6 +20,10 @@ _MAX_RESULT_TEXT_CHARS = 256 * 1024
 _MAX_RESULT_COLLECTION_ITEMS = 2000
 _active_agent = None
 _active_agent_lock = threading.Lock()
+
+
+class ActiveAgentConflictError(RuntimeError):
+    code = "ACTIVE_AGENT_CONFLICT"
 
 
 class InspectorAgent:
@@ -55,6 +60,15 @@ class InspectorAgent:
     @property
     def is_stopped(self):
         return self._stopped.is_set()
+
+    def matches_connection(self, host, port, token, attach_mode):
+        return (
+            host == self._host
+            and port == self._port
+            and type(token) is str
+            and hmac.compare_digest(token, self._token)
+            and attach_mode == self._attach_mode
+        )
 
     def _run(self):
         try:
@@ -97,7 +111,11 @@ class InspectorAgent:
                     self._send_error(sock, request_id, "AUTH_FAILED", "The session token is invalid.")
                     return
                 authenticated = True
-                self._send_result(sock, request_id, {"protocolVersion": PROTOCOL_VERSION, "agentVersion": AGENT_VERSION})
+                self._send_result(sock, request_id, {
+                    "protocolVersion": PROTOCOL_VERSION,
+                    "agentVersion": AGENT_VERSION,
+                    "bootstrapAbi": BOOTSTRAP_ABI,
+                })
                 continue
             try:
                 result, binary, detach = self._dispatch(method, request.get("params", {}))
@@ -324,8 +342,19 @@ def start_inspector(host=None, port=None, token=None, attach_mode=None):
     selected_attach_mode = attach_mode or os.environ.get("PY_INSPECTOR_ATTACH_MODE", "cooperative")
     if raw_port is None or selected_token is None:
         raise ValueError("PY_INSPECTOR_PORT and PY_INSPECTOR_TOKEN are required.")
+    selected_port = int(raw_port)
     with _active_agent_lock:
         if _active_agent is not None and not _active_agent.is_stopped:
+            if not _active_agent.matches_connection(
+                selected_host,
+                selected_port,
+                selected_token,
+                selected_attach_mode,
+            ):
+                raise ActiveAgentConflictError(
+                    "A PyMonitor Agent is already active with different connection settings. "
+                    "Detach its current PyMonitor session or fully restart the Python debuggee, then try again."
+                )
             return _active_agent
-        _active_agent = InspectorAgent(selected_host, int(raw_port), selected_token, selected_attach_mode).start()
+        _active_agent = InspectorAgent(selected_host, selected_port, selected_token, selected_attach_mode).start()
         return _active_agent

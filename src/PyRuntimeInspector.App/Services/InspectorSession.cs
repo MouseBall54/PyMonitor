@@ -35,7 +35,20 @@ public sealed class InspectorSession(TimeSpan? requestTimeout = null) : IInspect
         _client = new InspectorClient(_socket.GetStream(), requestTimeout);
         try
         {
-            await _client.HelloAsync(token, cancellationToken);
+            var helloFrame = await _client.HelloAsync(token, cancellationToken);
+            var hello = helloFrame.Header["result"]?.AsObject()
+                ?? throw new ProtocolException("session.hello returned no result.");
+            var agentVersion = hello["agentVersion"]?.GetValue<string>();
+            var bootstrapAbi = hello["bootstrapAbi"]?.GetValue<int?>();
+            if (!string.Equals(agentVersion, ReplBootstrap.ExpectedAgentVersion, StringComparison.Ordinal)
+                || bootstrapAbi != ReplBootstrap.ExpectedBootstrapAbi)
+            {
+                throw new RemoteInspectionException(
+                    "INCOMPATIBLE_AGENT",
+                    $"The target loaded Agent {agentVersion ?? "unknown"} with bootstrap ABI "
+                    + $"{bootstrapAbi?.ToString() ?? "unknown"}; expected Agent {ReplBootstrap.ExpectedAgentVersion} "
+                    + $"with bootstrap ABI {ReplBootstrap.ExpectedBootstrapAbi}. Fully restart the Python debuggee and attach again.");
+            }
             var runtimeFrame = await _client.RequestAsync("runtime.getInfo", cancellationToken: cancellationToken);
             var runtime = runtimeFrame.Header["result"]?.AsObject()
                 ?? throw new ProtocolException("runtime.getInfo returned no result.");

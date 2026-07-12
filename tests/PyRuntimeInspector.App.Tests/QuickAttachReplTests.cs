@@ -3,6 +3,7 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using PyRuntimeInspector.App.Services;
 using PyRuntimeInspector.App.ViewModels;
@@ -171,6 +172,166 @@ public sealed class QuickAttachReplTests
         {
             socket?.Dispose();
             listener.Stop();
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync();
+            process.Dispose();
+            await Task.WhenAll(stdout, stderr);
+            if (Directory.Exists(temporaryRoot))
+                Directory.Delete(temporaryRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ReplBootstrapReportsSamePathPreCapabilityAgentInsteadOfWaitingForTimeout()
+    {
+        var root = FindRepositoryRoot();
+        var temporaryRoot = Path.Combine(Path.GetTempPath(), "PyRuntimeInspector.Tests", Guid.NewGuid().ToString("N"));
+        var agentDirectory = CopyAgentSources(Path.Combine(root, "agent"), temporaryRoot);
+        var port = ReservePort();
+        var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+        var process = StartRepl(root);
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        await using var session = new InspectorSession(TimeSpan.FromSeconds(5));
+        try
+        {
+            var expectedInitPath = Path.Combine(agentDirectory, "pyruntime_inspector_agent", "__init__.py");
+            await process.StandardInput.WriteLineAsync(
+                "import sys, types; _stale_agent = types.ModuleType('pyruntime_inspector_agent'); "
+                + $"_stale_agent.__version__ = '26.7.11'; _stale_agent.__file__ = {JsonSerializer.Serialize(expectedInitPath)}; "
+                + "sys.modules['pyruntime_inspector_agent'] = _stale_agent");
+            await process.StandardInput.FlushAsync();
+
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var attach = session.AttachAsync(port, token, process.Id, timeout.Token);
+            await process.StandardInput.WriteLineAsync(ReplBootstrap.Build(agentDirectory, port, token));
+            await process.StandardInput.FlushAsync();
+
+            var exception = await Assert.ThrowsAsync<RemoteInspectionException>(async () =>
+            {
+                await attach;
+            });
+            Assert.Equal("STALE_AGENT", exception.Code);
+            Assert.Contains("restart the Python debuggee", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("bootstrap ABI unknown", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.False(process.HasExited);
+
+            await process.StandardInput.WriteLineAsync("sys.modules.pop('pyruntime_inspector_agent', None); exit()");
+            await process.StandardInput.FlushAsync();
+            await process.WaitForExitAsync(timeout.Token);
+            Assert.Equal(0, process.ExitCode);
+        }
+        finally
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync();
+            process.Dispose();
+            await Task.WhenAll(stdout, stderr);
+            if (Directory.Exists(temporaryRoot))
+                Directory.Delete(temporaryRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ReplBootstrapReportsPartialStalePackageCacheBeforeImportingIt()
+    {
+        var root = FindRepositoryRoot();
+        var temporaryRoot = Path.Combine(Path.GetTempPath(), "PyRuntimeInspector.Tests", Guid.NewGuid().ToString("N"));
+        var agentDirectory = CopyAgentSources(Path.Combine(root, "agent"), temporaryRoot);
+        var port = ReservePort();
+        var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+        var process = StartRepl(root);
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        await using var session = new InspectorSession(TimeSpan.FromSeconds(5));
+        try
+        {
+            await process.StandardInput.WriteLineAsync(
+                "import sys, types; _stale_server = types.ModuleType('pyruntime_inspector_agent.server'); "
+                + "_stale_server.__file__ = 'stale-agent/server.py'; "
+                + "sys.modules['pyruntime_inspector_agent.server'] = _stale_server");
+            await process.StandardInput.FlushAsync();
+
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var attach = session.AttachAsync(port, token, process.Id, timeout.Token);
+            await process.StandardInput.WriteLineAsync(ReplBootstrap.Build(agentDirectory, port, token));
+            await process.StandardInput.FlushAsync();
+
+            var exception = await Assert.ThrowsAsync<RemoteInspectionException>(async () =>
+            {
+                await attach;
+            });
+            Assert.Equal("STALE_AGENT", exception.Code);
+            Assert.Contains("partial PyMonitor Agent module cache", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.False(process.HasExited);
+
+            await process.StandardInput.WriteLineAsync("sys.modules.pop('pyruntime_inspector_agent.server', None); exit()");
+            await process.StandardInput.FlushAsync();
+            await process.WaitForExitAsync(timeout.Token);
+            Assert.Equal(0, process.ExitCode);
+        }
+        finally
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync();
+            process.Dispose();
+            await Task.WhenAll(stdout, stderr);
+            if (Directory.Exists(temporaryRoot))
+                Directory.Delete(temporaryRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ReplBootstrapRejectsDifferentConnectionWhileAgentIsActive()
+    {
+        var root = FindRepositoryRoot();
+        var temporaryRoot = Path.Combine(Path.GetTempPath(), "PyRuntimeInspector.Tests", Guid.NewGuid().ToString("N"));
+        var agentDirectory = CopyAgentSources(Path.Combine(root, "agent"), temporaryRoot);
+        var firstPort = ReservePort();
+        var secondPort = ReservePort();
+        while (secondPort == firstPort)
+            secondPort = ReservePort();
+        var firstToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+        var secondToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+        var process = StartRepl(root);
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        await using var firstSession = new InspectorSession(TimeSpan.FromSeconds(5));
+        await using var secondSession = new InspectorSession(TimeSpan.FromSeconds(5));
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var firstAttach = firstSession.AttachAsync(firstPort, firstToken, process.Id, timeout.Token);
+            await process.StandardInput.WriteLineAsync(ReplBootstrap.Build(agentDirectory, firstPort, firstToken));
+            await process.StandardInput.FlushAsync();
+            var firstRuntime = await firstAttach;
+            Assert.Equal(process.Id, firstRuntime["pid"]!.GetValue<int>());
+
+            var secondAttach = secondSession.AttachAsync(secondPort, secondToken, process.Id, timeout.Token);
+            await process.StandardInput.WriteLineAsync(ReplBootstrap.Build(agentDirectory, secondPort, secondToken));
+            await process.StandardInput.FlushAsync();
+
+            var exception = await Assert.ThrowsAsync<RemoteInspectionException>(async () =>
+            {
+                await secondAttach;
+            });
+            Assert.Equal("ACTIVE_AGENT_CONFLICT", exception.Code);
+            Assert.Contains("already active", exception.Message, StringComparison.OrdinalIgnoreCase);
+
+            var runtimeFrame = await firstSession.RequestAsync("runtime.getInfo", cancellationToken: timeout.Token);
+            Assert.Equal(process.Id, Result(runtimeFrame)["pid"]!.GetValue<int>());
+            await firstSession.DetachAsync();
+
+            await process.StandardInput.WriteLineAsync("exit()");
+            await process.StandardInput.FlushAsync();
+            await process.WaitForExitAsync(timeout.Token);
+            Assert.Equal(0, process.ExitCode);
+        }
+        finally
+        {
             if (!process.HasExited)
                 process.Kill(entireProcessTree: true);
             await process.WaitForExitAsync();

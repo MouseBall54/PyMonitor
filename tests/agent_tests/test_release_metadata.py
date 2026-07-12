@@ -24,6 +24,12 @@ class ReleaseMetadataTests(unittest.TestCase):
     def test_all_product_versions_match(self):
         props = (self.root / "Directory.Build.props").read_text(encoding="utf-8")
         pyproject = (self.root / "agent" / "pyproject.toml").read_text(encoding="utf-8")
+        repl_bootstrap = (
+            self.root / "src" / "PyRuntimeInspector.App" / "Services" / "ReplBootstrap.cs"
+        ).read_text(encoding="utf-8")
+        live_attach = (
+            self.root / "src" / "PyRuntimeInspector.App" / "Services" / "LiveAttachService.cs"
+        ).read_text(encoding="utf-8")
 
         product_version = xml_value(props, "Version")
         package_version = re.search(r'^version = "([^"]+)"$', pyproject, re.MULTILINE).group(1)
@@ -32,6 +38,14 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertEqual(product_version, package_version)
         self.assertEqual(product_version, pyruntime_inspector_agent.__version__)
         self.assertEqual(product_version, server.AGENT_VERSION)
+        self.assertEqual(2, pyruntime_inspector_agent.__bootstrap_abi__)
+        self.assertEqual(pyruntime_inspector_agent.__bootstrap_abi__, server.BOOTSTRAP_ABI)
+        self.assertIn(
+            f"public const int ExpectedBootstrapAbi = {server.BOOTSTRAP_ABI};",
+            repl_bootstrap,
+        )
+        self.assertIn("runpy.run_path", live_attach)
+        self.assertIn("expected_bootstrap_abi=", live_attach)
         self.assertEqual(f"{product_version}.0", xml_value(props, "AssemblyVersion"))
         self.assertEqual(f"{product_version}.0", xml_value(props, "FileVersion"))
         self.assertEqual(product_version, xml_value(props, "InformationalVersion"))

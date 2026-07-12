@@ -1,9 +1,11 @@
 import socket
 import struct
 import unittest
+from unittest import mock
 
 from pyruntime_inspector_agent.protocol import ProtocolError, read_frame, write_frame
-from pyruntime_inspector_agent.server import InspectorAgent, _bound_result
+from pyruntime_inspector_agent import server
+from pyruntime_inspector_agent.server import ActiveAgentConflictError, InspectorAgent, _bound_result
 
 
 class ProtocolTests(unittest.TestCase):
@@ -12,6 +14,26 @@ class ProtocolTests(unittest.TestCase):
 
         self.assertTrue(agent._thread.pydev_do_not_trace)
         self.assertTrue(agent._thread.is_pydev_daemon_thread)
+
+    def test_active_agent_is_reused_only_for_the_same_connection(self):
+        agent = InspectorAgent("127.0.0.1", 49152, "a" * 64, "cooperative")
+        with mock.patch.object(server, "_active_agent", agent):
+            self.assertIs(
+                agent,
+                server.start_inspector(
+                    host="127.0.0.1",
+                    port=49152,
+                    token="a" * 64,
+                    attach_mode="cooperative",
+                ),
+            )
+            with self.assertRaisesRegex(ActiveAgentConflictError, "different connection settings"):
+                server.start_inspector(
+                    host="127.0.0.1",
+                    port=49153,
+                    token="b" * 64,
+                    attach_mode="cooperative",
+                )
 
     def test_round_trip_with_binary_payload(self):
         left, right = socket.socketpair()
