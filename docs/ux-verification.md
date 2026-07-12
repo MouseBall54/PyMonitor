@@ -206,3 +206,25 @@ display scaling remain unchecked above until they are exercised interactively.
 The MSI install → upgrade → uninstall lifecycle also remains unchecked because
 it requires an elevated Windows session. Final ZIP and MSI binaries are
 intentionally unsigned until a trusted Authenticode certificate is supplied.
+
+## Completion audit refresh — 2026-07-12
+
+A clean final build was run again with `samples/target_ux_demo.py`. The current
+session verified `Ctrl+F` search, a persistent `pipeline` selection, live Updated
+rows, `pipeline → metrics` navigation, level/breadcrumb/history context,
+Alt+Left/Alt+Right, method and parameter trees, and the NumPy image preview.
+Detach left managed PID 58776 running; Stop then terminated it. During this run,
+the portable directory was found to accumulate Agent bytecode caches. That
+release defect was fixed for Cooperative, Live, and Managed Attach, covered by
+new regression tests, and retested using the rebuilt packaged executable. The
+post-run portable verifier found no `.pyc` or `__pycache__` files.
+
+The elevated MSI lifecycle was started once on 2026-07-12, but the Windows
+elevation prompt was canceled before installation. No product was installed or
+removed, and this remains a manual release gate rather than a failed lifecycle.
+
+Current automated evidence is 80 Agent tests on each CPython 3.10–3.14 runtime,
+56 .NET tests (Protocol 5, Integration 2, App 49), and a 60-second stability run
+with 10 cycles, 6,481 requests, and 1,568,768 bytes maximum working-set growth.
+The requirement-by-requirement result and remaining direct-evidence gaps are in
+[`completion-audit.md`](completion-audit.md).
