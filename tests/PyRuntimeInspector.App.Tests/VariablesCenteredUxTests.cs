@@ -4,7 +4,9 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using PyRuntimeInspector.App.Infrastructure;
 using PyRuntimeInspector.App.Services;
 using PyRuntimeInspector.App.ViewModels;
 using PyRuntimeInspector.Protocol;
@@ -1132,6 +1134,435 @@ public sealed class VariablesCenteredUxTests
         Assert.False(viewModel.LoadHistogramCommand.CanExecute(null));
     }
 
+    [Fact]
+    public async Task MatplotlibFigureSelectionLoadsSafeBgraPreviewAndMetadata()
+    {
+        var binary = BgraBytes(2, 1);
+        var session = new UxSession();
+        session.EnqueueMatplotlibDescription(MatplotlibDescription("Figure", sourceWidth: 640, sourceHeight: 480));
+        session.EnqueueMatplotlibPreview(MatplotlibPreview("Figure", 2, 1, 640, 480), binary);
+        session.EnqueueScope(ScopeResult(Value(
+            "figure",
+            "figure-handle",
+            "figure-id",
+            "figure-meta",
+            typeName: "Figure",
+            moduleName: "matplotlib.figure",
+            adapterKind: "matplotlib.Figure",
+            preview: "Figure(rendered=640x480)",
+            payloadSize: 640L * 480 * 4)));
+        await using var viewModel = await ConnectedViewModelAsync(session);
+
+        await viewModel.LoadScopeAsync(ScopeNode(), resetPage: true);
+        viewModel.SelectedVariable = Assert.Single(viewModel.Variables);
+        await EventuallyAsync(() => viewModel.MatplotlibState == MatplotlibPaneState.Ready);
+
+        Assert.True(viewModel.HasMatplotlibSelection);
+        Assert.False(viewModel.HasArraySelection);
+        Assert.False(viewModel.HasDataFrameSelection);
+        Assert.Equal(4, viewModel.SelectedObjectDetailTabIndex);
+        Assert.Equal("Figure", viewModel.MatplotlibSourceKind);
+        Assert.Equal("640 × 480 px", viewModel.MatplotlibSourceDimensions);
+        Assert.Equal("matplotlib.backends.backend_agg.FigureCanvasAgg", viewModel.MatplotlibCanvasType);
+        Assert.Equal("ready", viewModel.MatplotlibAvailabilityReason);
+        Assert.False(viewModel.MatplotlibUsesOwningFigure);
+        var bitmap = Assert.IsAssignableFrom<BitmapSource>(viewModel.MatplotlibPreview);
+        Assert.Equal((2, 1, PixelFormats.Bgra32), (bitmap.PixelWidth, bitmap.PixelHeight, bitmap.Format));
+        var copied = new byte[binary.Length];
+        bitmap.CopyPixels(copied, bitmap.PixelWidth * 4, 0);
+        Assert.Equal(binary, copied);
+        var previewRequest = Assert.Single(session.Requests, request => request.Method == "figures.preview");
+        Assert.Equal((1024, 1024), (previewRequest.MaxWidth, previewRequest.MaxHeight));
+        Assert.DoesNotContain(session.Requests, request => request.Method.Contains("draw", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain("figure-handle", ReleasedHandles(session));
+        Assert.True(viewModel.RefreshMatplotlibCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task SpecializedSelectionOpensItsMatchingDetailTab()
+    {
+        var session = new UxSession();
+        session.EnqueueMatplotlibDescription(MatplotlibDescription("Figure"));
+        session.EnqueueMatplotlibPreview(MatplotlibPreview("Figure"), BgraBytes(2, 1));
+        session.EnqueueScope(ScopeResult(
+            Value("plain", "plain-handle", "plain-id", "plain-meta"),
+            Value("array", "array-handle", "array-id", "array-meta", typeName: "ndarray", moduleName: "numpy", adapterKind: "numpy.ndarray"),
+            Value("figure", "figure-handle", "figure-id", "figure-meta", typeName: "Figure", moduleName: "matplotlib.figure", adapterKind: "matplotlib.Figure")));
+        await using var viewModel = await ConnectedViewModelAsync(session);
+
+        await viewModel.LoadScopeAsync(ScopeNode(), resetPage: true);
+        viewModel.SelectedVariable = Assert.Single(viewModel.Variables, row => row.Name == "array");
+        await EventuallyAsync(() => viewModel.InspectorState == InspectorPaneState.Ready);
+        Assert.Equal(5, viewModel.SelectedObjectDetailTabIndex);
+
+        viewModel.SelectedVariable = Assert.Single(viewModel.Variables, row => row.Name == "figure");
+        await EventuallyAsync(() => viewModel.MatplotlibState == MatplotlibPaneState.Ready);
+        Assert.Equal(4, viewModel.SelectedObjectDetailTabIndex);
+
+        viewModel.SelectedVariable = Assert.Single(viewModel.Variables, row => row.Name == "plain");
+        await EventuallyAsync(() => viewModel.SelectedObjectName == "plain");
+        Assert.Equal(0, viewModel.SelectedObjectDetailTabIndex);
+    }
+
+    [Fact]
+    public async Task MatplotlibSelectionExposesLoadingUntilInspectionResponsesArrive()
+    {
+        var childrenRelease = new TaskCompletionSource<JsonObject>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new UxSession
+        {
+            ObjectChildrenResponder = (_, _) => childrenRelease.Task,
+        };
+        session.EnqueueScope(ScopeResult(Value(
+            "figure",
+            "figure-handle",
+            "figure-id",
+            "figure-meta",
+            typeName: "Figure",
+            moduleName: "matplotlib.figure",
+            adapterKind: "matplotlib.Figure")));
+        await using var viewModel = await ConnectedViewModelAsync(session);
+
+        await viewModel.LoadScopeAsync(ScopeNode(), resetPage: true);
+        viewModel.SelectedVariable = Assert.Single(viewModel.Variables);
+        await EventuallyAsync(() => viewModel.HasMatplotlibSelection
+            && viewModel.MatplotlibState == MatplotlibPaneState.Loading);
+
+        Assert.Null(viewModel.MatplotlibPreview);
+        Assert.Contains("Inspecting", viewModel.MatplotlibStatus);
+
+        childrenRelease.SetResult(new JsonObject
+        {
+            ["items"] = new JsonArray(),
+            ["offset"] = 0,
+            ["total"] = 0,
+        });
+        await EventuallyAsync(() => viewModel.MatplotlibState == MatplotlibPaneState.Ready);
+    }
+
+    [Fact]
+    public async Task MatplotlibAxesStaleStateShowsOwningFigureGuidanceAndRefreshesAfterTargetDraw()
+    {
+        var session = new UxSession();
+        session.EnqueueMatplotlibDescription(MatplotlibDescription("Axes", "unavailable", "stale"));
+        session.EnqueueMatplotlibDescription(MatplotlibDescription("Axes", sourceWidth: 4, sourceHeight: 2));
+        session.EnqueueMatplotlibPreview(MatplotlibPreview("Axes", 4, 2), BgraBytes(4, 2, 30));
+        session.EnqueueScope(ScopeResult(Value(
+            "axes",
+            "axes-handle",
+            "axes-id",
+            "axes-meta",
+            typeName: "Axes",
+            moduleName: "matplotlib.axes._axes",
+            adapterKind: "matplotlib.Axes",
+            preview: "Axes(preview unavailable: stale)")));
+        await using var viewModel = await ConnectedViewModelAsync(session);
+
+        await viewModel.LoadScopeAsync(ScopeNode(), resetPage: true);
+        viewModel.SelectedVariable = Assert.Single(viewModel.Variables);
+        await EventuallyAsync(() => viewModel.MatplotlibState == MatplotlibPaneState.Unavailable);
+
+        Assert.True(viewModel.HasMatplotlibSelection);
+        Assert.True(viewModel.MatplotlibUsesOwningFigure);
+        Assert.Equal("Axes", viewModel.MatplotlibSourceKind);
+        Assert.Equal("stale", viewModel.MatplotlibAvailabilityReason);
+        Assert.Contains("pending changes", viewModel.MatplotlibStatus, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("figure.canvas.draw()", viewModel.MatplotlibNextAction, StringComparison.Ordinal);
+        Assert.Contains("refresh", viewModel.MatplotlibNextAction, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(viewModel.MatplotlibPreview);
+        Assert.DoesNotContain(session.Requests, request => request.Method == "figures.preview");
+
+        await viewModel.RefreshMatplotlibCommand.ExecuteAsync();
+
+        Assert.Equal(MatplotlibPaneState.Ready, viewModel.MatplotlibState);
+        Assert.NotNull(viewModel.MatplotlibPreview);
+        Assert.Equal("4 × 2 px", viewModel.MatplotlibSourceDimensions);
+        Assert.True(viewModel.MatplotlibUsesOwningFigure);
+        Assert.Contains("refreshed", viewModel.SelectedObjectStatus, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(session.Requests, request => request.Method.Contains("draw", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task InvalidMatplotlibBinaryBecomesErrorAndSelectionClearRemovesFigureState()
+    {
+        var session = new UxSession();
+        session.EnqueueMatplotlibDescription(MatplotlibDescription("Figure"));
+        session.EnqueueMatplotlibPreview(MatplotlibPreview("Figure", 2, 1), [1, 2, 3, 4]);
+        session.EnqueueScope(ScopeResult(Value(
+            "figure",
+            "figure-handle",
+            "figure-id",
+            "figure-meta",
+            typeName: "Figure",
+            moduleName: "matplotlib.figure",
+            adapterKind: "matplotlib.Figure")));
+        await using var viewModel = await ConnectedViewModelAsync(session);
+
+        await viewModel.LoadScopeAsync(ScopeNode(), resetPage: true);
+        viewModel.SelectedVariable = Assert.Single(viewModel.Variables);
+        await EventuallyAsync(() => viewModel.MatplotlibState == MatplotlibPaneState.Error);
+
+        Assert.Equal(InspectorPaneState.Ready, viewModel.InspectorState);
+        Assert.True(viewModel.HasMatplotlibSelection);
+        Assert.Null(viewModel.MatplotlibPreview);
+        Assert.Contains("binary length", viewModel.MatplotlibErrorMessage, StringComparison.OrdinalIgnoreCase);
+
+        viewModel.SelectedVariable = null;
+
+        Assert.False(viewModel.HasMatplotlibSelection);
+        Assert.Equal(MatplotlibPaneState.NoSelection, viewModel.MatplotlibState);
+        Assert.Null(viewModel.MatplotlibPreview);
+        Assert.Equal("—", viewModel.MatplotlibSourceKind);
+        Assert.False(viewModel.RefreshMatplotlibCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task LateMatplotlibPreviewCannotOverwriteNewSelectionAndItsTokenIsCancelled()
+    {
+        var firstPreview = new TaskCompletionSource<ProtocolFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstCancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new UxSession
+        {
+            MatplotlibPreviewResponder = (handle, cancellationToken) =>
+            {
+                if (handle == "first-figure-handle")
+                {
+                    cancellationToken.Register(() => firstCancelled.TrySetResult());
+                    return firstPreview.Task;
+                }
+                return Task.FromResult(new ProtocolFrame(
+                    new JsonObject { ["ok"] = true, ["result"] = MatplotlibPreview("Figure", 1, 1) },
+                    BgraBytes(1, 1, 80)));
+            },
+        };
+        session.EnqueueMatplotlibDescription(MatplotlibDescription("Figure", sourceWidth: 3, sourceHeight: 1));
+        session.EnqueueMatplotlibDescription(MatplotlibDescription("Figure", sourceWidth: 1, sourceHeight: 1));
+        session.EnqueueScope(ScopeResult(
+            Value("first", "first-figure-handle", "first-id", "first-meta", typeName: "Figure", moduleName: "matplotlib.figure", adapterKind: "matplotlib.Figure"),
+            Value("second", "second-figure-handle", "second-id", "second-meta", typeName: "Figure", moduleName: "matplotlib.figure", adapterKind: "matplotlib.Figure")));
+        await using var viewModel = await ConnectedViewModelAsync(session);
+
+        await viewModel.LoadScopeAsync(ScopeNode(), resetPage: true);
+        viewModel.SelectedVariable = Assert.Single(viewModel.Variables, row => row.Name == "first");
+        await EventuallyAsync(() => session.Requests.Any(request => request.Method == "figures.preview" && request.HandleId == "first-figure-handle"));
+
+        viewModel.SelectedVariable = Assert.Single(viewModel.Variables, row => row.Name == "second");
+        await firstCancelled.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await EventuallyAsync(() => viewModel.SelectedObjectName == "second"
+            && viewModel.MatplotlibState == MatplotlibPaneState.Ready);
+
+        firstPreview.SetResult(new ProtocolFrame(
+            new JsonObject { ["ok"] = true, ["result"] = MatplotlibPreview("Figure", 3, 1) },
+            BgraBytes(3, 1, 120)));
+        await Task.Delay(50);
+
+        Assert.Equal("second", viewModel.SelectedObjectName);
+        Assert.Equal("1 × 1 px", viewModel.MatplotlibSourceDimensions);
+        Assert.Equal(1, Assert.IsAssignableFrom<BitmapSource>(viewModel.MatplotlibPreview).PixelWidth);
+    }
+
+    [Fact]
+    public async Task CancelledMatplotlibFailureCannotOverwriteNewSelection()
+    {
+        var firstPreview = new TaskCompletionSource<ProtocolFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstCancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken firstToken = default;
+        var session = new UxSession
+        {
+            MatplotlibPreviewResponder = (handle, cancellationToken) =>
+            {
+                if (handle == "first-figure-handle")
+                {
+                    firstToken = cancellationToken;
+                    cancellationToken.Register(() => firstCancelled.TrySetResult());
+                    return firstPreview.Task;
+                }
+                return Task.FromResult(new ProtocolFrame(
+                    new JsonObject { ["ok"] = true, ["result"] = MatplotlibPreview("Figure", 1, 1) },
+                    BgraBytes(1, 1, 80)));
+            },
+        };
+        session.EnqueueMatplotlibDescription(MatplotlibDescription("Figure", sourceWidth: 3, sourceHeight: 1));
+        session.EnqueueMatplotlibDescription(MatplotlibDescription("Figure", sourceWidth: 1, sourceHeight: 1));
+        session.EnqueueScope(ScopeResult(
+            Value("first", "first-figure-handle", "first-id", "first-meta", typeName: "Figure", moduleName: "matplotlib.figure", adapterKind: "matplotlib.Figure"),
+            Value("second", "second-figure-handle", "second-id", "second-meta", typeName: "Figure", moduleName: "matplotlib.figure", adapterKind: "matplotlib.Figure")));
+        await using var viewModel = await ConnectedViewModelAsync(session);
+
+        await viewModel.LoadScopeAsync(ScopeNode(), resetPage: true);
+        viewModel.SelectedVariable = Assert.Single(viewModel.Variables, row => row.Name == "first");
+        await EventuallyAsync(() => session.Requests.Any(request => request.Method == "figures.preview" && request.HandleId == "first-figure-handle"));
+
+        viewModel.SelectedVariable = Assert.Single(viewModel.Variables, row => row.Name == "second");
+        await firstCancelled.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await EventuallyAsync(() => viewModel.SelectedObjectName == "second"
+            && viewModel.MatplotlibState == MatplotlibPaneState.Ready);
+
+        firstPreview.SetException(new OperationCanceledException(firstToken));
+        await Task.Delay(50);
+
+        Assert.Equal("second", viewModel.SelectedObjectName);
+        Assert.Equal(MatplotlibPaneState.Ready, viewModel.MatplotlibState);
+        Assert.Equal("1 × 1 px", viewModel.MatplotlibSourceDimensions);
+        Assert.Equal(1, Assert.IsAssignableFrom<BitmapSource>(viewModel.MatplotlibPreview).PixelWidth);
+    }
+
+    [Fact]
+    public async Task AutomaticRefreshUpdatesMatplotlibBitmapInPlaceWithoutLoadingState()
+    {
+        var session = new UxSession();
+        session.EnqueueScope(ScopeResult(Value(
+            "figure", "figure-handle", "figure-id", "meta-1",
+            typeName: "Figure", moduleName: "matplotlib.figure", adapterKind: "matplotlib.Figure")));
+        session.EnqueueScope(ScopeResult(Value(
+            "figure", "figure-handle", "figure-id", "meta-2",
+            typeName: "Figure", moduleName: "matplotlib.figure", adapterKind: "matplotlib.Figure")));
+        session.EnqueueMatplotlibDescription(MatplotlibDescription("Figure"));
+        session.EnqueueMatplotlibDescription(MatplotlibDescription("Figure"));
+        session.EnqueueMatplotlibPreview(MatplotlibPreview("Figure"), BgraBytes(2, 1, 1));
+        session.EnqueueMatplotlibPreview(MatplotlibPreview("Figure"), BgraBytes(2, 1, 90));
+        await using var viewModel = await ConnectedViewModelAsync(session);
+
+        await viewModel.LoadScopeAsync(ScopeNode(), resetPage: true);
+        var selected = Assert.Single(viewModel.Variables);
+        viewModel.SelectedVariable = selected;
+        await EventuallyAsync(() => viewModel.MatplotlibState == MatplotlibPaneState.Ready);
+        var firstBitmap = viewModel.MatplotlibPreview;
+        var loadingWasShown = false;
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(MainViewModel.MatplotlibState)
+                && viewModel.MatplotlibState == MatplotlibPaneState.Loading)
+            {
+                loadingWasShown = true;
+            }
+        };
+
+        viewModel.RefreshIntervalSeconds = 1;
+        viewModel.AutoRefreshEnabled = true;
+        await EventuallyAsync(() => session.Requests.Count(request => request.Method == "scopes.list") >= 2
+            && session.Requests.Count(request => request.Method == "figures.preview") >= 2);
+        viewModel.AutoRefreshEnabled = false;
+
+        Assert.False(loadingWasShown);
+        Assert.Same(selected, viewModel.SelectedVariable);
+        Assert.NotSame(firstBitmap, viewModel.MatplotlibPreview);
+        Assert.Equal(MatplotlibPaneState.Ready, viewModel.MatplotlibState);
+        Assert.Contains("Live Matplotlib preview refreshed", viewModel.SelectedObjectStatus);
+    }
+
+    [Fact]
+    public async Task AutomaticBufferChangeKeepsLastCompleteMatplotlibPreviewWithoutFlicker()
+    {
+        var session = new UxSession();
+        session.EnqueueScope(ScopeResult(Value(
+            "figure", "figure-handle", "figure-id", "meta-1",
+            typeName: "Figure", moduleName: "matplotlib.figure", adapterKind: "matplotlib.Figure")));
+        session.EnqueueScope(ScopeResult(Value(
+            "figure", "figure-handle", "figure-id", "meta-2",
+            typeName: "Figure", moduleName: "matplotlib.figure", adapterKind: "matplotlib.Figure")));
+        session.EnqueueMatplotlibDescription(MatplotlibDescription("Figure"));
+        session.EnqueueMatplotlibDescription(MatplotlibDescription("Figure", "unavailable", "buffer-changed"));
+        session.EnqueueMatplotlibPreview(MatplotlibPreview("Figure"), BgraBytes(2, 1, 25));
+        await using var viewModel = await ConnectedViewModelAsync(session);
+
+        await viewModel.LoadScopeAsync(ScopeNode(), resetPage: true);
+        viewModel.SelectedVariable = Assert.Single(viewModel.Variables);
+        await EventuallyAsync(() => viewModel.MatplotlibState == MatplotlibPaneState.Ready);
+        var completePreview = viewModel.MatplotlibPreview;
+
+        viewModel.RefreshIntervalSeconds = 1;
+        viewModel.AutoRefreshEnabled = true;
+        await EventuallyAsync(() => viewModel.MatplotlibAvailabilityReason == "buffer-changed"
+            && session.Requests.Count(request => request.Method == "figures.describe") >= 2);
+        viewModel.AutoRefreshEnabled = false;
+
+        Assert.Same(completePreview, viewModel.MatplotlibPreview);
+        Assert.Equal(MatplotlibPaneState.Ready, viewModel.MatplotlibState);
+        Assert.Contains("keeping the last complete preview", viewModel.MatplotlibStatus);
+        Assert.Equal(1, session.Requests.Count(request => request.Method == "figures.preview"));
+    }
+
+    [Fact]
+    public async Task OlderAutomaticMatplotlibRefreshCannotOverwriteNewerManualRefresh()
+    {
+        var stalePreview = new TaskCompletionSource<ProtocolFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var automaticPreviewStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var previewCall = 0;
+        var session = new UxSession
+        {
+            MatplotlibDescriptionResponder = (_, _) => Task.FromResult(MatplotlibDescription("Figure")),
+            MatplotlibPreviewResponder = (_, _) => Interlocked.Increment(ref previewCall) switch
+            {
+                1 => Task.FromResult(new ProtocolFrame(
+                    new JsonObject { ["ok"] = true, ["result"] = MatplotlibPreview("Figure", 1, 1) },
+                    BgraBytes(1, 1, 10))),
+                2 => WaitForStalePreviewAsync(),
+                _ => Task.FromResult(new ProtocolFrame(
+                    new JsonObject { ["ok"] = true, ["result"] = MatplotlibPreview("Figure", 2, 1) },
+                    BgraBytes(2, 1, 90))),
+            },
+        };
+        session.EnqueueScope(ScopeResult(Value(
+            "figure", "figure-handle", "figure-id", "meta-1",
+            typeName: "Figure", moduleName: "matplotlib.figure", adapterKind: "matplotlib.Figure")));
+        session.EnqueueScope(ScopeResult(Value(
+            "figure", "figure-handle", "figure-id", "meta-2",
+            typeName: "Figure", moduleName: "matplotlib.figure", adapterKind: "matplotlib.Figure")));
+        await using var viewModel = await ConnectedViewModelAsync(session);
+
+        await viewModel.LoadScopeAsync(ScopeNode(), resetPage: true);
+        viewModel.SelectedVariable = Assert.Single(viewModel.Variables);
+        await EventuallyAsync(() => viewModel.MatplotlibState == MatplotlibPaneState.Ready);
+
+        viewModel.RefreshIntervalSeconds = 1;
+        viewModel.AutoRefreshEnabled = true;
+        await automaticPreviewStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        viewModel.AutoRefreshEnabled = false;
+
+        await Assert.IsType<AsyncCommand>(viewModel.RefreshMatplotlibCommand).ExecuteAsync();
+        Assert.Equal(2, Assert.IsAssignableFrom<BitmapSource>(viewModel.MatplotlibPreview).PixelWidth);
+        var latestStatus = viewModel.SelectedObjectStatus;
+
+        stalePreview.SetResult(new ProtocolFrame(
+            new JsonObject { ["ok"] = true, ["result"] = MatplotlibPreview("Figure", 3, 1) },
+            BgraBytes(3, 1, 140)));
+        await Task.Delay(50);
+
+        Assert.Equal(MatplotlibPaneState.Ready, viewModel.MatplotlibState);
+        Assert.Equal(2, Assert.IsAssignableFrom<BitmapSource>(viewModel.MatplotlibPreview).PixelWidth);
+        Assert.Equal(latestStatus, viewModel.SelectedObjectStatus);
+        Assert.DoesNotContain("unavailable", viewModel.SelectedObjectStatus, StringComparison.OrdinalIgnoreCase);
+
+        Task<ProtocolFrame> WaitForStalePreviewAsync()
+        {
+            automaticPreviewStarted.TrySetResult();
+            return stalePreview.Task;
+        }
+    }
+
+    [Theory]
+    [InlineData("adapterKind", "matplotlib.Axes")]
+    [InlineData("renderedKind", "Axes")]
+    [InlineData("sourcePixelFormat", "RGB24")]
+    public async Task MatplotlibContractMismatchIsRejected(string propertyName, string invalidValue)
+    {
+        var invalid = MatplotlibDescription("Figure");
+        invalid[propertyName] = invalidValue;
+        var session = new UxSession();
+        session.EnqueueMatplotlibDescription(invalid);
+        session.EnqueueScope(ScopeResult(Value(
+            "figure", "figure-handle", "figure-id", "meta",
+            typeName: "Figure", moduleName: "matplotlib.figure", adapterKind: "matplotlib.Figure")));
+        await using var viewModel = await ConnectedViewModelAsync(session);
+
+        await viewModel.LoadScopeAsync(ScopeNode(), resetPage: true);
+        viewModel.SelectedVariable = Assert.Single(viewModel.Variables);
+        await EventuallyAsync(() => viewModel.MatplotlibState == MatplotlibPaneState.Error);
+
+        Assert.Null(viewModel.MatplotlibPreview);
+        Assert.False(string.IsNullOrWhiteSpace(viewModel.MatplotlibErrorMessage));
+    }
+
     private static async Task<MainViewModel> ConnectedViewModelAsync(UxSession session, IClipboardService? clipboard = null)
     {
         var viewModel = new MainViewModel(session, new EmptyProcessDiscovery(), clipboardService: clipboard)
@@ -1255,6 +1686,87 @@ public sealed class VariablesCenteredUxTests
             ["snapshotConsistent"] = consistent,
         };
     }
+
+    private static JsonObject MatplotlibDescription(
+        string sourceKind,
+        string availabilityState = "ready",
+        string? reason = null,
+        int sourceWidth = 2,
+        int sourceHeight = 1,
+        string canvasType = "matplotlib.backends.backend_agg.FigureCanvasAgg")
+    {
+        var ready = availabilityState == "ready";
+        var message = reason switch
+        {
+            "stale" => "The owning Figure has pending changes or has not been drawn yet.",
+            "not-rendered" => "The owning Figure does not have a completed Agg render.",
+            _ when ready => "A current, completed Agg render is available.",
+            _ => "The Matplotlib render is unavailable.",
+        };
+        var nextAction = reason switch
+        {
+            "stale" => "Call figure.canvas.draw() in the target code after its final changes, then refresh the preview.",
+            "not-rendered" => "Call figure.canvas.draw() in the target code, then refresh the preview.",
+            _ => null,
+        };
+        return new JsonObject
+        {
+            ["adapterKind"] = sourceKind == "Axes" ? "matplotlib.Axes" : "matplotlib.Figure",
+            ["sourceKind"] = sourceKind,
+            ["renderedKind"] = "Figure",
+            ["axesUsesOwningFigure"] = sourceKind == "Axes",
+            ["objectAddressHex"] = "0x500",
+            ["figureAddressHex"] = "0x500",
+            ["canvasType"] = canvasType,
+            ["rendererType"] = ready ? "matplotlib.backends.backend_agg.RendererAgg" : null,
+            ["stale"] = reason == "stale",
+            ["previewAvailable"] = ready,
+            ["availability"] = new JsonObject
+            {
+                ["state"] = availabilityState,
+                ["reason"] = reason,
+                ["message"] = message,
+                ["nextAction"] = nextAction,
+            },
+            ["sourceWidth"] = ready ? sourceWidth : null,
+            ["sourceHeight"] = ready ? sourceHeight : null,
+            ["sourceChannels"] = 4,
+            ["sourcePixelFormat"] = "RGBA32",
+            ["sourceBufferBytes"] = ready ? sourceWidth * sourceHeight * 4 : null,
+            ["maxPreviewWidth"] = 1024,
+            ["maxPreviewHeight"] = 1024,
+            ["maxPreviewBytes"] = 4 * 1024 * 1024,
+            ["snapshotConsistent"] = ready,
+        };
+    }
+
+    private static JsonObject MatplotlibPreview(
+        string sourceKind,
+        int width = 2,
+        int height = 1,
+        int? sourceWidth = null,
+        int? sourceHeight = null)
+    {
+        var result = MatplotlibDescription(
+            sourceKind,
+            sourceWidth: sourceWidth ?? width,
+            sourceHeight: sourceHeight ?? height);
+        result["width"] = width;
+        result["height"] = height;
+        result["stride"] = width * 4;
+        result["pixelFormat"] = "BGRA32";
+        result["rowStep"] = 1;
+        result["columnStep"] = 1;
+        result["originX"] = 0;
+        result["originY"] = 0;
+        result["snapshotConsistent"] = true;
+        return result;
+    }
+
+    private static byte[] BgraBytes(int width, int height, byte seed = 1) =>
+        Enumerable.Range(0, checked(width * height * 4))
+            .Select(index => (byte)(seed + index))
+            .ToArray();
 
     private static JsonObject ObjectChildrenResult() => new()
     {
@@ -1387,6 +1899,8 @@ public sealed class VariablesCenteredUxTests
     {
         private readonly Queue<JsonObject> _scopeResults = [];
         private readonly Queue<JsonObject> _dataFramePreviewResults = [];
+        private readonly Queue<JsonObject> _matplotlibDescriptionResults = [];
+        private readonly Queue<(JsonObject Result, byte[] Binary)> _matplotlibPreviewResults = [];
 
         public event EventHandler<string>? Disconnected;
         public bool IsConnected { get; private set; }
@@ -1394,6 +1908,8 @@ public sealed class VariablesCenteredUxTests
         public TaskCompletionSource? ScopeRelease { get; init; }
         public Func<string?, CancellationToken, Task<JsonObject>>? ObjectChildrenResponder { get; init; }
         public Func<CancellationToken, Task<JsonObject>>? DataFramePreviewResponder { get; init; }
+        public Func<string?, CancellationToken, Task<JsonObject>>? MatplotlibDescriptionResponder { get; init; }
+        public Func<string?, CancellationToken, Task<ProtocolFrame>>? MatplotlibPreviewResponder { get; init; }
         public JsonObject ObjectChildren { get; init; } = new()
         {
             ["items"] = new JsonArray(),
@@ -1410,9 +1926,14 @@ public sealed class VariablesCenteredUxTests
         public JsonObject ArrayDescriptionResult { get; init; } = SupportedArrayDescription();
         public JsonObject DataFrameDescriptionResult { get; init; } = DataFrameDescription(0, 0);
         public JsonObject DataFramePreviewResult { get; init; } = DataFramePreview(0, 0, 0, 0, 0, 0);
+        public JsonObject MatplotlibDescriptionResult { get; init; } = MatplotlibDescription("Figure");
+        public JsonObject MatplotlibPreviewResult { get; init; } = MatplotlibPreview("Figure");
+        public byte[] MatplotlibPreviewBinary { get; init; } = [1, 2, 3, 255, 4, 5, 6, 255];
 
         public void EnqueueScope(JsonObject result) => _scopeResults.Enqueue(result);
         public void EnqueueDataFramePreview(JsonObject result) => _dataFramePreviewResults.Enqueue(result);
+        public void EnqueueMatplotlibDescription(JsonObject result) => _matplotlibDescriptionResults.Enqueue(result);
+        public void EnqueueMatplotlibPreview(JsonObject result, byte[] binary) => _matplotlibPreviewResults.Enqueue((result, binary));
 
         public Task<JsonObject> AttachAsync(int port, string token, int? expectedPid, CancellationToken cancellationToken)
         {
@@ -1429,13 +1950,26 @@ public sealed class VariablesCenteredUxTests
                 parameters?["rowOffset"]?.GetValue<int>(),
                 parameters?["columnOffset"]?.GetValue<int>(),
                 parameters?["rowCount"]?.GetValue<int>(),
-                parameters?["columnCount"]?.GetValue<int>()));
+                parameters?["columnCount"]?.GetValue<int>(),
+                parameters?["maxWidth"]?.GetValue<int>(),
+                parameters?["maxHeight"]?.GetValue<int>()));
             if (method == "scopes.list" && ScopeRelease is not null)
                 return await AwaitScopeAsync(cancellationToken);
             if (method == "objects.listChildren" && ObjectChildrenResponder is not null)
                 return Frame(await ObjectChildrenResponder(handleId, cancellationToken));
             if (method == "dataframes.preview" && DataFramePreviewResponder is not null)
                 return Frame(await DataFramePreviewResponder(cancellationToken));
+            if (method == "figures.describe" && MatplotlibDescriptionResponder is not null)
+                return Frame(await MatplotlibDescriptionResponder(handleId, cancellationToken));
+            if (method == "figures.preview" && MatplotlibPreviewResponder is not null)
+                return await MatplotlibPreviewResponder(handleId, cancellationToken);
+            if (method == "figures.preview")
+            {
+                var (preview, binary) = _matplotlibPreviewResults.Count > 0
+                    ? _matplotlibPreviewResults.Dequeue()
+                    : ((JsonObject)MatplotlibPreviewResult.DeepClone(), MatplotlibPreviewBinary.ToArray());
+                return Frame(preview, binary);
+            }
             var result = method switch
             {
                 "threads.list" or "frames.list" => new JsonObject { ["items"] = new JsonArray() },
@@ -1452,6 +1986,9 @@ public sealed class VariablesCenteredUxTests
                 "dataframes.preview" => _dataFramePreviewResults.Count > 0
                     ? _dataFramePreviewResults.Dequeue()
                     : (JsonObject)DataFramePreviewResult.DeepClone(),
+                "figures.describe" => _matplotlibDescriptionResults.Count > 0
+                    ? _matplotlibDescriptionResults.Dequeue()
+                    : (JsonObject)MatplotlibDescriptionResult.DeepClone(),
                 _ => new JsonObject(),
             };
             return Frame(result, method == "arrays.preview" ? [128] : null);
@@ -1554,5 +2091,7 @@ public sealed class VariablesCenteredUxTests
         int? RowOffset = null,
         int? ColumnOffset = null,
         int? RowCount = null,
-        int? ColumnCount = null);
+        int? ColumnCount = null,
+        int? MaxWidth = null,
+        int? MaxHeight = null);
 }

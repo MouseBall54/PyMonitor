@@ -46,12 +46,15 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private RuntimeTreeNode? _currentScope;
     private long _selectionGeneration;
     private long _detailGeneration;
+    private long _matplotlibRefreshGeneration;
     private int _pageOffset;
     private int _pageTotal;
     private const int PageSize = 200;
     private const int ObjectPageSize = 100;
     private const int DataFrameRowPageSize = 50;
     private const int DataFrameColumnPageSize = 20;
+    private const int MatplotlibMaxPreviewDimension = 1024;
+    private const int MatplotlibMaxPreviewBytes = 4 * 1024 * 1024;
     private const int MaxObjectDepth = 8;
     // Bound retained navigation contexts so history cannot outgrow the agent handle store.
     private const int MaxNavigationHistory = 128;
@@ -121,6 +124,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private bool _hasSelectedObject;
     private bool _hasArraySelection;
     private bool _hasDataFrameSelection;
+    private bool _hasMatplotlibSelection;
     private bool _autoRefreshEnabled = true;
     private bool _isScopeLoading;
     private bool _isSearchPending;
@@ -141,6 +145,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private string _pageLabel = "0 items";
     private string _lastLatency = "—";
     private int _selectedWorkspaceTabIndex;
+    private int _selectedObjectDetailTabIndex;
     private string _selectedType = "—";
     private string _selectedModule = "—";
     private string _selectedQualifiedName = "—";
@@ -202,6 +207,17 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private string? _arrayHandle;
     private bool _arrayPreviewSupported;
     private string? _dataFrameHandle;
+    private string? _matplotlibHandle;
+    private ImageSource? _matplotlibPreview;
+    private MatplotlibPaneState _matplotlibState = MatplotlibPaneState.NoSelection;
+    private string _matplotlibSourceKind = "—";
+    private string _matplotlibSourceDimensions = "—";
+    private string _matplotlibCanvasType = "—";
+    private string _matplotlibAvailabilityReason = "—";
+    private string _matplotlibStatus = "Select a Matplotlib Figure or Axes to preview it.";
+    private string _matplotlibNextAction = "";
+    private string _matplotlibErrorMessage = "";
+    private bool _matplotlibUsesOwningFigure;
     private DataTable? _dataFrameTable;
     private DataView? _dataFrameRows;
     private DataFramePaneState _dataFrameState = DataFramePaneState.NoSelection;
@@ -281,6 +297,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         LoadTileCommand = new AsyncCommand(LoadArrayTileAsync, () => IsConnected && _arrayHandle is not null && _arrayPreviewSupported);
         LoadHistogramCommand = new AsyncCommand(LoadHistogramAsync, () => IsConnected && _arrayHandle is not null && _arrayPreviewSupported);
         RefreshDataFrameCommand = new AsyncCommand(RefreshDataFrameAsync, () => IsConnected && _dataFrameHandle is not null);
+        RefreshMatplotlibCommand = new AsyncCommand(RefreshMatplotlibAsync, () => IsConnected && _matplotlibHandle is not null);
         PreviousDataFrameRowsCommand = new AsyncCommand(
             () => MoveDataFramePageAsync(rowDelta: -DataFrameRowPageSize, columnDelta: 0),
             () => IsConnected && _dataFrameHandle is not null && _dataFrameRowOffset > 0);
@@ -371,6 +388,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public AsyncCommand LoadTileCommand { get; }
     public AsyncCommand LoadHistogramCommand { get; }
     public AsyncCommand RefreshDataFrameCommand { get; }
+    public AsyncCommand RefreshMatplotlibCommand { get; }
     public AsyncCommand PreviousDataFrameRowsCommand { get; }
     public AsyncCommand NextDataFrameRowsCommand { get; }
     public AsyncCommand PreviousDataFrameColumnsCommand { get; }
@@ -636,6 +654,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public bool PinnedOnly { get => _pinnedOnly; set { if (SetProperty(ref _pinnedOnly, value)) ApplyFilter(); } }
     public string LastLatency { get => _lastLatency; private set => SetProperty(ref _lastLatency, value); }
     public int SelectedWorkspaceTabIndex { get => _selectedWorkspaceTabIndex; set => SetProperty(ref _selectedWorkspaceTabIndex, Math.Max(0, value)); }
+    public int SelectedObjectDetailTabIndex { get => _selectedObjectDetailTabIndex; set => SetProperty(ref _selectedObjectDetailTabIndex, Math.Max(0, value)); }
 
     public VariableRow? SelectedVariable
     {
@@ -685,6 +704,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public bool HasSelectedObject { get => _hasSelectedObject; private set => SetProperty(ref _hasSelectedObject, value); }
     public bool HasArraySelection { get => _hasArraySelection; private set => SetProperty(ref _hasArraySelection, value); }
     public bool HasDataFrameSelection { get => _hasDataFrameSelection; private set => SetProperty(ref _hasDataFrameSelection, value); }
+    public bool HasMatplotlibSelection { get => _hasMatplotlibSelection; private set => SetProperty(ref _hasMatplotlibSelection, value); }
     public bool IsSelectedObjectPinned => _currentObject is not null && _pinnedKeys.Contains(_currentObject.PinKey);
 
     public DataView? DataFrameRows { get => _dataFrameRows; private set => SetProperty(ref _dataFrameRows, value); }
@@ -694,6 +714,17 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public string DataFrameRowPageLabel { get => _dataFrameRowPageLabel; private set => SetProperty(ref _dataFrameRowPageLabel, value); }
     public string DataFrameColumnPageLabel { get => _dataFrameColumnPageLabel; private set => SetProperty(ref _dataFrameColumnPageLabel, value); }
     public string DataFrameErrorMessage { get => _dataFrameErrorMessage; private set => SetProperty(ref _dataFrameErrorMessage, value); }
+
+    public ImageSource? MatplotlibPreview { get => _matplotlibPreview; private set => SetProperty(ref _matplotlibPreview, value); }
+    public MatplotlibPaneState MatplotlibState { get => _matplotlibState; private set => SetProperty(ref _matplotlibState, value); }
+    public string MatplotlibSourceKind { get => _matplotlibSourceKind; private set => SetProperty(ref _matplotlibSourceKind, value); }
+    public string MatplotlibSourceDimensions { get => _matplotlibSourceDimensions; private set => SetProperty(ref _matplotlibSourceDimensions, value); }
+    public string MatplotlibCanvasType { get => _matplotlibCanvasType; private set => SetProperty(ref _matplotlibCanvasType, value); }
+    public string MatplotlibAvailabilityReason { get => _matplotlibAvailabilityReason; private set => SetProperty(ref _matplotlibAvailabilityReason, value); }
+    public string MatplotlibStatus { get => _matplotlibStatus; private set => SetProperty(ref _matplotlibStatus, value); }
+    public string MatplotlibNextAction { get => _matplotlibNextAction; private set => SetProperty(ref _matplotlibNextAction, value); }
+    public string MatplotlibErrorMessage { get => _matplotlibErrorMessage; private set => SetProperty(ref _matplotlibErrorMessage, value); }
+    public bool MatplotlibUsesOwningFigure { get => _matplotlibUsesOwningFigure; private set => SetProperty(ref _matplotlibUsesOwningFigure, value); }
 
     public string SelectedType { get => _selectedType; private set => SetProperty(ref _selectedType, value); }
     public string SelectedModule { get => _selectedModule; private set => SetProperty(ref _selectedModule, value); }
@@ -1909,6 +1940,14 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         HasSelectedObject = true;
         HasArraySelection = row.AdapterKind == "numpy.ndarray";
         HasDataFrameSelection = row.AdapterKind == "pandas.DataFrame";
+        HasMatplotlibSelection = row.AdapterKind is "matplotlib.Figure" or "matplotlib.Axes";
+        SelectedObjectDetailTabIndex = HasDataFrameSelection
+            ? 3
+            : HasMatplotlibSelection
+                ? 4
+                : HasArraySelection
+                    ? 5
+                    : 0;
         InspectorState = InspectorPaneState.Loading;
         SelectedObjectName = row.Name;
         SelectedObjectPath = context.Path;
@@ -1927,8 +1966,10 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         ClassTree.Clear();
         ClearArrayDetails();
         ClearDataFrameDetails(resetOffsets: true);
+        ClearMatplotlibDetails();
         _arrayHandle = HasArraySelection ? row.HandleId : null;
         _dataFrameHandle = HasDataFrameSelection ? row.HandleId : null;
+        _matplotlibHandle = HasMatplotlibSelection ? row.HandleId : null;
         OnPropertyChanged(nameof(IsSelectedObjectPinned));
         UpdateCommandStates();
 
@@ -1991,23 +2032,56 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                     SetDataFrameError(exception);
                 }
             }
+            var matplotlibPreviewAvailable = true;
+            if (_matplotlibHandle is not null)
+            {
+                try
+                {
+                    matplotlibPreviewAvailable = await LoadMatplotlibDescriptionAndPreviewAsync(
+                        generation,
+                        token,
+                        showLoading: true);
+                }
+                catch (RemoteInspectionException exception) when (exception.Code == "OBJECT_EXPIRED")
+                {
+                    throw;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    if (generation != _detailGeneration || token.IsCancellationRequested)
+                        return;
+                    matplotlibPreviewAvailable = false;
+                    SetMatplotlibError(exception);
+                }
+            }
             if (generation != _detailGeneration || token.IsCancellationRequested)
                 return;
             var hasInspectableDetails = ObjectChildren.Count > 0
                 || ClassMembers.Count > 0
                 || HasArraySelection
-                || HasDataFrameSelection;
+                || HasDataFrameSelection
+                || HasMatplotlibSelection;
             InspectorState = hasInspectableDetails ? InspectorPaneState.Ready : InspectorPaneState.Empty;
             SelectedObjectStatus = !hasInspectableDetails
-                ? "No safe child values, class members, array, or DataFrame details"
+                ? "No safe child values, class members, array, DataFrame, or Matplotlib details"
                 : _arrayHandle is not null && !arrayPreviewAvailable
                     ? "Ready · array metadata only; preview unavailable for this dtype or shape"
                 : _dataFrameHandle is not null && !dataFramePreviewAvailable
                     ? "Ready · DataFrame metadata available; preview could not be read consistently"
                 : _dataFrameHandle is not null
                     ? $"Ready · {DataFrameShape}"
+                : _matplotlibHandle is not null && !matplotlibPreviewAvailable
+                    ? MatplotlibState == MatplotlibPaneState.Unavailable
+                        ? $"Ready · Matplotlib render unavailable ({MatplotlibAvailabilityReason})"
+                        : "Ready · Matplotlib preview request failed"
+                : _matplotlibHandle is not null
+                    ? $"Ready · {MatplotlibSourceKind} render {MatplotlibSourceDimensions}"
                 : ObjectChildren.Count == 0
-                    ? "Ready · class, array, or DataFrame details available"
+                    ? "Ready · class, array, DataFrame, or Matplotlib details available"
                     : $"Ready · {ObjectChildren.Count:N0} children";
         }
         catch (OperationCanceledException)
@@ -2019,6 +2093,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                 return;
             InspectorState = InspectorPaneState.Expired;
             SelectedObjectStatus = "Object expired · refresh the scope and select it again";
+            if (HasMatplotlibSelection)
+                SetMatplotlibError(exception);
             ObjectRoots.Clear();
             ObjectChildren.Clear();
             FilteredObjectChildren.Clear();
@@ -2030,6 +2106,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                 return;
             InspectorState = InspectorPaneState.Error;
             SelectedObjectStatus = "Object inspection failed";
+            if (HasMatplotlibSelection)
+                SetMatplotlibError(exception);
             SetError(exception);
         }
         finally
@@ -2409,6 +2487,231 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private static string CompactNavigationName(string name) =>
         name.Length <= 18 ? name : $"{name[..17]}…";
 
+    private async Task RefreshMatplotlibAsync()
+    {
+        if (_matplotlibHandle is null || !IsConnected)
+            return;
+        var generation = Volatile.Read(ref _detailGeneration);
+        try
+        {
+            var previewAvailable = await LoadMatplotlibDescriptionAndPreviewAsync(
+                generation,
+                _detailCts?.Token ?? _connectionCts?.Token ?? CancellationToken.None,
+                showLoading: true);
+            if (generation != _detailGeneration)
+                return;
+            SelectedObjectStatus = previewAvailable
+                ? $"Matplotlib preview refreshed · {DateTime.Now:HH:mm:ss}"
+                : $"Matplotlib render unavailable · {MatplotlibAvailabilityReason}";
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (RemoteInspectionException exception) when (exception.Code == "OBJECT_EXPIRED")
+        {
+            if (generation != _detailGeneration)
+                return;
+            InspectorState = InspectorPaneState.Expired;
+            SelectedObjectStatus = "Object expired · refresh the scope and select it again";
+            SetMatplotlibError(exception);
+        }
+        catch (Exception exception)
+        {
+            if (generation != _detailGeneration)
+                return;
+            SetMatplotlibError(exception);
+            SelectedObjectStatus = "Matplotlib preview refresh failed · use Refresh preview to retry";
+        }
+    }
+
+    private async Task<bool> LoadMatplotlibDescriptionAndPreviewAsync(
+        long generation,
+        CancellationToken token,
+        bool showLoading)
+    {
+        var handle = _matplotlibHandle;
+        if (handle is null)
+            return false;
+        var refreshGeneration = Interlocked.Increment(ref _matplotlibRefreshGeneration);
+        try
+        {
+            if (showLoading)
+            {
+                MatplotlibPreview = null;
+                MatplotlibState = MatplotlibPaneState.Loading;
+                MatplotlibStatus = "Inspecting the current Agg render…";
+                MatplotlibNextAction = "";
+                MatplotlibErrorMessage = "";
+            }
+
+            using var handleResponse = await RequestHandleResponseAsync(
+                "figures.describe",
+                new JsonObject { ["handleId"] = handle },
+                token);
+            if (!IsCurrentMatplotlibRequest(generation, refreshGeneration, handle, token))
+                throw MatplotlibRequestSuperseded(token);
+            var description = handleResponse.Frame.Header["result"]!.AsObject();
+            if (!ApplyMatplotlibMetadata(description, preservePreviewOnTransientChange: !showLoading))
+                return false;
+
+            var frame = await RequestAsync("figures.preview", new JsonObject
+            {
+                ["handleId"] = handle,
+                ["maxWidth"] = MatplotlibMaxPreviewDimension,
+                ["maxHeight"] = MatplotlibMaxPreviewDimension,
+            }, token);
+            if (!IsCurrentMatplotlibRequest(generation, refreshGeneration, handle, token))
+                throw MatplotlibRequestSuperseded(token);
+            return ApplyMatplotlibPreview(frame, preservePreviewOnTransientChange: !showLoading);
+        }
+        catch (Exception exception) when (!IsCurrentMatplotlibRequest(generation, refreshGeneration, handle, token))
+        {
+            throw MatplotlibRequestSuperseded(token, exception);
+        }
+    }
+
+    private static OperationCanceledException MatplotlibRequestSuperseded(
+        CancellationToken token,
+        Exception? innerException = null) =>
+        new("The Matplotlib preview request was superseded by a newer request.", innerException, token);
+
+    private bool IsCurrentMatplotlibRequest(
+        long generation,
+        long refreshGeneration,
+        string handle,
+        CancellationToken token) =>
+        generation == _detailGeneration
+        && refreshGeneration == Volatile.Read(ref _matplotlibRefreshGeneration)
+        && !token.IsCancellationRequested
+        && string.Equals(handle, _matplotlibHandle, StringComparison.Ordinal);
+
+    private bool ApplyMatplotlibMetadata(
+        JsonObject metadata,
+        bool preservePreviewOnTransientChange = false)
+    {
+        var adapterKind = metadata["adapterKind"]?.GetValue<string>();
+        if (adapterKind is not ("matplotlib.Figure" or "matplotlib.Axes"))
+            throw new InvalidOperationException("The Figure response has an unsupported adapter kind.");
+        var sourceKind = metadata["sourceKind"]?.GetValue<string>();
+        if (sourceKind is not ("Figure" or "Axes"))
+            throw new InvalidOperationException("The Figure response has an unsupported source kind.");
+        if ((adapterKind == "matplotlib.Figure") != (sourceKind == "Figure"))
+            throw new InvalidOperationException("The Figure response adapter and source kinds do not match.");
+        if (!string.Equals(metadata["renderedKind"]?.GetValue<string>(), "Figure", StringComparison.Ordinal))
+            throw new InvalidOperationException("The Matplotlib response must describe a rendered Figure.");
+        if (!string.Equals(metadata["sourcePixelFormat"]?.GetValue<string>(), "RGBA32", StringComparison.Ordinal))
+            throw new InvalidOperationException("The Matplotlib source pixel format must be RGBA32.");
+        var axesUsesOwningFigure = metadata["axesUsesOwningFigure"]?.GetValue<bool>() ?? false;
+        if (axesUsesOwningFigure != (sourceKind == "Axes"))
+            throw new InvalidOperationException("The Matplotlib owning-Figure metadata is inconsistent.");
+        var availability = metadata["availability"] as JsonObject
+            ?? throw new InvalidOperationException("The Figure response is missing availability metadata.");
+        var availabilityState = availability["state"]?.GetValue<string>();
+        var previewAvailable = metadata["previewAvailable"]?.GetValue<bool>() ?? false;
+        var reason = availability["reason"]?.GetValue<string>();
+
+        MatplotlibSourceKind = sourceKind;
+        MatplotlibUsesOwningFigure = axesUsesOwningFigure
+            && !string.IsNullOrWhiteSpace(metadata["figureAddressHex"]?.GetValue<string>());
+        MatplotlibCanvasType = metadata["canvasType"]?.GetValue<string>() ?? "—";
+        var sourceWidth = metadata["sourceWidth"]?.GetValue<int?>();
+        var sourceHeight = metadata["sourceHeight"]?.GetValue<int?>();
+        MatplotlibSourceDimensions = sourceWidth is > 0 && sourceHeight is > 0
+            ? $"{sourceWidth:N0} × {sourceHeight:N0} px"
+            : "—";
+        MatplotlibAvailabilityReason = reason ?? (availabilityState == "ready" ? "ready" : "unknown");
+        MatplotlibStatus = availability["message"]?.GetValue<string>()
+            ?? (availabilityState == "ready"
+                ? "A current, completed Agg render is available."
+                : "The Matplotlib render is unavailable.");
+        MatplotlibNextAction = availability["nextAction"]?.GetValue<string>() ?? "";
+        MatplotlibErrorMessage = "";
+
+        if (availabilityState == "unavailable" && !previewAvailable)
+        {
+            if (preservePreviewOnTransientChange
+                && string.Equals(reason, "buffer-changed", StringComparison.Ordinal)
+                && MatplotlibPreview is not null)
+            {
+                MatplotlibState = MatplotlibPaneState.Ready;
+                MatplotlibStatus = "The target render changed during capture; keeping the last complete preview.";
+                MatplotlibNextAction = "PyMonitor will retry automatically on the next refresh.";
+                UpdateCommandStates();
+                return false;
+            }
+            MatplotlibPreview = null;
+            MatplotlibState = MatplotlibPaneState.Unavailable;
+            UpdateCommandStates();
+            return false;
+        }
+        if (availabilityState != "ready" || !previewAvailable)
+            throw new InvalidOperationException("The Figure availability metadata is internally inconsistent.");
+        if (sourceWidth is not > 0 || sourceHeight is not > 0)
+            throw new InvalidOperationException("The ready Figure response has invalid source dimensions.");
+        if (sourceKind == "Axes" && !MatplotlibUsesOwningFigure)
+            throw new InvalidOperationException("The ready Axes response is missing its owning Figure address.");
+        return true;
+    }
+
+    private bool ApplyMatplotlibPreview(
+        ProtocolFrame frame,
+        bool preservePreviewOnTransientChange = false)
+    {
+        var metadata = frame.Header["result"]!.AsObject();
+        if (!ApplyMatplotlibMetadata(metadata, preservePreviewOnTransientChange))
+            return false;
+        if (metadata["snapshotConsistent"]?.GetValue<bool>() != true)
+            throw new InvalidOperationException("The Figure preview was not a consistent render snapshot.");
+        var width = metadata["width"]?.GetValue<int>() ?? 0;
+        var height = metadata["height"]?.GetValue<int>() ?? 0;
+        var stride = metadata["stride"]?.GetValue<int>() ?? 0;
+        if (width is < 1 or > MatplotlibMaxPreviewDimension
+            || height is < 1 or > MatplotlibMaxPreviewDimension)
+        {
+            throw new InvalidOperationException("The Figure preview dimensions exceed the bounded contract.");
+        }
+        if (!string.Equals(metadata["pixelFormat"]?.GetValue<string>(), "BGRA32", StringComparison.Ordinal))
+            throw new InvalidOperationException("The Figure preview pixel format must be BGRA32.");
+        var expectedStride = checked(width * 4);
+        if (stride != expectedStride)
+            throw new InvalidOperationException("The Figure preview stride does not match BGRA32 pixels.");
+        var expectedLength = checked(stride * height);
+        if (expectedLength > MatplotlibMaxPreviewBytes || frame.Binary.Length != expectedLength)
+            throw new InvalidOperationException("The Figure preview binary length does not match its bounded metadata.");
+
+        var bitmap = BitmapSource.Create(
+            width,
+            height,
+            96,
+            96,
+            PixelFormats.Bgra32,
+            null,
+            frame.Binary,
+            stride);
+        bitmap.Freeze();
+        MatplotlibPreview = bitmap;
+        MatplotlibState = MatplotlibPaneState.Ready;
+        MatplotlibStatus += $" Preview {width:N0} × {height:N0} px.";
+        MatplotlibNextAction = "";
+        MatplotlibErrorMessage = "";
+        UpdateCommandStates();
+        return true;
+    }
+
+    private void SetMatplotlibError(Exception exception)
+    {
+        MatplotlibPreview = null;
+        MatplotlibState = MatplotlibPaneState.Error;
+        MatplotlibStatus = "Matplotlib preview unavailable because the inspection request failed.";
+        MatplotlibNextAction = "Use Refresh preview to retry; PyMonitor never calls draw() in the target.";
+        MatplotlibErrorMessage = exception switch
+        {
+            RemoteInspectionException remote => $"{remote.Code}: {remote.Message}",
+            _ => exception.Message,
+        };
+        UpdateCommandStates();
+    }
+
     private async Task RefreshDataFrameAsync()
     {
         if (_dataFrameHandle is null || !IsConnected)
@@ -2684,7 +2987,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
         var isArray = string.Equals(context.Row.AdapterKind, "numpy.ndarray", StringComparison.Ordinal);
         var isDataFrame = string.Equals(context.Row.AdapterKind, "pandas.DataFrame", StringComparison.Ordinal);
-        if (!isArray && !isDataFrame)
+        var isMatplotlib = context.Row.AdapterKind is "matplotlib.Figure" or "matplotlib.Axes";
+        if (!isArray && !isDataFrame && !isMatplotlib)
             return;
 
         var generation = Volatile.Read(ref _detailGeneration);
@@ -2703,7 +3007,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                     linked.Token,
                     preserveViewConfiguration: true);
             }
-            else
+            else if (isDataFrame)
             {
                 _dataFrameHandle = context.Row.HandleId;
                 HasDataFrameSelection = true;
@@ -2713,9 +3017,23 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                     linked.Token,
                     showLoading: false);
             }
+            else
+            {
+                _matplotlibHandle = context.Row.HandleId;
+                HasMatplotlibSelection = true;
+                RefreshObjectHandleReferences();
+                previewAvailable = await LoadMatplotlibDescriptionAndPreviewAsync(
+                    generation,
+                    linked.Token,
+                    showLoading: false);
+            }
             if (generation != _detailGeneration || linked.IsCancellationRequested)
                 return;
-            SelectedObjectStatus = isDataFrame
+            SelectedObjectStatus = isMatplotlib
+                ? previewAvailable
+                    ? $"Live Matplotlib preview refreshed · {DateTime.Now:HH:mm:ss}"
+                    : $"Live Matplotlib render unavailable · {MatplotlibAvailabilityReason}"
+                : isDataFrame
                 ? previewAvailable
                     ? $"Live DataFrame refreshed · {DateTime.Now:HH:mm:ss}"
                     : "Live DataFrame refresh returned no consistent preview"
@@ -2737,6 +3055,10 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                     DataFrameState = DataFramePaneState.Error;
                     DataFrameErrorMessage = "OBJECT_EXPIRED: The selected DataFrame is no longer available.";
                 }
+                else if (isMatplotlib)
+                {
+                    SetMatplotlibError(exception);
+                }
             }
         }
         catch (Exception exception)
@@ -2747,6 +3069,11 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                 {
                     SetDataFrameError(exception);
                     SelectedObjectStatus = "Live DataFrame refresh paused · use Refresh in the DataFrame tab to retry";
+                }
+                else if (isMatplotlib)
+                {
+                    SetMatplotlibError(exception);
+                    SelectedObjectStatus = "Live Matplotlib refresh paused · use Refresh preview to retry";
                 }
                 else
                 {
@@ -3147,6 +3474,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             AddHandle(referenced, child.HandleId);
         AddHandle(referenced, _arrayHandle);
         AddHandle(referenced, _dataFrameHandle);
+        AddHandle(referenced, _matplotlibHandle);
 
         int? releaseGeneration = null;
         lock (_handleLifetimeSync)
@@ -3939,9 +4267,11 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         OnPropertyChanged(nameof(VariableListStatusMessage));
         _arrayHandle = null;
         _dataFrameHandle = null;
+        _matplotlibHandle = null;
         UpdateCommandStates();
         ClearArrayDetails();
         ClearDataFrameDetails(resetOffsets: true);
+        ClearMatplotlibDetails();
         ApplySelectedProcessPreview();
     }
 
@@ -3988,6 +4318,25 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         DataFrameStatus = HasDataFrameSelection
             ? "Loading bounded DataFrame preview…"
             : "Select a pandas DataFrame to preview it.";
+    }
+
+    private void ClearMatplotlibDetails()
+    {
+        Interlocked.Increment(ref _matplotlibRefreshGeneration);
+        MatplotlibPreview = null;
+        MatplotlibSourceKind = "—";
+        MatplotlibSourceDimensions = "—";
+        MatplotlibCanvasType = "—";
+        MatplotlibAvailabilityReason = HasMatplotlibSelection ? "pending" : "—";
+        MatplotlibStatus = HasMatplotlibSelection
+            ? "Inspecting the current Agg render…"
+            : "Select a Matplotlib Figure or Axes to preview it.";
+        MatplotlibNextAction = "";
+        MatplotlibErrorMessage = "";
+        MatplotlibUsesOwningFigure = false;
+        MatplotlibState = HasMatplotlibSelection
+            ? MatplotlibPaneState.Loading
+            : MatplotlibPaneState.NoSelection;
     }
 
     private void UpdateSliceMaximum()
@@ -4308,7 +4657,9 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         HasSelectedObject = false;
         HasArraySelection = false;
         HasDataFrameSelection = false;
+        HasMatplotlibSelection = false;
         ClearDataFrameDetails(resetOffsets: true);
+        ClearMatplotlibDetails();
         InspectorState = state;
         SelectedObjectName = state == InspectorPaneState.Expired ? "Selection expired" : "No object selected";
         SelectedObjectPath = "Select a variable to inspect";
@@ -4338,6 +4689,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         SelectedShallowSize = SelectedPayloadSize = "—";
         _arrayHandle = null;
         _dataFrameHandle = null;
+        _matplotlibHandle = null;
         OnPropertyChanged(nameof(IsSelectedObjectPinned));
         RefreshObjectHandleReferences();
         UpdateCommandStates();
@@ -4431,6 +4783,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         LoadTileCommand?.RaiseCanExecuteChanged();
         LoadHistogramCommand?.RaiseCanExecuteChanged();
         RefreshDataFrameCommand?.RaiseCanExecuteChanged();
+        RefreshMatplotlibCommand?.RaiseCanExecuteChanged();
         PreviousDataFrameRowsCommand?.RaiseCanExecuteChanged();
         NextDataFrameRowsCommand?.RaiseCanExecuteChanged();
         PreviousDataFrameColumnsCommand?.RaiseCanExecuteChanged();

@@ -187,6 +187,38 @@ public sealed class MainWindowSmokeTests
                 var customerHeader = Assert.IsType<StackPanel>(dataFrameGrid.Columns[1].Header);
                 Assert.Equal("customer column, dtype string", AutomationProperties.GetName(customerHeader));
 
+                var matplotlibTab = LogicalDescendants<TabItem>(window)
+                    .Single(tab => string.Equals(tab.Header?.ToString(), "Matplotlib", StringComparison.Ordinal));
+                Assert.Equal("Matplotlib Figure or Axes preview", AutomationProperties.GetName(matplotlibTab));
+                var matplotlibRefresh = LogicalDescendants<Button>(matplotlibTab)
+                    .Single(button => AutomationProperties.GetName(button) == "Refresh Matplotlib preview");
+                Assert.Same(viewModel.RefreshMatplotlibCommand, matplotlibRefresh.Command);
+                matplotlibTab.Visibility = Visibility.Visible;
+                matplotlibTab.IsEnabled = true;
+                matplotlibTab.IsSelected = true;
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                window.UpdateLayout();
+                Assert.True(matplotlibRefresh.IsVisible,
+                    "Matplotlib refresh is not visible at the minimum supported viewport.");
+                var matplotlibRefreshBounds = matplotlibRefresh.TransformToAncestor(window).TransformBounds(
+                    new Rect(0, 0, matplotlibRefresh.ActualWidth, matplotlibRefresh.ActualHeight));
+                Assert.True(matplotlibRefreshBounds.Left >= 0 && matplotlibRefreshBounds.Top >= 0
+                    && matplotlibRefreshBounds.Right <= window.ActualWidth
+                    && matplotlibRefreshBounds.Bottom <= window.ActualHeight,
+                    $"Matplotlib refresh is clipped at the minimum supported viewport: {matplotlibRefreshBounds}.");
+                var matplotlibImage = LogicalDescendants<Image>(matplotlibTab)
+                    .Single(image => AutomationProperties.GetName(image) == "Matplotlib Figure preview");
+                var matplotlibImageBinding = Assert.IsType<Binding>(BindingOperations
+                    .GetBindingBase(matplotlibImage, Image.SourceProperty));
+                Assert.Equal("MatplotlibPreview", matplotlibImageBinding.Path.Path);
+                Assert.Contains(LogicalDescendants<TextBlock>(matplotlibTab), text =>
+                    text.Text == "Showing the owning Figure.");
+                Assert.Contains(LogicalDescendants<TextBlock>(matplotlibTab), text =>
+                    text.Text.Contains("fig.canvas.draw()", StringComparison.Ordinal)
+                    && text.Text.Contains("Refresh preview", StringComparison.Ordinal));
+                Assert.Contains(LogicalDescendants<Border>(matplotlibTab), border =>
+                    AutomationProperties.GetName(border) == "Matplotlib preview state");
+
                 AssertVariablesGridIsVirtualized(window);
                 Assert.True(bindingFailures.Messages.Count == 0,
                     $"WPF reported data-binding warnings/errors:{Environment.NewLine}{string.Join(Environment.NewLine, bindingFailures.Messages)}");

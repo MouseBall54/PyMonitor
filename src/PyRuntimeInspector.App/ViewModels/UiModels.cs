@@ -157,6 +157,15 @@ public enum InspectorPaneState
     Error,
 }
 
+public enum MatplotlibPaneState
+{
+    NoSelection,
+    Loading,
+    Ready,
+    Unavailable,
+    Error,
+}
+
 public enum ObjectNodeKind
 {
     Object,

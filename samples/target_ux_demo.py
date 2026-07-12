@@ -76,9 +76,36 @@ except ImportError:
 if np is not None:
     numpy_image = np.arange(256 * 384 * 3, dtype=np.uint8).reshape(256, 384, 3)
     large_array = np.arange(2048 * 2048, dtype=np.uint16).reshape(2048, 2048)
+    height, width = 240, 320
+    y_grid, x_grid = np.indices((height, width), dtype=np.uint16)
+    bgr_gradient = np.empty((height, width, 3), dtype=np.uint8)
+    bgr_gradient[:, :, 0] = x_grid % 256
+    bgr_gradient[:, :, 1] = y_grid % 256
+    bgr_gradient[:, :, 2] = (x_grid + y_grid) % 256
+    cv_image_color = bgr_gradient.copy()
 else:
     numpy_image = "NumPy is not installed; array demo unavailable"
     large_array = numpy_image
+    bgr_gradient = numpy_image
+    cv_image_color = numpy_image
+
+try:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+except ImportError:
+    plt = None
+
+if plt is not None:
+    fig_line, ax_line = plt.subplots(figsize=(6, 4))
+    ax_line.plot([0, 1, 2, 3], [1, 4, 2, 5], marker="o", label="demo")
+    ax_line.set_title("PyMonitor Matplotlib Preview")
+    ax_line.legend()
+    fig_line.tight_layout()
+    fig_line.canvas.draw()
+else:
+    fig_line = "Matplotlib is not installed; Figure demo unavailable"
+    ax_line = fig_line
 
 
 def worker_scope() -> None:

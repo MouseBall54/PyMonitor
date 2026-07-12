@@ -585,7 +585,9 @@
                             </Border>
 
                             <Grid Grid.Row="1">
-                                <TabControl Margin="0" AutomationProperties.Name="Selected object details">
+                                <TabControl Margin="0"
+                                            SelectedIndex="{Binding SelectedObjectDetailTabIndex}"
+                                            AutomationProperties.Name="Selected object details">
                                     <TabItem Header="Overview">
                                         <Grid Margin="10">
                                             <Grid.RowDefinitions>
@@ -889,6 +891,166 @@
                                                         <Button Content="Next columns" Command="{Binding NextDataFrameColumnsCommand}" Style="{StaticResource QuietButton}" AutomationProperties.Name="Next DataFrame columns" />
                                                     </StackPanel>
                                                 </WrapPanel>
+                                            </StackPanel>
+                                        </Grid>
+                                    </TabItem>
+
+                                    <TabItem Header="Matplotlib"
+                                             IsEnabled="{Binding HasMatplotlibSelection}"
+                                             Visibility="{Binding HasMatplotlibSelection, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                             AutomationProperties.Name="Matplotlib Figure or Axes preview">
+                                        <Grid Margin="9">
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="*" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+                                            <Border Grid.Row="0"
+                                                    Background="{DynamicResource SubtleBackground}"
+                                                    BorderBrush="{DynamicResource BorderBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="5"
+                                                    Padding="10"
+                                                    Margin="0,0,0,7">
+                                                <Grid>
+                                                    <Grid.RowDefinitions>
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                    </Grid.RowDefinitions>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <StackPanel Margin="0,0,8,0">
+                                                        <TextBlock Text="MATPLOTLIB RENDER" Style="{StaticResource SectionLabel}" />
+                                                        <TextBlock Text="{Binding MatplotlibSourceKind}"
+                                                                   FontSize="16"
+                                                                   FontWeight="SemiBold"
+                                                                   Margin="0,3,0,0"
+                                                                   TextTrimming="CharacterEllipsis"
+                                                                   AutomationProperties.Name="Matplotlib source kind" />
+                                                        <TextBlock Text="{Binding MatplotlibSourceDimensions}"
+                                                                   Style="{StaticResource MutedText}"
+                                                                   FontSize="11"
+                                                                   AutomationProperties.Name="Matplotlib source dimensions" />
+                                                    </StackPanel>
+                                                    <Button Grid.Column="1"
+                                                            Content="Refresh preview"
+                                                            Command="{Binding RefreshMatplotlibCommand}"
+                                                            Style="{StaticResource PrimaryButton}"
+                                                            VerticalAlignment="Top"
+                                                            ToolTip="Read the target's current completed render again; PyMonitor never calls draw()"
+                                                            AutomationProperties.Name="Refresh Matplotlib preview" />
+                                                    <StackPanel Grid.Row="1"
+                                                                Grid.ColumnSpan="2"
+                                                                Margin="0,8,0,0">
+                                                        <TextBlock Text="{Binding MatplotlibCanvasType, StringFormat=Canvas: {0}}"
+                                                                   TextTrimming="CharacterEllipsis"
+                                                                   ToolTip="{Binding MatplotlibCanvasType}"
+                                                                   AutomationProperties.Name="Matplotlib canvas type" />
+                                                        <TextBlock Text="{Binding MatplotlibAvailabilityReason, StringFormat=Render state: {0}}"
+                                                                   Style="{StaticResource MutedText}"
+                                                                   FontSize="11"
+                                                                   Margin="0,3,0,0"
+                                                                   AutomationProperties.Name="Matplotlib availability reason"
+                                                                   AutomationProperties.LiveSetting="Polite" />
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Border>
+                                            <Grid Grid.Row="1">
+                                                <Border Background="{DynamicResource TerminalBackground}"
+                                                        BorderBrush="{DynamicResource BorderBrush}"
+                                                        BorderThickness="1"
+                                                        CornerRadius="5"
+                                                        Padding="8">
+                                                    <Image Source="{Binding MatplotlibPreview}"
+                                                           Stretch="Uniform"
+                                                           RenderOptions.BitmapScalingMode="HighQuality"
+                                                           AutomationProperties.Name="Matplotlib Figure preview" />
+                                                </Border>
+                                                <Border Background="{DynamicResource PanelBackground}"
+                                                        BorderBrush="{DynamicResource BorderBrush}"
+                                                        BorderThickness="1"
+                                                        CornerRadius="5"
+                                                        IsHitTestVisible="False"
+                                                        AutomationProperties.Name="Matplotlib preview state">
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding MatplotlibState}" Value="{x:Static vm:MatplotlibPaneState.Loading}"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                                                <DataTrigger Binding="{Binding MatplotlibState}" Value="{x:Static vm:MatplotlibPaneState.Unavailable}"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                                                <DataTrigger Binding="{Binding MatplotlibState}" Value="{x:Static vm:MatplotlibPaneState.Error}"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Border.Style>
+                                                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="620" Margin="30">
+                                                        <TextBlock FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" TextAlignment="Center">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="Text" Value="Loading Matplotlib preview" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding MatplotlibState}" Value="{x:Static vm:MatplotlibPaneState.Unavailable}"><Setter Property="Text" Value="Matplotlib render unavailable" /></DataTrigger>
+                                                                        <DataTrigger Binding="{Binding MatplotlibState}" Value="{x:Static vm:MatplotlibPaneState.Error}"><Setter Property="Text" Value="Matplotlib preview failed" /></DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                        <TextBlock Text="{Binding MatplotlibStatus}"
+                                                                   TextAlignment="Center"
+                                                                   TextWrapping="Wrap"
+                                                                   Margin="0,7,0,0"
+                                                                   AutomationProperties.Name="Matplotlib availability message"
+                                                                   AutomationProperties.LiveSetting="Polite" />
+                                                        <TextBlock Text="{Binding MatplotlibErrorMessage}"
+                                                                   Foreground="{DynamicResource DangerBrush}"
+                                                                   TextAlignment="Center"
+                                                                   TextWrapping="Wrap"
+                                                                   Margin="0,6,0,0">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding MatplotlibState}" Value="{x:Static vm:MatplotlibPaneState.Error}"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                        <TextBlock Text="{Binding MatplotlibNextAction}"
+                                                                   TextAlignment="Center"
+                                                                   TextWrapping="Wrap"
+                                                                   Margin="0,6,0,0"
+                                                                   AutomationProperties.Name="Matplotlib next action">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock" BasedOn="{StaticResource MutedText}">
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding MatplotlibState}" Value="{x:Static vm:MatplotlibPaneState.Unavailable}"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                                                        <DataTrigger Binding="{Binding MatplotlibState}" Value="{x:Static vm:MatplotlibPaneState.Error}"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                    </StackPanel>
+                                                </Border>
+                                            </Grid>
+                                            <StackPanel Grid.Row="2" Margin="0,7,0,0">
+                                                <Border Background="{DynamicResource SelectionBrush}"
+                                                        BorderBrush="{DynamicResource BorderBrush}"
+                                                        BorderThickness="1"
+                                                        CornerRadius="5"
+                                                        Padding="9,6"
+                                                        Margin="0,0,0,5"
+                                                        Visibility="{Binding MatplotlibUsesOwningFigure, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <TextBlock Text="Showing the owning Figure."
+                                                               FontWeight="SemiBold"
+                                                               AutomationProperties.Name="Showing the owning Figure" />
+                                                </Border>
+                                                <TextBlock Text="PyMonitor never calls draw() in the target. For a stale or not-rendered Figure, run fig.canvas.draw() in the target code, then choose Refresh preview."
+                                                           Style="{StaticResource MutedText}"
+                                                           FontSize="11"
+                                                           TextWrapping="Wrap"
+                                                           AutomationProperties.Name="Matplotlib target draw guidance" />
                                             </StackPanel>
                                         </Grid>
                                     </TabItem>
