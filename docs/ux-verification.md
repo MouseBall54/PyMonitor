@@ -200,7 +200,8 @@ continued answering while application threads stopped at later breakpoints.
 
 ### Remaining manual release gates
 
-The current desktop session exercised 100% scaling. Per-monitor-v2 metadata and
+The current primary display reports 2560×1440 at 96 DPI (100% scaling).
+Per-monitor-v2 metadata and
 the 960×540 automated viewport gate pass, but 125%, 150%, and 200% physical
 display scaling remain unchecked above until they are exercised interactively.
 The MSI install → upgrade → uninstall lifecycle also remains unchecked because
