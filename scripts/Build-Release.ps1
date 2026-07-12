@@ -2,12 +2,14 @@
 param(
     [switch]$SkipTests,
     [string]$CertificatePath,
-    [Security.SecureString]$CertificatePassword
+    [Security.SecureString]$CertificatePassword,
+    [string]$GitHubRepository
 )
 
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$portable = & (Join-Path $PSScriptRoot "Build-PortableRelease.ps1") -SkipArchive -SkipTests:$SkipTests
+$portable = & (Join-Path $PSScriptRoot "Build-PortableRelease.ps1") `
+    -SkipArchive -SkipTests:$SkipTests -GitHubRepository $GitHubRepository
 $exe = Join-Path $portable.ReleaseDirectory "PyMonitor.exe"
 
 if ($CertificatePath) {

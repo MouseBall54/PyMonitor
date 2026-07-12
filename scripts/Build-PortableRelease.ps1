@@ -4,6 +4,7 @@ param(
     [string]$Configuration = "Release",
     [string]$RuntimeIdentifier = "win-x64",
     [string]$OutputDirectory,
+    [string]$GitHubRepository,
     [switch]$SkipTests,
     [switch]$SkipArchive
 )
@@ -20,6 +21,10 @@ $artifactRoot = if ($OutputDirectory) { [IO.Path]::GetFullPath($OutputDirectory)
 $releaseName = "PyMonitor-$version-$RuntimeIdentifier"
 $releaseDirectory = Join-Path $artifactRoot $releaseName
 $archivePath = Join-Path $artifactRoot "$releaseName.zip"
+
+if ($GitHubRepository -and $GitHubRepository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
+    throw "GitHubRepository must use owner/repository format."
+}
 
 function Assert-WorkspaceOutput([string]$Path) {
     $fullPath = [IO.Path]::GetFullPath($Path)
@@ -53,7 +58,8 @@ if (-not $SkipTests) {
 }
 
 & $dotnet publish (Join-Path $root "src\PyRuntimeInspector.App\PyRuntimeInspector.App.csproj") `
-    -c $Configuration -r $RuntimeIdentifier --self-contained true --nologo -o $releaseDirectory
+    -c $Configuration -r $RuntimeIdentifier --self-contained true --nologo -o $releaseDirectory `
+    "-p:GitHubRepository=$GitHubRepository"
 if ($LASTEXITCODE -ne 0) { throw "Portable publish failed." }
 
 Get-ChildItem -LiteralPath $releaseDirectory -Recurse -File -Filter *.pdb | Remove-Item -Force

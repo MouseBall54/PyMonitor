@@ -15,6 +15,9 @@
   <ItemGroup>
     <ProjectReference Include="../PyRuntimeInspector.Protocol/PyRuntimeInspector.Protocol.csproj" />
   </ItemGroup>
+  <ItemGroup Condition="'$(GitHubRepository)' != ''">
+    <AssemblyMetadata Include="GitHubRepository" Value="$(GitHubRepository)" />
+  </ItemGroup>
   <ItemGroup>
     <Resource Include="Assets\app-icon.ico" />
     <Resource Include="Assets\app-icon.png" />
