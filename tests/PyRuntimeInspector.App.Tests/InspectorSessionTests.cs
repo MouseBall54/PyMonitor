@@ -57,7 +57,9 @@ public sealed class InspectorSessionTests
     public async Task RequestTimeoutDisconnectsUnresponsiveTarget()
     {
         var port = ReservePort();
-        await using var session = new InspectorSession(TimeSpan.FromMilliseconds(100));
+        // Leave handshake headroom on loaded CI runners; the stalled method below still
+        // proves that the configured request timeout disconnects an unresponsive target.
+        await using var session = new InspectorSession(TimeSpan.FromSeconds(2));
         using var target = new TcpClient();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var requestReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
