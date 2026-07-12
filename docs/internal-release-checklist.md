@@ -7,6 +7,8 @@
 ## 자체 서명 인증서의 범위
 
 - 자체 서명 PFX로 만든 Release는 내부 다운로드와 수동 설치 시험용입니다.
+- 태그로 게시한 자체 서명 빌드는 자동으로 GitHub `Pre-release`가 됩니다. 공인
+  인증서 빌드만 안정 Release로 게시됩니다.
 - 인증서를 신뢰하지 않는 PC에서는 Windows가 `알 수 없는 게시자` 경고를
   표시합니다.
 - 인앱 업데이트는 Windows가 신뢰하는 MSI 서명을 요구하므로 신뢰되지 않은 자체
@@ -84,10 +86,10 @@ $dryRunDir = Join-Path $PWD "artifacts\release-dry-run\$runId"
 gh run download $runId --name PyMonitor-signed --dir $dryRunDir
 ```
 
-`workflow_dispatch`는 Release를 만들지 않습니다. 자체 서명 인증서 때문에
-`signtool verify /pa`에서 신뢰 체인 오류가 발생하면 태그를 만들지 말고 워크플로에서
-해당 인증서를 Runner에 임시로 신뢰시키는 처리를 먼저 추가해야 합니다. 서명 검증을
-끄거나 unsigned 파일을 대신 게시하지 않습니다.
+`workflow_dispatch`는 Release를 만들지 않습니다. 워크플로는 자체 서명 인증서를
+자동 감지하여 공개 인증서만 GitHub Runner의 현재 사용자 Root 저장소에 임시로
+등록하고, `signtool verify /pa`가 끝나면 `finally`에서 인증서와 PFX를 제거합니다.
+서명 검증을 끄거나 unsigned 파일을 대신 게시하지 않습니다.
 
 ## 4. Release 태그 게시
 
@@ -104,7 +106,8 @@ git push origin "v$version"
 
 태그 푸시는 `PyMonitor Signed Release` 워크플로를 자동 실행합니다. 이 워크플로가
 테스트, EXE/MSI 서명, SHA-256 생성과 검증을 마친 뒤 GitHub Release를 생성하므로
-ZIP이나 MSI를 수동으로 올리지 않습니다.
+ZIP이나 MSI를 수동으로 올리지 않습니다. 자체 서명 인증서이면 내부용
+`Pre-release`, 공인 인증서이면 안정 Release가 생성됩니다.
 
 ```powershell
 Start-Sleep -Seconds 3

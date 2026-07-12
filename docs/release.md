@@ -169,8 +169,11 @@ a separate directory.
 
 ## Authenticode signing
 
-Release signing requires a trusted code-signing PFX. Do not commit it. To sign
-the application before ZIP creation and then sign the MSI:
+Stable Release signing requires a trusted code-signing PFX. An internal
+self-signed PFX is also accepted by the GitHub workflow, but its tagged build is
+published as a pre-release and is not an in-app update source. Do not commit
+either kind of PFX. To sign the application before ZIP creation and then sign
+the MSI locally:
 
 ```powershell
 $password = Read-Host 'PFX password' -AsSecureString
@@ -181,8 +184,12 @@ $password = Read-Host 'PFX password' -AsSecureString
 
 `Sign-Artifacts.ps1` uses the x64 Windows SDK `signtool.exe`, SHA-256 file and
 timestamp digests, DigiCert's RFC 3161 timestamp endpoint, and verifies every
-signature. Ordinary CI artifacts are explicitly named `unsigned`; only the
-signed tagged workflow supplies the assets consumed by the in-app updater.
+signature. For a self-signed PFX, the GitHub workflow temporarily adds only its
+public certificate to the ephemeral runner's current-user Root store so that
+`signtool verify /pa` can validate the signature, then removes that certificate
+and the decoded PFX in `finally`. Ordinary CI artifacts are explicitly named
+`unsigned`; only a trusted stable tagged workflow supplies assets consumed by
+the in-app updater.
 
 ## GitHub release operator runbook
 
@@ -196,7 +203,8 @@ signed tagged workflow supplies the assets consumed by the in-app updater.
    confirm only that an organization or enterprise policy does not block the
    workflow's explicit grant. The workflow token must be able to create a Release.
 2. Add both Actions secrets:
-   - `WINDOWS_CERTIFICATE_BASE64`: Base64 of a trusted code-signing PFX.
+   - `WINDOWS_CERTIFICATE_BASE64`: Base64 of a code-signing PFX. A self-signed
+     PFX produces an internal pre-release; a trusted PFX produces a stable Release.
    - `WINDOWS_CERTIFICATE_PASSWORD`: the PFX password.
 3. Protect the secrets and certificate outside the repository. Never commit a
    PFX, decoded certificate, password, or generated artifact.
@@ -251,7 +259,8 @@ The tag workflow verifies `v<version>` against `Directory.Build.props`, injects
 the current `GITHUB_REPOSITORY` slug into assembly metadata, requires both
 signing secrets, builds and tests, signs the EXE before ZIP creation, creates
 the ZIP sidecar, builds and signs the MSI, rewrites and re-verifies its sidecar,
-then creates a non-draft stable GitHub Release with generated notes.
+then creates a GitHub Release with generated notes. A detected self-signed PFX
+creates a pre-release; a trusted PFX creates a non-draft stable Release.
 
 The Release contains exactly these four public assets:
 
