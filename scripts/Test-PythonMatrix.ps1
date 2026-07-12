@@ -16,14 +16,14 @@ try {
         $requestedPython = [Environment]::GetEnvironmentVariable($environmentName)
         if (-not $requestedPython) { $requestedPython = $version }
 
-        $reportedVersion = & $uv run --python $requestedPython --with numpy --with pandas -- `
-            python -c "import platform; print(platform.python_version())"
+        $reportedVersion = & $uv run --python $requestedPython --with numpy --with pandas --with matplotlib -- `
+            python -c "import matplotlib, numpy, pandas, platform; print(platform.python_version())"
         if ($LASTEXITCODE -ne 0) { throw "Could not provision CPython $version." }
         if (-not $reportedVersion.Trim().StartsWith("$version.", [StringComparison]::Ordinal)) {
             throw "Requested CPython $version, received $reportedVersion."
         }
 
-        & $uv run --python $requestedPython --with numpy --with pandas -- `
+        & $uv run --python $requestedPython --with numpy --with pandas --with matplotlib -- `
             python -m unittest discover -s (Join-Path $root "tests\agent_tests") -v
         if ($LASTEXITCODE -ne 0) { throw "Agent tests failed on CPython $reportedVersion." }
 

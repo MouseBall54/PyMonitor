@@ -53,9 +53,11 @@ jobs:
           if (-not $env:CERTIFICATE_BASE64 -or -not $env:CERTIFICATE_PASSWORD) {
             throw "Signed releases require WINDOWS_CERTIFICATE_BASE64 and WINDOWS_CERTIFICATE_PASSWORD."
           }
-      - name: Install integration dependency
+      - name: Install and verify test dependencies
         shell: pwsh
-        run: "& $env:PYTHON312_EXECUTABLE -m pip install --disable-pip-version-check numpy"
+        run: |
+          & $env:PYTHON312_EXECUTABLE -m pip install --disable-pip-version-check numpy pandas matplotlib
+          & $env:PYTHON312_EXECUTABLE -c "import matplotlib, numpy, pandas"
       - name: Build, test, and sign release
         shell: pwsh
         env:

@@ -113,6 +113,36 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertIn("name: PyMonitor-signed", release_workflow)
         self.assertIn('title "PyMonitor $env:GITHUB_REF_NAME"', release_workflow)
 
+    def test_supported_runtime_agent_tests_provision_render_dependencies(self):
+        matrix = (self.root / "scripts" / "Test-PythonMatrix.ps1").read_text(
+            encoding="utf-8"
+        )
+        ci = (self.root / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+        release_workflow = (
+            self.root / ".github" / "workflows" / "release.yml"
+        ).read_text(encoding="utf-8")
+
+        dependency_arguments = "--with numpy --with pandas --with matplotlib --"
+        self.assertEqual(2, matrix.count(dependency_arguments))
+        self.assertIn("import matplotlib, numpy, pandas, platform", matrix)
+        for workflow in (ci, release_workflow):
+            self.assertIn("pip install --disable-pip-version-check numpy pandas matplotlib", workflow)
+            self.assertIn('import matplotlib, numpy, pandas', workflow)
+
+    def test_signed_installer_is_reverified_after_hash_sidecar_update(self):
+        release = (self.root / "scripts" / "Build-Release.ps1").read_text(
+            encoding="utf-8"
+        )
+
+        installer_sign = release.rindex('"Sign-Artifacts.ps1"')
+        sidecar_update = release.index("Set-Content", installer_sign)
+        final_verification = release.index('"Test-InstallerRelease.ps1"', sidecar_update)
+
+        self.assertLess(installer_sign, sidecar_update)
+        self.assertLess(sidecar_update, final_verification)
+
 
 if __name__ == "__main__":
     unittest.main()

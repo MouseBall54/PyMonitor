@@ -28,6 +28,9 @@ if ($CertificatePath) {
     $installerHash = (Get-FileHash -LiteralPath $installer.InstallerPath -Algorithm SHA256).Hash.ToLowerInvariant()
     Set-Content -LiteralPath $installer.Sha256Path `
         -Value "$installerHash  $([IO.Path]::GetFileName($installer.InstallerPath))" -Encoding ascii
+    $null = & (Join-Path $PSScriptRoot "Test-InstallerRelease.ps1") `
+        -InstallerPath $installer.InstallerPath `
+        -ExpectedVersion $portable.Version
 }
 
 [pscustomobject]@{
