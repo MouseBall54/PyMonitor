@@ -5,11 +5,16 @@ on Windows 10 or 11 x64. Run the packaged `PyMonitor.exe` and a real local
 CPython target together; do not substitute a ViewModel-only test for the items
 that exercise selection, focus, scaling, or process attachment.
 
+The boxes are a reusable operator walkthrough and record which scenarios were
+exercised interactively in the named sessions below. The release disposition in
+[`completion-audit.md`](completion-audit.md) also incorporates protocol,
+integration, App, packaging, and stability evidence.
+
 ## Visual shell and settings
 
-- [ ] First launch uses the Light theme and keeps primary text, selected rows,
-  disabled controls, diagnostics, and table values readable at 100%, 125%, and
-  150% Windows scaling.
+- [x] First launch uses the Light theme and keeps the shell, search and filter
+  controls, object navigation, empty state, disabled commands, and status bar
+  readable at 100%, 125%, 150%, and 200% Windows scaling.
 - [x] The four top-level tabs are Inspect, Launch, Memory, and Events; primary
   connection actions remain visible while advanced controls stay grouped.
 - [ ] Switching Light/Dark, changing refresh interval, resizing panes/window,
@@ -104,7 +109,7 @@ sales = pd.DataFrame(
 - [ ] Large containers remain paginated, object handles can surface an expired
   state cleanly, and GC scanning occurs only through an explicit Search / Scan
   or refresh action for that source.
-- [ ] The portable artifact is
+- [x] The portable artifact is
   `PyMonitor-26.7.11-win-x64.zip`; the installer is
   `PyMonitor-26.7.11-win-x64.msi`; installed shortcuts launch `PyMonitor.exe`
   and Windows Apps & Features identifies PyMonitor and developer 박영문.
@@ -166,7 +171,11 @@ Final captures:
 - [`12-final-array.jpg`](assets/ux-audit/12-final-array.jpg) — NumPy image and
   array controls
 
-### Automated release evidence
+### Intermediate automated release evidence
+
+This 2026-07-11 pass produced the following pre-final results. The final totals
+after the subsequent fixes and retest are recorded in the completion audit
+refresh below.
 
 - Agent suite: 80 tests on each available CPython 3.10.18, 3.11.9, 3.12.11,
   3.13.7, and 3.14.0rc2 runtime; the three monitoring tests are expected skips
@@ -198,14 +207,27 @@ continued answering while application threads stopped at later breakpoints.
 - Background snapshots kept the Variables selection and scroll context without
   displaying the loading overlay or rebuilding the table.
 
-### Remaining manual release gates
+### Completed manual release gates — 2026-07-12
 
-The current primary display reports 2560×1440 at 96 DPI (100% scaling).
-Per-monitor-v2 metadata and
-the 960×540 automated viewport gate pass, but 125%, 150%, and 200% physical
-display scaling remain unchecked above until they are exercised interactively.
-The MSI install → upgrade → uninstall lifecycle also remains unchecked because
-it requires an elevated Windows session. Final ZIP and MSI binaries are
+The Release UI was exercised at 125%, 150%, and 200% Windows display scaling.
+Connection actions, the Runtime source pane, variable filters, object navigation
+and header, the empty-state canvas, and the status bar remained visible without
+clipping at each scale. Both displays were restored to 100% after the captures:
+
+- [`13-final-light-125-percent.png`](assets/ux-audit/dpi/13-final-light-125-percent.png)
+- [`14-final-light-150-percent.png`](assets/ux-audit/dpi/14-final-light-150-percent.png)
+- [`15-final-light-200-percent.png`](assets/ux-audit/dpi/15-final-light-200-percent.png)
+
+The elevated MSI lifecycle also completed successfully. The verifier installed
+PyRuntime Inspector 0.1.0, upgraded in place to PyMonitor 26.7.11 while removing
+the previous product, verified the current Start Menu shortcut, and uninstalled
+PyMonitor with product registration, files, shortcut, and installer-owned state
+cleaned up. The local machine-readable result is stored at
+`artifacts/installer-lifecycle-result.json`, and the install, upgrade, and
+uninstall logs are under
+`artifacts/installer-lifecycle/20260712-120424`.
+
+No functional manual release gate remains. Final ZIP and MSI binaries are
 intentionally unsigned until a trusted Authenticode certificate is supplied.
 
 ## Completion audit refresh — 2026-07-12
@@ -220,12 +242,14 @@ release defect was fixed for Cooperative, Live, and Managed Attach, covered by
 new regression tests, and retested using the rebuilt packaged executable. The
 post-run portable verifier found no `.pyc` or `__pycache__` files.
 
-The elevated MSI lifecycle was started once on 2026-07-12, but the Windows
-elevation prompt was canceled before installation. No product was installed or
-removed, and this remains a manual release gate rather than a failed lifecycle.
+After the earlier canceled elevation prompt, a subsequent approved elevated run
+completed successfully. Its result reports `Succeeded=true`, previous-product
+installation, major-upgrade removal of 0.1.0, current-shortcut verification, and
+clean uninstall; the three MSI logs are retained in the timestamped evidence
+directory recorded above.
 
 Current automated evidence is 80 Agent tests on each CPython 3.10–3.14 runtime,
 56 .NET tests (Protocol 5, Integration 2, App 49), and a 60-second stability run
 with 10 cycles, 6,481 requests, and 1,568,768 bytes maximum working-set growth.
-The requirement-by-requirement result and remaining direct-evidence gaps are in
+The final requirement-by-requirement evidence disposition is in
 [`completion-audit.md`](completion-audit.md).
