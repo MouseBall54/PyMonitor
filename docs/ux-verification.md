@@ -63,11 +63,15 @@ sales = pd.DataFrame(
 ```
 
 - [x] Selecting each Variables row updates one persistent Selected object
-  context across Overview, Object Tree, Class and Methods, Array and Image, and
-  DataFrame.
+  context across Overview, Object Tree, Class and Methods, Array and Image,
+  DataFrame, and Matplotlib. Name remains the dominant Variables column and the
+  specialized detail tab opens automatically when appropriate.
 - [x] Search matches name/type/module/address/safe preview, and scope/change/type
   plus Arrays/Expandable/Pinned filters combine correctly. Clear filters
   restores the current page.
+- [x] Overview and Object Tree each provide an independent Name search, and
+  right-click copy actions preserve the current selection while copying the
+  selected name, value, path, type, or address.
 - [x] `demo` groups its instance field, methods, properties, class attributes,
   and inherited members; `method` exposes parameter kinds/defaults/annotations
   and source without evaluating `unsafe_property`.
@@ -230,10 +234,10 @@ uninstall logs are under
 No functional manual release gate remains. Final ZIP and MSI binaries are
 intentionally unsigned until a trusted Authenticode certificate is supplied.
 
-## Completion audit refresh — 2026-07-12
+## Earlier completion audit refresh — 2026-07-12
 
-A clean final build was run again with `samples/target_ux_demo.py`. The current
-session verified `Ctrl+F` search, a persistent `pipeline` selection, live Updated
+A clean final build was run again with `samples/target_ux_demo.py`. That session
+verified `Ctrl+F` search, a persistent `pipeline` selection, live Updated
 rows, `pipeline → metrics` navigation, level/breadcrumb/history context,
 Alt+Left/Alt+Right, method and parameter trees, and the NumPy image preview.
 Detach left managed PID 58776 running; Stop then terminated it. During this run,
@@ -248,13 +252,63 @@ installation, major-upgrade removal of 0.1.0, current-shortcut verification, and
 clean uninstall; the three MSI logs are retained in the timestamped evidence
 directory recorded above.
 
-Current automated evidence is 80 Agent tests on each CPython 3.10–3.14 runtime,
-59 .NET tests (Protocol 5, Integration 2, App 52), and a 60-second stability run
-with 10 cycles, 6,481 requests, and 1,568,768 bytes maximum working-set growth.
-The final Quick Attach follow-up additionally verified the manual-bootstrap
-instruction state, cancellation and timeout cleanup, listener-port reuse, and a
-debugger-safe Agent response while the target remained paused. The rebuilt
+At that checkpoint, automated evidence was 80 Agent tests on each CPython
+3.10–3.14 runtime, 59 .NET tests (Protocol 5, Integration 2, App 52), and a
+60-second stability run with 10 cycles, 6,481 requests, and 1,568,768 bytes
+maximum working-set growth. The Quick Attach follow-up additionally verified the
+manual-bootstrap instruction state, cancellation and timeout cleanup,
+listener-port reuse, and a debugger-safe Agent response while the target remained
+paused. The rebuilt
 portable directory and MSI each contain 446 files; all 16 packaged Agent Python
 files match repository source by relative path and SHA-256.
 The final requirement-by-requirement evidence disposition is in
 [`completion-audit.md`](completion-audit.md).
+
+## Current final-verification refresh — 2026-07-12
+
+This refresh supersedes every earlier paragraph that labels its totals as
+current. The UI and source-tree results below are final verification evidence;
+the 448-file package results are from the fresh pre-final staging build. The
+documentation-bearing final rebuild remains the authoritative artifact gate.
+
+### Selection-driven image and object inspection
+
+- The real Release WPF application rendered the exact `(240, 320, 3)` `uint8`
+  BGR gradient immediately after its nested-loop construction. Selecting the
+  array did not leave Variables in a loading state or require a second refresh.
+- Selecting a completed 600×400 Matplotlib Figure automatically opened the
+  Matplotlib tab and displayed its bounded preview. Selecting an Axes displayed
+  the complete owning Figure, preserving the same Selected object context.
+- Variables gives Name the primary visual emphasis. Overview and Object Tree
+  each have an independent Name search, and the verified right-click menus copy
+  names, values, paths, types, and addresses without disrupting navigation.
+
+### Debugger attach diagnosis and recovery
+
+The reported indefinite load after constructing the BGR array was not caused by
+the 240×320×3 array: its selection and preview complete promptly. The actual
+failure was an older Agent package retained in the paused debuggee's
+`sys.modules`, allowing stale code or a previous listener to survive a new
+bootstrap. The fresh bootstrap now validates the root module and complete cached
+package tree, source path, version, bootstrap ABI, and active connection. Tests
+exercise immediate `STALE_AGENT`, `ACTIVE_AGENT_CONFLICT`, and incompatible
+hello `INCOMPATIBLE_AGENT` responses, including same-path pre-capability and
+partial-cache cases. A Python process already carrying the legacy Agent must be
+fully restarted before attaching again; restarting only PyMonitor is not enough.
+
+### Current automated and staging evidence
+
+- Agent suite: 96 tests on each of CPython 3.10.18, 3.11.9, 3.12.9, 3.13.7,
+  and 3.14.0rc2 with NumPy, pandas, and Matplotlib installed. Only
+  version-specific expected skips remain.
+- .NET Release suites: 79 tests total (Protocol 5, Integration 2, App 72).
+- Stability gate: 60 seconds, 10 attach/detach cycles, 5,299 requests, and
+  913,408 bytes maximum working-set growth.
+- Fresh pre-final staging: the portable directory and MSI administrative
+  extraction each contain 448 files, and the verifier matched all 18 bundled
+  Agent `.py` files to repository source by relative file set and SHA-256. No
+  artifact hash values are embedded here; final ZIP/MSI sidecars are generated
+  and checked after the documentation-bearing rebuild.
+
+The current requirement-by-requirement disposition, including the remaining
+final artifact condition, is in [`completion-audit.md`](completion-audit.md).
