@@ -79,6 +79,7 @@ public sealed class ManagedPythonLauncherTests
         }, timeout.Token))["items"]!.AsArray();
         Assert.Equal("'phase-two'", FindScopeValue(globals, "MANAGED_ENV")["safePreview"]!.GetValue<string>());
         Assert.Contains("PyMonitor", FindScopeValue(globals, "MANAGED_CWD")["safePreview"]!.GetValue<string>(), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("False", FindScopeValue(globals, "MANAGED_DONT_WRITE_BYTECODE")["safePreview"]!.GetValue<string>());
 
         await session.DetachAsync();
         await Task.Delay(100, timeout.Token);
@@ -86,6 +87,47 @@ public sealed class ManagedPythonLauncherTests
         Assert.Equal(7, await handle.Completion.WaitAsync(timeout.Token));
         Assert.Contains(output, line => line.Kind == ProcessOutputKind.StandardOutput);
         Assert.Contains(output, line => line.Kind == ProcessOutputKind.StandardError);
+    }
+
+    [Fact]
+    public async Task ManagedLaunchDoesNotWriteBytecodeIntoBundledAgent()
+    {
+        var root = FindRepositoryRoot();
+        var temporaryRoot = Path.Combine(Path.GetTempPath(), "PyRuntimeInspector.Tests", Guid.NewGuid().ToString("N"));
+        var agentDirectory = CopyAgentSources(Path.Combine(root, "agent"), temporaryRoot);
+        try
+        {
+            var port = ReservePort();
+            var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+            await using var session = new InspectorSession();
+            await using var launcher = new ManagedPythonLauncher();
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var attachTask = session.AttachAsync(port, token, expectedPid: null, timeout.Token);
+            var handle = await launcher.StartAsync(new ManagedLaunchOptions(
+                ResolvePythonExecutable(),
+                Path.Combine(root, "samples", "target_managed.py"),
+                root,
+                [],
+                new Dictionary<string, string>
+                {
+                    ["PYMONITOR_TEST_WAIT"] = "1.0",
+                    ["PYMONITOR_TEST_EXIT_CODE"] = "0",
+                },
+                agentDirectory,
+                port,
+                token), timeout.Token);
+
+            await attachTask;
+            await session.DetachAsync();
+            Assert.Equal(0, await handle.Completion.WaitAsync(timeout.Token));
+            Assert.Empty(Directory.EnumerateFiles(agentDirectory, "*.pyc", SearchOption.AllDirectories));
+            Assert.Empty(Directory.EnumerateDirectories(agentDirectory, "__pycache__", SearchOption.AllDirectories));
+        }
+        finally
+        {
+            if (Directory.Exists(temporaryRoot))
+                Directory.Delete(temporaryRoot, recursive: true);
+        }
     }
 
     [Fact]
@@ -182,6 +224,17 @@ public sealed class ManagedPythonLauncherTests
         await process.WaitForExitAsync();
         var error = await errorTask;
         Assert.True(process.ExitCode == 0, $"venv creation failed with code {process.ExitCode}: {error}");
+    }
+
+    private static string CopyAgentSources(string sourceRoot, string temporaryRoot)
+    {
+        var sourcePackage = Path.Combine(sourceRoot, "pyruntime_inspector_agent");
+        var agentRoot = Path.Combine(temporaryRoot, "agent");
+        var destinationPackage = Path.Combine(agentRoot, "pyruntime_inspector_agent");
+        Directory.CreateDirectory(destinationPackage);
+        foreach (var source in Directory.EnumerateFiles(sourcePackage, "*.py"))
+            File.Copy(source, Path.Combine(destinationPackage, Path.GetFileName(source)));
+        return agentRoot;
     }
 
     private static string FindRepositoryRoot()

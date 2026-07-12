@@ -118,6 +118,8 @@ public sealed class QuickAttachReplTests
     public async Task IdleInteractiveReplGlobalsAreAvailableWithoutAUserFrame()
     {
         var root = FindRepositoryRoot();
+        var temporaryRoot = Path.Combine(Path.GetTempPath(), "PyRuntimeInspector.Tests", Guid.NewGuid().ToString("N"));
+        var agentDirectory = CopyAgentSources(Path.Combine(root, "agent"), temporaryRoot);
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
@@ -130,7 +132,8 @@ public sealed class QuickAttachReplTests
         {
             await process.StandardInput.WriteLineAsync("example_value = 1235");
             await process.StandardInput.WriteLineAsync("edd = 121");
-            await process.StandardInput.WriteLineAsync(ReplBootstrap.Build(Path.Combine(root, "agent"), port, token));
+            await process.StandardInput.WriteLineAsync(ReplBootstrap.Build(agentDirectory, port, token));
+            await process.StandardInput.WriteLineAsync("bootstrap_dont_write_bytecode = sys.dont_write_bytecode");
             await process.StandardInput.FlushAsync();
 
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -152,6 +155,7 @@ public sealed class QuickAttachReplTests
             var items = scope["items"]!.AsArray();
             Assert.Equal("1235", Find(items, "example_value")["safePreview"]!.GetValue<string>());
             Assert.Equal("121", Find(items, "edd")["safePreview"]!.GetValue<string>());
+            Assert.Equal("False", Find(items, "bootstrap_dont_write_bytecode")["safePreview"]!.GetValue<string>());
 
             await client.RequestAsync("session.detach", cancellationToken: timeout.Token);
             await Task.Delay(100, timeout.Token);
@@ -160,6 +164,8 @@ public sealed class QuickAttachReplTests
             await process.StandardInput.FlushAsync();
             await process.WaitForExitAsync(timeout.Token);
             Assert.Equal(0, process.ExitCode);
+            Assert.Empty(Directory.EnumerateFiles(agentDirectory, "*.pyc", SearchOption.AllDirectories));
+            Assert.Empty(Directory.EnumerateDirectories(agentDirectory, "__pycache__", SearchOption.AllDirectories));
         }
         finally
         {
@@ -170,6 +176,8 @@ public sealed class QuickAttachReplTests
             await process.WaitForExitAsync();
             process.Dispose();
             await Task.WhenAll(stdout, stderr);
+            if (Directory.Exists(temporaryRoot))
+                Directory.Delete(temporaryRoot, recursive: true);
         }
     }
 
@@ -193,6 +201,17 @@ public sealed class QuickAttachReplTests
         while (!predicate() && DateTime.UtcNow < deadline)
             await Task.Delay(10);
         Assert.True(predicate());
+    }
+
+    private static string CopyAgentSources(string sourceRoot, string temporaryRoot)
+    {
+        var sourcePackage = Path.Combine(sourceRoot, "pyruntime_inspector_agent");
+        var agentRoot = Path.Combine(temporaryRoot, "agent");
+        var destinationPackage = Path.Combine(agentRoot, "pyruntime_inspector_agent");
+        Directory.CreateDirectory(destinationPackage);
+        foreach (var source in Directory.EnumerateFiles(sourcePackage, "*.py"))
+            File.Copy(source, Path.Combine(destinationPackage, Path.GetFileName(source)));
+        return agentRoot;
     }
 
     private static Process StartRepl(string root)

@@ -71,6 +71,13 @@ Detach closes only the inspector connection; Stop terminates the managed process
 tree. Closing the WPF application also stops a managed target to avoid orphaned
 redirected processes.
 
+All attach paths load the bundled Agent without leaving `__pycache__` or `.pyc`
+files in a portable or installed release. Cooperative and Live Attach temporarily
+disable bytecode writes only around the Agent import and then restore the target's
+setting. Managed Launch starts the Agent bootstrap with `-B`, then restores the
+target script's environment-controlled `PYTHONDONTWRITEBYTECODE` behavior before
+executing user code.
+
 ## Phase 3 live attach
 
 The WPF app exposes Quick Attach as the default connection command. For

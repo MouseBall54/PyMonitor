@@ -19,6 +19,9 @@ application, bundles `agent/`, `samples/`, the README and docs, rejects PDB,
 PYC and `__pycache__` files, creates a ZIP, and writes a SHA-256 sidecar.
 The extracted directory is intentionally self-contained; the Python Agent is
 loaded from its sibling `agent` directory and is not installed globally.
+Quick Attach, Live Attach, and Managed Launch do not write bytecode caches into
+that bundled directory; the target program's original bytecode setting is
+restored before normal execution continues.
 The public artifacts are named `PyMonitor-26.7.11-win-x64.zip` and
 `PyMonitor-26.7.11-win-x64.zip.sha256`; the application executable is
 `PyMonitor.exe`.

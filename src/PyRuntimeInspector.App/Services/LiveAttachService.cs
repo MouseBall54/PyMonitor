@@ -184,15 +184,21 @@ import base64
 import sys
 
 _agent_directory = base64.b64decode("{{agentDirectory}}").decode("utf-8")
-if _agent_directory not in sys.path:
-    sys.path.insert(0, _agent_directory)
-from pyruntime_inspector_agent import start_inspector as _start_inspector
-_start_inspector(
-    host="127.0.0.1",
-    port={{options.InspectorPort}},
-    token=base64.b64decode("{{token}}").decode("utf-8"),
-    attach_mode="live",
-)
+_pymonitor_previous_dont_write_bytecode = sys.dont_write_bytecode
+try:
+    sys.dont_write_bytecode = True
+    if _agent_directory not in sys.path:
+        sys.path.insert(0, _agent_directory)
+    from pyruntime_inspector_agent import start_inspector as _start_inspector
+    _start_inspector(
+        host="127.0.0.1",
+        port={{options.InspectorPort}},
+        token=base64.b64decode("{{token}}").decode("utf-8"),
+        attach_mode="live",
+    )
+finally:
+    sys.dont_write_bytecode = _pymonitor_previous_dont_write_bytecode
+    del _pymonitor_previous_dont_write_bytecode
 del _agent_directory, _start_inspector
 """;
     }

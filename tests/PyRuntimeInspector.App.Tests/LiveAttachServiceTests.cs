@@ -18,6 +18,8 @@ public sealed class LiveAttachServiceTests
         if (string.IsNullOrWhiteSpace(python) || !File.Exists(python))
             return;
 
+        var temporaryRoot = Path.Combine(Path.GetTempPath(), "PyRuntimeInspector.Tests", Guid.NewGuid().ToString("N"));
+        var agentDirectory = CopyAgentSources(FindAgentDirectory(), temporaryRoot);
         var startInfo = new ProcessStartInfo
         {
             FileName = python,
@@ -27,7 +29,7 @@ public sealed class LiveAttachServiceTests
             RedirectStandardError = true,
         };
         startInfo.ArgumentList.Add("-c");
-        startInfo.ArgumentList.Add("import time; example_value=1235; print('ready', flush=True); exec(\"while True:\\n time.sleep(0.05)\")");
+        startInfo.ArgumentList.Add("import sys,time; example_value=1235; print('ready', flush=True); exec(\"while True:\\n current_dont_write_bytecode=sys.dont_write_bytecode\\n time.sleep(0.05)\")");
         using var target = Process.Start(startInfo) ?? throw new InvalidOperationException("Python target did not start.");
         try
         {
@@ -42,7 +44,7 @@ public sealed class LiveAttachServiceTests
             await using var lease = await service.StartAsync(new LiveAttachOptions(
                 target.Id,
                 python,
-                FindAgentDirectory(),
+                agentDirectory,
                 port,
                 token), timeout.Token);
             var runtime = await connection;
@@ -57,6 +59,10 @@ public sealed class LiveAttachServiceTests
             var items = mainScope.Header["result"]!["items"]!.AsArray();
             var example = items.Single(item => item!["name"]!.GetValue<string>() == "example_value")!;
             Assert.Equal("1235", example["value"]!["safePreview"]!.GetValue<string>());
+            var bytecodeSetting = items.Single(item => item!["name"]!.GetValue<string>() == "current_dont_write_bytecode")!;
+            Assert.Equal("False", bytecodeSetting["value"]!["safePreview"]!.GetValue<string>());
+            Assert.Empty(Directory.EnumerateFiles(agentDirectory, "*.pyc", SearchOption.AllDirectories));
+            Assert.Empty(Directory.EnumerateDirectories(agentDirectory, "__pycache__", SearchOption.AllDirectories));
             await session.DetachAsync();
             await Task.Delay(100);
             Assert.False(target.HasExited);
@@ -66,6 +72,8 @@ public sealed class LiveAttachServiceTests
             if (!target.HasExited)
                 target.Kill(entireProcessTree: true);
             await target.WaitForExitAsync();
+            if (Directory.Exists(temporaryRoot))
+                Directory.Delete(temporaryRoot, recursive: true);
         }
     }
 
@@ -135,6 +143,17 @@ public sealed class LiveAttachServiceTests
             directory = directory.Parent;
         }
         throw new DirectoryNotFoundException("Repository agent directory was not found.");
+    }
+
+    private static string CopyAgentSources(string sourceRoot, string temporaryRoot)
+    {
+        var sourcePackage = Path.Combine(sourceRoot, "pyruntime_inspector_agent");
+        var agentRoot = Path.Combine(temporaryRoot, "agent");
+        var destinationPackage = Path.Combine(agentRoot, "pyruntime_inspector_agent");
+        Directory.CreateDirectory(destinationPackage);
+        foreach (var source in Directory.EnumerateFiles(sourcePackage, "*.py"))
+            File.Copy(source, Path.Combine(destinationPackage, Path.GetFileName(source)));
+        return agentRoot;
     }
 
     private static int GetAvailablePort()

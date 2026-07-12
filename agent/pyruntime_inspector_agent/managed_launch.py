@@ -24,6 +24,10 @@ def main():
         sys.path.insert(0, script_directory)
 
     start_inspector()
+    # ``-B`` keeps the bundled Agent directory clean while its package is
+    # imported. Restore the target program's original environment-controlled
+    # behavior before executing user code.
+    sys.dont_write_bytecode = bool(os.environ.get("PYTHONDONTWRITEBYTECODE"))
     runpy.run_path(script, run_name="__main__")
 
 

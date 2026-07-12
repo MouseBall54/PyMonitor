@@ -68,6 +68,7 @@ public sealed class ManagedPythonLauncher : IManagedPythonLauncher
                 StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding = Encoding.UTF8,
             };
+            startInfo.ArgumentList.Add("-B");
             startInfo.ArgumentList.Add("-m");
             startInfo.ArgumentList.Add("pyruntime_inspector_agent.managed_launch");
             startInfo.ArgumentList.Add(options.ScriptPath);
