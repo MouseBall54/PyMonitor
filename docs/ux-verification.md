@@ -267,9 +267,8 @@ The final requirement-by-requirement evidence disposition is in
 ## Current final-verification refresh — 2026-07-12
 
 This refresh supersedes every earlier paragraph that labels its totals as
-current. The UI and source-tree results below are final verification evidence;
-the 448-file package results are from the fresh pre-final staging build. The
-documentation-bearing final rebuild remains the authoritative artifact gate.
+current. The UI, source-tree, and 448-file package results below are final
+verification evidence from the documentation-bearing release staging build.
 
 ### Selection-driven image and object inspection
 
@@ -304,11 +303,11 @@ fully restarted before attaching again; restarting only PyMonitor is not enough.
 - .NET Release suites: 79 tests total (Protocol 5, Integration 2, App 72).
 - Stability gate: 60 seconds, 10 attach/detach cycles, 5,299 requests, and
   913,408 bytes maximum working-set growth.
-- Fresh pre-final staging: the portable directory and MSI administrative
+- Final release staging: the portable directory and MSI administrative
   extraction each contain 448 files, and the verifier matched all 18 bundled
-  Agent `.py` files to repository source by relative file set and SHA-256. No
-  artifact hash values are embedded here; final ZIP/MSI sidecars are generated
-  and checked after the documentation-bearing rebuild.
+  Agent `.py` files to repository source by relative file set and SHA-256. It
+  found no PDB, PYC, or bytecode-cache artifacts, and both ZIP/MSI sidecars match
+  the final binary name and SHA-256. No artifact hash values are embedded here.
 
-The current requirement-by-requirement disposition, including the remaining
-final artifact condition, is in [`completion-audit.md`](completion-audit.md).
+The current requirement-by-requirement disposition is in
+[`completion-audit.md`](completion-audit.md).

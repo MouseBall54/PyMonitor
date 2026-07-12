@@ -1,12 +1,10 @@
 # PyMonitor 26.7.11 completion audit
 
 This audit maps the product objective to evidence from the current `master`
-worktree, current real-UI verification, and the clean pre-final Windows staging
+worktree, current real-UI verification, and the clean Windows release staging
 build produced on 2026-07-12. A requirement is marked proven only when its test,
 runtime behavior, or packaged artifact was inspected directly. Passing a
-related narrow test is not treated as proof of a broader requirement. Staged
-ZIP/MSI evidence is explicitly preliminary until the documentation-bearing
-final rebuild is verified.
+related narrow test is not treated as proof of a broader requirement.
 
 ## Requirement evidence
 
@@ -27,7 +25,7 @@ final rebuild is verified.
 | CPython 3.10–3.14, subprocess integration, detach, and stability | Proven | Current five-runtime matrix: 96 tests on each of 3.10.18, 3.11.9, 3.12.9, 3.13.7, and 3.14.0rc2 with NumPy, pandas, and Matplotlib installed; only version-specific expected skips remain. Current .NET Release suites: Protocol 5, Integration 2, App 72 (79 total). Current 60-second gate: 10 cycles, 5,299 requests, maximum working-set growth 913,408 bytes. The current Managed Launch UI run confirmed Detach leaves the target running and Stop terminates it. Quick Attach regressions also prove bounded manual-bootstrap waiting, cancellation, listener-port release, and debugger-safe responses across paused breakpoints. |
 | Stale cached Agent detection and attach recovery | Proven | The debugger hang was traced to an older Agent package retained in the debuggee's `sys.modules`, which could silently reuse stale code or a previous listener. Fresh-bootstrap tests cover the root module and complete cached package tree, version/path/bootstrap-ABI mismatch, partial caches, and active connection conflicts. `STALE_AGENT`, `ACTIVE_AGENT_CONFLICT`, and incompatible hello `INCOMPATIBLE_AGENT` failures are returned immediately and deterministically; restarting the Python debuggee remains the recovery for an already affected legacy process. |
 | Agent loading leaves portable/install directories clean | Proven | Quick, Live, and Managed attach regression tests assert that no `.pyc` or `__pycache__` is created and that `sys.dont_write_bytecode` is restored. A clean packaged `PyMonitor.exe` was then used for a real Managed Launch; the portable verifier still found zero development artifacts afterward. |
-| Portable ZIP and MSI contents, metadata, icon, shortcut definition, and hashes | Pre-final staging proven | The fresh pre-final portable directory and MSI administrative extraction each contain 448 files. The verifier matched all 18 bundled Agent Python files to repository source by relative file set and SHA-256. The documentation-bearing final rebuild must rerun these checks and recompute matching ZIP/MSI sidecars; exact hash values remain external to the packaged audit to avoid making the archive hash self-referential. |
+| Portable ZIP and MSI contents, metadata, icon, shortcut definition, and hashes | Proven | The documentation-bearing portable directory and MSI administrative extraction each contain 448 files. The verifier matched all 18 bundled Agent Python files to repository source by relative file set and SHA-256, found no PDB/PYC/cache artifacts, and both external ZIP/MSI sidecars match the final binary name and SHA-256. Exact hash values remain external to the packaged audit to avoid making the archive hash self-referential. |
 | Previous-version upgrade and clean uninstall | Proven | `artifacts/installer-lifecycle-result.json` reports `Succeeded=true`: PyRuntime Inspector 0.1.0 was installed, the PyMonitor 26.7.11 major upgrade removed the previous product, the current shortcut was verified, and uninstall cleanup passed. Install, upgrade, and uninstall logs are retained under `artifacts/installer-lifecycle/20260712-120424`. |
 | Documentation, limitations, architecture, protocol, security, release instructions, and before/after captures | Proven | README and `docs/` cover the requested surfaces. `docs/assets/ux-audit/01-before.jpg` is the baseline; final Light, About, Dark selection, class tree, array, and 125%/150%/200% DPI captures are linked from `ux-verification.md`. |
 | Authenticode release signing | Correctly deferred | No trusted certificate was supplied. The signing pipeline remains available, while the current EXE/MSI are intentionally and explicitly unsigned as required. |
@@ -36,8 +34,8 @@ final rebuild is verified.
 
 The implementation, safety, automated quality gates, real runtime inspection,
 MSI metadata/extraction and elevated lifecycle, documentation, and physical
-125%/150%/200% display-scaling checks are proven. The clean portable/MSI
-pre-final staging build is also proven; release acceptance remains conditional
-on rebuilding from the documentation-bearing commit and rerunning the package,
-source-hash, and sidecar verifiers. Authenticode signing remains correctly
-deferred until a trusted certificate is supplied.
+125%/150%/200% display-scaling checks are proven. The clean portable ZIP and MSI
+were rebuilt from the documentation-bearing commit, and the package,
+source-hash, and sidecar verifiers passed. No functional or manual release gate
+remains. Authenticode signing remains correctly deferred until a trusted
+certificate is supplied.
