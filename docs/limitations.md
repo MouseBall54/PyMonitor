@@ -43,11 +43,24 @@
   are capped at 200 rows, 100 columns, and 2,000 cells. Unsupported extension
   cells are unavailable, and the bounded change fingerprint is not a full-frame
   checksum.
+- Matplotlib preview requires an exact regular `Figure` or `Axes` from an
+  already-loaded Matplotlib module and a current, completed Agg render. PyMonitor
+  never calls `draw()` or `draw_idle()`; the target must call
+  `fig.canvas.draw()` before refresh when a Figure is new or stale. An Axes
+  selection shows the complete owning Figure. The preview is sampled to at most
+  1024 by 1024 BGRA32 pixels (4 MiB), and the bounded change token is not a
+  full-render checksum.
 - CPython 3.10-3.13 has no supported unmodified live-injection API. Quick
   Attach reduces the cooperative bootstrap to one paste and Enter in the
   selected REPL, then validates the connected PID.
 - CPython 3.14 Live Attach still needs a Python safe point. An idle interactive
   REPL may require one Enter keypress before the scheduled bootstrap runs.
+- A Python debuggee that still has an incompatible or partial Agent package in
+  `sys.modules` cannot be repaired by restarting PyMonitor alone. Quick Attach
+  reports `STALE_AGENT` or `INCOMPATIBLE_AGENT`; fully stop and restart the
+  debuggee, then attach again. `ACTIVE_AGENT_CONFLICT` means another Agent
+  connection is still active with different settings; detach that session or
+  restart the debuggee.
 - Module browsing includes already-loaded exact Python modules only. Namespace
   snapshots can become stale immediately and modules removed during inspection
   return a structured invalid-argument error.

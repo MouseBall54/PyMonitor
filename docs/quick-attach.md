@@ -42,8 +42,35 @@ against the preceding snapshot.
 
 The copied line contains the bundled Agent directory, loopback port, and a new
 one-time 256-bit token. The connected runtime PID must equal the selected PID.
-It imports only the bundled `pyruntime_inspector_agent`, starts its daemon
-connection thread, and returns control to the REPL immediately.
+It executes the bundled `bootstrap.py` freshly with `runpy.run_path`, then starts
+the Agent daemon connection thread and returns control to the REPL immediately.
+CPython 3.14+ Live Attach uses the same fresh bootstrap path.
+
+Before importing or starting the Agent, the bootstrap snapshots the complete
+`pyruntime_inspector_agent` prefix in `sys.modules`. It validates the cached
+package root's Agent version, bootstrap ABI, and normalized `__init__.py` path,
+requires every cached child module to live under that same shipped package, and
+rejects a partial child-only cache. After import it repeats the path/tree check.
+The authenticated `session.hello` then reports `agentVersion` and
+`bootstrapAbi`, which the WPF client validates before requesting runtime data.
+
+## Cached-Agent errors and recovery
+
+Bootstrap compatibility failures are sent to the waiting listener immediately
+instead of leaving PyMonitor in a loading state:
+
+- `STALE_AGENT`: a cached package has a mismatched version, ABI, path, invalid
+  module object, or partial/mixed module tree.
+- `INCOMPATIBLE_AGENT`: the connected Agent's hello version or ABI differs from
+  the WPF client's expected contract.
+- `ACTIVE_AGENT_CONFLICT`: an Agent is already active with a different port,
+  token, or attach mode.
+
+For `STALE_AGENT` or `INCOMPATIBLE_AGENT`, fully stop and restart the Python
+debuggee, then run Quick Attach again. Restarting PyMonitor alone cannot clear
+modules cached inside the target process. For `ACTIVE_AGENT_CONFLICT`, first
+Detach the existing PyMonitor session when possible; otherwise restart the
+debuggee.
 
 Module inspection reads the direct dictionary of an already-loaded exact
 Python module. It does not import modules, invoke attributes, evaluate
@@ -71,10 +98,11 @@ connection.
 
 Keep PyMonitor attached while stepping. Automatic snapshots update variable
 rows in place without showing the loading overlay or resetting selection and
-scroll position. A selected NumPy/OpenCV image or pandas DataFrame is re-read in
-the background, so an in-place operation such as `cv2.rectangle` or a DataFrame
-cell assignment can be compared at the next paused line. The snapshot is still
-non-atomic; the status timestamp identifies when the displayed data was read.
+scroll position. A selected NumPy/OpenCV image, pandas DataFrame, or rendered
+Matplotlib Figure/Axes is re-read in the background, so an in-place operation
+such as `cv2.rectangle`, a DataFrame cell assignment, or a completed Figure
+draw can be compared at the next paused line. The snapshot is still non-atomic;
+the status timestamp identifies when the displayed data was read.
 
 `samples/test_python_code.py` provides a practical OpenCV path. Stop before and
 after its gradient creation, `cv2.rectangle`, `cv2.putText`, grayscale, and mask

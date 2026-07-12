@@ -21,13 +21,16 @@ Inspect is a master-detail workflow with three linked regions:
    in **Runtime Tree**.
 2. Search, filter, and select a row in **Variables**.
 3. Inspect that same selected object in **Overview**, **Object Tree**,
-   **Class and Methods**, **Array and Image**, or **DataFrame**.
+   **Class and Methods**, **DataFrame**, **Matplotlib**, or **Array and Image**.
 
 Changing the variable selection replaces the complete Selected object context;
 the detail views are not independent object pickers. Exact NumPy arrays enable
 Array and Image, while an exact, already-loaded pandas DataFrame enables the
-DataFrame table preview. Other values keep those specialized views unavailable
-while preserving Overview, Object Tree, and Class and Methods.
+DataFrame table preview and an exact regular, already-loaded Matplotlib Figure
+or Axes enables Matplotlib preview. Selecting one of these adapter values opens
+its specialized tab automatically; ordinary values open Overview. Other values
+keep specialized views unavailable while preserving Overview, Object Tree, and
+Class and Methods.
 
 The detail header exposes the selected path, type, safe preview, address, and
 read-only status. A clickable root-to-current breadcrumb, depth label, and
@@ -37,12 +40,23 @@ ancestor can be opened directly. Pin/unpin, copy path, and copy address remain
 available. Pins last for the current connection session and can be reopened
 from **Pinned objects**.
 
+The Variables **Name** column uses accent color and semibold weight so bindings
+remain the primary scan target. Right-click any displayed text to copy that
+single value. Right-clicking a table cell also selects the cell under the
+pointer and offers the standard selected-cell copy command.
+
 ## Search, filters, and snapshot changes
 
 Variables search matches name, type, module, qualified type, address, and safe
 preview. Scope, change classification, and exact type filters combine with the
 Arrays, Expandable, and Pinned toggles. **Clear filters** restores the complete
 current page.
+
+Overview has a separate search that filters only immediate-child names. Object
+Tree has its own search over names already loaded into the lazy tree; it does
+not fetch unexpanded pages. Matching ancestry expands temporarily and matching
+names are emphasized. Clearing the query restores the expansion state that
+existed before the search, including after a detail refresh.
 
 For ordinary frame and module scopes, filtering operates on the current
 snapshot. GC-tracked object search is different: the query is sent only after
@@ -67,8 +81,9 @@ change the exposed metadata and therefore may not be highlighted.
 Automatic refresh reconciles Variables rows in place. It does not clear and
 repopulate the table or show the loading overlay, so the selected row, realized
 DataGrid containers, and scroll position remain stable. When the selected value
-is a NumPy/OpenCV array or DataFrame, its preview is refreshed in the background
-without resetting the current slice, layout, or row/column page.
+is a NumPy/OpenCV array, DataFrame, or rendered Matplotlib Figure/Axes, its
+preview is refreshed in the background without resetting the current slice,
+layout, row/column page, or last valid Figure image.
 
 ## Object Tree
 
@@ -78,8 +93,8 @@ Children load on demand in pages of 100. **Load more** requests the next page
 without materializing the entire container in the UI.
 
 Opening a child makes it the Selected object, so its class, array, DataFrame,
-and overview information stay synchronized. The breadcrumb records the complete
-root-to-current chain, highlights the current node, and lets the user return to
+Matplotlib, and overview information stay synchronized. The breadcrumb records
+the complete root-to-current chain, highlights the current node, and lets the user return to
 any ancestor without replaying Back. Back, Forward, and Parent remain available
 with destination labels and tooltips. Repeated object identity in the current
 ancestor chain is marked as a cycle and cannot be expanded. The UI stops
@@ -122,6 +137,21 @@ The Agent accepts larger bounded pages but caps each response at 200 rows, 100
 columns, and 2,000 cells. It does not import pandas, call DataFrame properties,
 or serialize the complete frame. Unsupported extension-array cells remain
 unavailable instead of invoking user accessors.
+
+## Matplotlib
+
+The Matplotlib tab accepts only exact regular `Figure` and `Axes` objects from
+an already-loaded Matplotlib package. It reads only a current, completed render
+from an Agg-derived canvas, samples it to at most 1024 by 1024, and renders a
+maximum 4 MiB BGRA32 bitmap. PyMonitor never imports Matplotlib or NumPy for
+this adapter and never calls `draw()`, `draw_idle()`, artist code, callbacks,
+descriptors, or target properties.
+
+An Axes selection deliberately displays its complete owning Figure and labels
+that relationship. A new or stale Figure remains unavailable until target code
+calls `fig.canvas.draw()` and the preview is refreshed. If the render buffer
+changes during a bounded copy, the tab preserves the last valid image and can
+retry on the next refresh.
 
 ## Connection modes
 

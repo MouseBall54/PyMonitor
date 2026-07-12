@@ -15,7 +15,8 @@
   target drawing, `buffer_rgba`, an Axes getter, artist/formatter code, target
   callbacks, descriptors, or properties. An Axes preview is explicitly the
   complete owning Figure. Stale, missing, non-Agg, inconsistent, or changing
-  renders remain unavailable instead of executing target code.
+  renders remain unavailable instead of executing target code. A successful
+  preview is capped at 1024 by 1024 BGRA32 pixels (4 MiB).
 - Object handles are opaque, session-scoped, TTL-bound, LRU-bounded, and all
   released on detach.
 - Variable namespaces and object-child responses that carry handles are capped
@@ -64,8 +65,22 @@
 - The listener is active before the line is copied and accepts only the selected
   process PID. Once connected, the listener closes, so the clipboard token
   cannot establish a second connection.
-- The bootstrap imports only the bundled Agent and starts its daemon connection
-  thread. It does not evaluate a user expression or modify inspected values.
+- Quick Attach and Live Attach execute the shipped `bootstrap.py` freshly rather
+  than importing a possibly cached bootstrap entry point. Before starting the
+  Agent, it validates the package root's exact version, bootstrap ABI, normalized
+  source path, and every cached module under the package prefix. Partial or mixed
+  caches are rejected.
+- A compatible bootstrap imports only the bundled Agent and starts its daemon
+  connection thread. It does not evaluate a user expression or modify inspected
+  values.
+- Cache mismatch and active-connection failures use the one-time token to send
+  `STALE_AGENT` or `ACTIVE_AGENT_CONFLICT` directly to the pending hello. A
+  connected Agent returns `agentVersion` and `bootstrapAbi`; the controller
+  reports an unexpected contract as `INCOMPATIBLE_AGENT` before inspection.
+- An already-active Agent is reused only when host, port, token, and attach mode
+  all match the repeated bootstrap. Any different connection setting is rejected
+  as `ACTIVE_AGENT_CONFLICT`; the bootstrap never silently redirects an active
+  Agent to a new controller.
 
 ## CPython 3.14+ live attach
 

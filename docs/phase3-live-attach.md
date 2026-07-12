@@ -26,6 +26,6 @@ appears as an agent connection timeout.
 
 ## Verification
 
-The integration test starts the official CPython 3.14.6 Windows x64 runtime,
+The integration test starts the local CPython 3.14.0rc2 Windows x64 runtime,
 attaches through the complete helper/bootstrap/session path, verifies the PID
 and `attachMode: live`, detaches, and confirms that the target is still running.

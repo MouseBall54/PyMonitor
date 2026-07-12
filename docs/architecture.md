@@ -13,8 +13,8 @@ The minimal projects are:
 
 - `PyRuntimeInspector.Protocol`: framing and a sequential request client.
 - `PyRuntimeInspector.Cli`: a small listener/controller for cooperative targets.
-- `pyruntime_inspector_agent`: runtime, frame, scope, safe object, class, and
-  NumPy inspection.
+- `pyruntime_inspector_agent`: runtime, frame, scope, safe object, class,
+  NumPy, pandas, and Matplotlib inspection.
 
 Win32 memory APIs, tracing, and native protocol reimplementations are later
 phases.
@@ -43,7 +43,13 @@ cannot block window shutdown.
 The current Inspect workspace uses a selection-driven master-detail structure:
 Runtime Tree chooses the data source, Variables owns search/filter/change
 comparison, and one persistent Selected object context drives Overview, Object
-Tree, Class and Methods, and Array and Image. Object navigation keeps bounded
+Tree, Class and Methods, DataFrame, Matplotlib, and Array and Image. Selecting an
+exact supported adapter automatically opens its specialized tab; ordinary
+objects open Overview. The Variables Name column is visually emphasized.
+Overview and Object Tree have independent name searches: Object Tree searches
+only already-loaded nodes, temporarily expands matching ancestry, and restores
+the pre-search expansion state when cleared. Displayed text and DataGrid cells
+can be copied from their right-click menus. Object navigation keeps bounded
 history and parent context, while cycle/depth markers prevent unbounded tree
 expansion. Pins and history protect referenced handles from eager release for
 that connection. Weak-referenceable targets can still disappear, while
@@ -55,6 +61,12 @@ The array viewer creates a frozen `WriteableBitmap` from bounded Gray8, RGB24,
 or BGRA32 payloads. WPF handles nearest-neighbor zoom; the overlay draws a pixel
 grid at high magnification. Exact pixel values are requested separately using
 source coordinates.
+
+The Matplotlib viewer accepts only exact regular, already-loaded `Figure` or
+`Axes` objects. It samples an already completed, current Agg RGBA buffer and
+returns at most 1024 by 1024 BGRA32 pixels (4 MiB); it never asks the target to
+draw. Selecting an Axes deliberately shows its complete owning Figure rather
+than a cropped axes image.
 
 ## Phase 2 managed launch
 
@@ -85,18 +97,30 @@ CPython 3.14+, it starts its loopback listener before invoking a short-lived hel
 with the selected target's own `python.exe`. The helper calls
 `sys.remote_exec(pid, bootstrap.py)`, while the bootstrap path and one-time token
 remain in a randomly named user temporary directory until the agent connects.
-The bootstrap adds only the shipped agent directory to `sys.path` and starts the
-agent with `attachMode: live`.
+The helper executes the shipped `bootstrap.py` as a fresh file, adds only the
+shipped agent directory to `sys.path`, validates the cached package root's
+version, bootstrap ABI, and normalized path plus every cached package module's
+path, and starts the agent with `attachMode: live` only when that module tree is
+compatible.
 
 The helper can optionally run with the Windows `runas` verb. This elevates only
 the helper, not the WPF process. The target must be CPython 3.14+ and must reach
 a safe Python execution point before the bootstrap runs.
 
 For CPython 3.10-3.13, Quick Attach starts the listener and places a complete
-single-line cooperative bootstrap on the clipboard. The selected runtime PID
-is still verified after authentication. Once connected, the client lists
+single-line cooperative bootstrap on the clipboard. That line uses the same
+fresh, cache-aware bootstrap as Live Attach. The selected runtime PID is still
+verified after authentication. Once connected, the client lists
 already-loaded modules and automatically opens the direct `__main__` namespace;
 this keeps idle REPL globals visible without requiring an active frame.
+
+A stale or partial package cache is reported immediately as `STALE_AGENT`; an
+already-active Agent with different connection settings reports
+`ACTIVE_AGENT_CONFLICT`. The authenticated hello returns `agentVersion` and
+`bootstrapAbi`, and the WPF client rejects a mismatch as `INCOMPATIBLE_AGENT`
+before any runtime inspection. A stale or incompatible cache requires a full
+Python debuggee restart, because restarting only the WPF process does not clear
+the target's `sys.modules`.
 
 ## Phase 4 memory and timeline
 

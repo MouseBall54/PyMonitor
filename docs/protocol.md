@@ -9,7 +9,10 @@ Requests contain `protocolVersion`, `messageType`, `requestId`, `method`,
 `params`, and `binaryLength`. Responses echo the request ID and contain either
 `ok: true` with `result`, or `ok: false` with a structured `error`.
 
-The first request must be `session.hello` with the session token. The supported
+The first request must be `session.hello` with the session token. A successful
+hello returns `protocolVersion`, `agentVersion`, and integer `bootstrapAbi`.
+The WPF client validates the Agent version and bootstrap ABI before sending any
+inspection request and reports a mismatch as `INCOMPATIBLE_AGENT`. The supported
 Phase 0 methods are `session.detach`, `runtime.getInfo`, `threads.list`,
 `frames.list`, `scopes.list`, `objects.describe`, `objects.listChildren`,
 `modules.list`, `modules.listNamespace`, `gc.listObjects`,
@@ -24,6 +27,12 @@ and `pageSize`. The default is 100. Scope, module-namespace, object-child, and
 GC pages that create value handles are capped at 200 rows. Metadata-only module
 listing and execution-event methods retain their method-specific limits up to
 1,000 rows.
+
+The fresh Quick/Live Attach bootstrap may answer the pending hello directly
+with `STALE_AGENT` when the target has an incompatible or partial cached Agent
+module tree, or `ACTIVE_AGENT_CONFLICT` when an Agent is already running with
+different connection settings. These authenticated structured errors terminate
+the attach attempt immediately instead of waiting for its normal timeout.
 
 Requests are sequential on one TCP stream. Cancellation after a frame is sent
 suppresses stale UI application but still drains that response before another
@@ -112,6 +121,13 @@ directly, revalidates renderer identity, stale state, shape, and sampled bytes,
 and returns at most 1024 by 1024 BGRA32 pixels (4 MiB) with source dimensions
 and sampling steps. A bounded pixel sample contributes to the Figure/Axes
 change token; it is not a full-render checksum.
+
+A successful Figure preview reports `snapshotConsistent: true`,
+`sourcePixelFormat: RGBA32`, and payload `pixelFormat: BGRA32`. The payload
+invariants are `stride == width * 4` and `binaryLength == stride * height`; the
+WPF client rejects a response that violates them. A render that changes during
+copy returns no binary payload and `snapshotConsistent: false` instead of a
+partially mixed image.
 
 Memory statistics support `lineno`, `filename`, and `traceback` grouping and a
 maximum result limit of 200. Snapshot identifiers are opaque and scoped to the

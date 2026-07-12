@@ -3,7 +3,8 @@
 Phase 7 turns the Phase 0-6 implementation into reproducible Windows release
 artifacts. PyMonitor is developed by 박영문. The product version is `26.7.11`
 and is shared by the .NET assemblies, the Python package, and the runtime
-handshake.
+handshake. The independent integer bootstrap ABI is also shared by the Python
+Agent and WPF attach client.
 
 ## Portable release
 
@@ -44,6 +45,16 @@ CI runs all Python Agent tests on standard-GIL x64 CPython 3.10, 3.11, 3.12,
 Set `PYTHON_3_14_EXECUTABLE` (or the corresponding minor-version variable) to
 force a particular interpreter path. Live Attach remains a CPython 3.14+
 feature; older versions are covered for cooperative attach and Managed Launch.
+
+Any attach/bootstrap or debugger-thread compatibility change that makes an
+already-loaded Agent unsafe to reuse must increment `BOOTSTRAP_ABI` in the
+Python Agent and `ExpectedBootstrapAbi` in the WPF client in the same commit.
+Keep the release metadata test that enforces this equality. The fresh bootstrap
+uses version, ABI, source path, and the complete cached package module tree to
+reject stale same-process reuse before inspection begins.
+Do not bump the ABI for a UI-only change or a backward-compatible endpoint
+addition that leaves cached-Agent reuse, bootstrap arguments, debugger-thread
+behavior, and hello capabilities compatible.
 
 ## Stability gate
 
@@ -92,9 +103,13 @@ installer-owned registry value are gone:
   -InstallerPath .\artifacts\installer\PyMonitor-26.7.11-win-x64.msi
 ```
 
-This install → upgrade → uninstall lifecycle has not been run in the current
-non-elevated desktop session and remains a pending manual release gate. MSI
-metadata, hash, and administrative extraction checks do not replace it.
+The approved elevated install → upgrade → uninstall lifecycle completed
+successfully. `artifacts/installer-lifecycle-result.json` records
+`Succeeded=true`: the previous 0.1.0 product was installed, upgraded in place to
+PyMonitor 26.7.11, the current shortcut was verified, and current-product
+uninstall cleanup passed. The install, upgrade, and uninstall logs are retained
+under `artifacts/installer-lifecycle/20260712-120424`. Metadata, hash, and
+administrative extraction checks remain separate required package checks.
 
 Run the [UX verification checklist](ux-verification.md) against both the
 portable executable and the installed shortcut. In particular, confirm the
