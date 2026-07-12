@@ -92,7 +92,7 @@ finish({"ok": True}, 0)
 
         var temporaryDirectory = Path.Combine(
             Path.GetTempPath(),
-            "PyRuntimeInspector",
+            "PyMonitor",
             $"live-attach-{Guid.NewGuid():N}");
         Directory.CreateDirectory(temporaryDirectory);
         var bootstrapPath = Path.Combine(temporaryDirectory, "bootstrap.py");

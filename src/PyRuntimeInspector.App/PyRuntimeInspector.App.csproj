@@ -6,7 +6,8 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
-    <AssemblyName>PyRuntimeInspector</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyName>PyMonitor</AssemblyName>
     <RootNamespace>PyRuntimeInspector.App</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>

@@ -75,7 +75,7 @@ public sealed class ManagedPythonLauncherTests
         {
             ["frameHandle"] = moduleFrame["frameHandle"]!.GetValue<string>(),
             ["scopeType"] = "globals",
-            ["pageSize"] = 1000,
+            ["pageSize"] = 200,
         }, timeout.Token))["items"]!.AsArray();
         Assert.Equal("'phase-two'", FindScopeValue(globals, "MANAGED_ENV")["safePreview"]!.GetValue<string>());
         Assert.Contains("PyMonitor", FindScopeValue(globals, "MANAGED_CWD")["safePreview"]!.GetValue<string>(), StringComparison.OrdinalIgnoreCase);

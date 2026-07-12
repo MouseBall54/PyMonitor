@@ -3,536 +3,1221 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:PyRuntimeInspector.App.Controls"
         xmlns:vm="clr-namespace:PyRuntimeInspector.App.ViewModels"
-        Title="PyRuntime Inspector" Icon="Assets/app-icon.ico" Width="1500" Height="920" MinWidth="1180" MinHeight="720"
-        Background="{StaticResource WindowBackground}" Foreground="{StaticResource PrimaryText}"
-        Closed="Window_Closed">
-    <Grid>
+        Title="PyMonitor 26.7.11"
+        Icon="Assets/app-icon.ico"
+        Width="1500"
+        Height="920"
+        MinWidth="960"
+        MinHeight="540"
+        WindowStartupLocation="CenterScreen"
+        Loaded="Window_Loaded"
+        Closing="Window_Closing"
+        Closed="Window_Closed"
+        PreviewKeyDown="Window_PreviewKeyDown"
+        AutomationProperties.Name="PyMonitor Python runtime inspector">
+    <Grid Background="{DynamicResource WindowBackground}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
-            <RowDefinition Height="105" />
+            <RowDefinition Height="44" />
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0" Background="{StaticResource PanelBackground}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="10,8">
+        <!-- Connection command bar -->
+        <Border Grid.Row="0"
+                Background="{DynamicResource PanelBackground}"
+                BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="14,10,14,7">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
-                <StackPanel Grid.Row="0" Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="PyRuntime Inspector" FontSize="19" FontWeight="SemiBold" Margin="0,0,18,0" VerticalAlignment="Center" />
-                    <TextBlock Text="Process" Foreground="{StaticResource SecondaryText}" VerticalAlignment="Center" Margin="0,0,5,0" />
-                    <ComboBox Width="220" ItemsSource="{Binding Processes}" SelectedItem="{Binding SelectedProcess}" DisplayMemberPath="DisplayName" ToolTip="Select a Python process, then use Quick Attach." />
-                    <Button Content="↻" Command="{Binding RefreshProcessesCommand}" ToolTip="Refresh Python processes" />
-                    <TextBlock Text="PID" Foreground="{StaticResource SecondaryText}" Margin="12,0,4,0" VerticalAlignment="Center" />
-                    <TextBlock Text="{Binding TargetPid, TargetNullValue=—}" FontFamily="Cascadia Mono" VerticalAlignment="Center" />
-                    <TextBlock Text="Python" Foreground="{StaticResource SecondaryText}" Margin="14,0,4,0" VerticalAlignment="Center" />
-                    <TextBlock Text="{Binding PythonVersion}" MaxWidth="210" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-                    <TextBlock Text="{Binding Architecture}" Foreground="{StaticResource SecondaryText}" Margin="8,0,12,0" VerticalAlignment="Center" />
-                    <Button Content="Quick Attach" Command="{Binding QuickAttachCommand}" Background="#1F6FEB" BorderBrush="#58A6FF" FontWeight="SemiBold" ToolTip="One click on Python 3.14+. For Python 3.10–3.13, paste the automatically copied bootstrap once." />
-                    <Button Content="Listen" Command="{Binding AttachCommand}" ToolTip="Advanced cooperative listener." />
-                    <Button Content="Live" Command="{Binding LiveAttachCommand}" Background="#8250DF" BorderBrush="#A371F7" ToolTip="Advanced CPython 3.14+ Live Attach." />
-                    <Button Content="Launch" Command="{Binding LaunchCommand}" Background="#238636" BorderBrush="#2EA043" FontWeight="SemiBold" />
-                    <Button Content="Stop" Command="{Binding StopCommand}" />
-                    <Button Content="Restart" Command="{Binding RestartCommand}" />
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,20,0">
+                    <Image Source="Assets/app-icon.ico" Width="30" Height="30" Stretch="Uniform" Margin="0,0,9,0" />
+                    <StackPanel>
+                        <TextBlock Text="PyMonitor" FontSize="19" FontWeight="SemiBold" />
+                        <TextBlock Text="Python runtime inspector" Style="{StaticResource MutedText}" FontSize="11" />
+                    </StackPanel>
+                </StackPanel>
+
+                <Grid Grid.Row="0" Grid.Column="1" VerticalAlignment="Center">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="250" MinWidth="190" MaxWidth="310" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="Process" Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="0,0,5,0" />
+                    <ComboBox Grid.Column="1"
+                              ItemsSource="{Binding Processes}"
+                              SelectedItem="{Binding SelectedProcess}"
+                              DisplayMemberPath="DisplayName"
+                              ToolTip="Select a Python process to inspect"
+                              AutomationProperties.Name="Target Python process" />
+                    <Button Grid.Column="2"
+                            Content="Rescan"
+                            Command="{Binding RefreshProcessesCommand}"
+                            ToolTip="Refresh the Python process list"
+                            AutomationProperties.Name="Rescan Python processes" />
+                    <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
+                        <Ellipse Width="9" Height="9" Margin="0,0,7,0">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="{DynamicResource SecondaryText}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsConnected}" Value="True">
+                                            <Setter Property="Fill" Value="{DynamicResource SuccessBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock Text="{Binding Status}" FontWeight="SemiBold" VerticalAlignment="Center" MaxWidth="210" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                </Grid>
+
+                <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <Button Content="Quick Attach"
+                            Command="{Binding QuickAttachCommand}"
+                            Style="{StaticResource PrimaryButton}"
+                            ToolTip="Attach to the selected Python process"
+                            AutomationProperties.Name="Quick attach to selected Python process" />
+                    <Button Content="Refresh" Command="{Binding RefreshCommand}" ToolTip="Refresh the current snapshot (F5)" />
                     <Button Content="Detach" Command="{Binding DetachCommand}" />
-                    <Button Content="Refresh" Command="{Binding RefreshCommand}" />
+                    <Button Content="About" Click="About_Click" AutomationProperties.Name="About PyMonitor" />
                 </StackPanel>
-                <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,7,0,0" VerticalAlignment="Center">
-                    <TextBlock Text="Port" Foreground="{StaticResource SecondaryText}" VerticalAlignment="Center" />
-                    <TextBox Text="{Binding PortText, UpdateSourceTrigger=PropertyChanged}" Width="70" Margin="5,0,10,0" />
-                    <TextBlock Text="Token" Foreground="{StaticResource SecondaryText}" VerticalAlignment="Center" />
-                    <TextBox Text="{Binding Token, UpdateSourceTrigger=PropertyChanged}" Width="260" FontFamily="Cascadia Mono" Margin="5,0,2,0" />
-                    <Button Content="Copy environment" Command="{Binding CopyEnvironmentCommand}" ToolTip="Copy the cooperative target environment to the clipboard." />
-                    <CheckBox Content="Elevate live helper" IsChecked="{Binding ElevateLiveAttach}" Margin="12,0,0,0" VerticalAlignment="Center" ToolTip="Run only the CPython 3.14 live-attach helper as administrator." />
-                    <Ellipse Width="9" Height="9" Margin="14,0,6,0">
-                        <Ellipse.Style>
-                            <Style TargetType="Ellipse">
-                                <Setter Property="Fill" Value="#6E7681" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsConnected}" Value="True">
-                                        <Setter Property="Fill" Value="{StaticResource SuccessBrush}" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </Ellipse.Style>
-                    </Ellipse>
-                    <TextBlock Text="{Binding Status}" VerticalAlignment="Center" />
-                    <Border Background="#173B2A" CornerRadius="3" Padding="7,2" Margin="14,0,0,0">
-                        <TextBlock Text="Safe Mode ON" Foreground="#7EE787" FontWeight="SemiBold" />
+
+                <Expander Grid.Row="1"
+                          Grid.ColumnSpan="3"
+                          Header="Advanced connection and preferences"
+                          Margin="0,7,0,0"
+                          Foreground="{DynamicResource SecondaryText}"
+                          AutomationProperties.Name="Advanced connection and preferences">
+                    <Border Background="{DynamicResource SubtleBackground}"
+                            BorderBrush="{DynamicResource BorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="6"
+                            Margin="0,6,0,2"
+                            Padding="10,7">
+                        <WrapPanel VerticalAlignment="Center">
+                            <TextBlock Text="Port" Style="{StaticResource MutedText}" VerticalAlignment="Center" />
+                            <TextBox Text="{Binding PortText, UpdateSourceTrigger=PropertyChanged}" Width="76" AutomationProperties.Name="Agent port" />
+                            <TextBlock Text="Token" Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="8,0,0,0" />
+                            <TextBox Text="{Binding Token, UpdateSourceTrigger=PropertyChanged}" Width="250" FontFamily="Cascadia Mono" AutomationProperties.Name="Agent token" />
+                            <Button Content="Start listener" Command="{Binding AttachCommand}" ToolTip="Start the cooperative agent listener" />
+                            <Button Content="Live attach" Command="{Binding LiveAttachCommand}" ToolTip="Attach to CPython 3.14 or newer" />
+                            <Button Content="Copy environment" Command="{Binding CopyEnvironmentCommand}" />
+                            <CheckBox Content="Elevate live helper" IsChecked="{Binding ElevateLiveAttach}" ToolTip="Run only the live-attach helper as administrator" />
+                            <Separator Width="1" Height="24" Margin="10,0" />
+                            <CheckBox Content="Auto refresh" IsChecked="{Binding AutoRefreshEnabled}" />
+                            <TextBlock Text="Interval" Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="8,0,0,0" />
+                            <ComboBox Width="70" ItemsSource="{Binding RefreshIntervals}" SelectedItem="{Binding RefreshIntervalSeconds}" AutomationProperties.Name="Refresh interval in seconds" />
+                            <TextBlock Text="seconds" Style="{StaticResource MutedText}" VerticalAlignment="Center" />
+                            <TextBlock Text="Theme" Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="12,0,0,0" />
+                            <ComboBox x:Name="ThemeSelector" Width="92" SelectionChanged="ThemeSelector_SelectionChanged" AutomationProperties.Name="Application theme">
+                                <ComboBoxItem Content="Light" />
+                                <ComboBoxItem Content="Dark" />
+                            </ComboBox>
+                        </WrapPanel>
                     </Border>
-                    <TextBlock Text="Refresh" Foreground="{StaticResource SecondaryText}" Margin="14,0,4,0" VerticalAlignment="Center" />
-                    <ComboBox Width="65" ItemsSource="{Binding RefreshIntervals}" SelectedItem="{Binding RefreshIntervalSeconds}" />
-                    <TextBlock Text="s" VerticalAlignment="Center" Margin="3,0,0,0" />
-                    <TextBlock Text="Private" Foreground="{StaticResource SecondaryText}" Margin="14,0,4,0" VerticalAlignment="Center" />
-                    <TextBlock Text="{Binding PrivateBytes}" VerticalAlignment="Center" />
-                </StackPanel>
+                </Expander>
             </Grid>
         </Border>
 
-        <Grid Grid.Row="1">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="270" MinWidth="210" />
-                <ColumnDefinition Width="5" />
-                <ColumnDefinition Width="*" MinWidth="500" />
-                <ColumnDefinition Width="5" />
-                <ColumnDefinition Width="310" MinWidth="260" />
-            </Grid.ColumnDefinitions>
+        <!-- Primary workspaces -->
+        <TabControl Grid.Row="1"
+                    SelectedIndex="{Binding SelectedWorkspaceTabIndex}"
+                    Margin="10,8,10,7"
+                    AutomationProperties.Name="PyMonitor workspaces">
+            <TabItem Header="Inspect" AutomationProperties.Name="Inspect variables and objects">
+                <Grid Background="{DynamicResource WindowBackground}" Margin="0,7,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition x:Name="LeftPaneColumn" Width="230" MinWidth="160" />
+                        <ColumnDefinition Width="5" />
+                        <ColumnDefinition x:Name="VariablePaneColumn" Width="430" MinWidth="300" />
+                        <ColumnDefinition Width="5" />
+                        <ColumnDefinition Width="*" MinWidth="330" />
+                    </Grid.ColumnDefinitions>
 
-            <Border Grid.Column="0" Background="{StaticResource PanelBackground}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,1,0">
-                <DockPanel>
-                    <TextBlock DockPanel.Dock="Top" Text="RUNTIME TREE" Foreground="{StaticResource SecondaryText}" FontSize="11" FontWeight="SemiBold" Margin="12,10,8,8" />
-                    <TreeView ItemsSource="{Binding RuntimeRoots}" SelectedItemChanged="RuntimeTree_SelectedItemChanged" Background="Transparent" BorderThickness="0" Padding="5">
-                        <TreeView.Resources>
-                            <HierarchicalDataTemplate DataType="{x:Type vm:RuntimeTreeNode}" ItemsSource="{Binding Children}">
-                                <TextBlock Text="{Binding Label}" ToolTip="{Binding Label}" TextTrimming="CharacterEllipsis" />
-                            </HierarchicalDataTemplate>
-                        </TreeView.Resources>
-                    </TreeView>
-                </DockPanel>
-            </Border>
-            <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch" Background="{StaticResource BorderBrush}" />
-
-            <Border Grid.Column="2" Background="{StaticResource PanelBackground}">
-                <TabControl SelectedIndex="{Binding SelectedWorkspaceTabIndex}">
-                    <TabItem Header="Variables">
-                        <Grid Margin="8">
+                    <!-- Runtime sources and pins -->
+                    <Border Grid.Column="0" Style="{StaticResource CardBorder}">
+                        <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="120" />
                             </Grid.RowDefinitions>
-                            <DockPanel Margin="0,0,0,7">
-                                <TextBlock DockPanel.Dock="Left" Text="{Binding Breadcrumb}" FontWeight="SemiBold" VerticalAlignment="Center" />
-                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                                    <TextBox Width="220" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" ToolTip="GC scan searches type, module, and address. Other scopes also filter safe previews." />
-                                    <Button Content="Search / Scan" Command="{Binding SearchCurrentCommand}" ToolTip="Apply the current filter. GC-tracked objects are scanned only on explicit actions." />
+                            <Border Grid.Row="0" Background="{DynamicResource RaisedBackground}" Padding="11,9" CornerRadius="7,7,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="RUNTIME" Style="{StaticResource SectionLabel}" />
+                                    <TextBlock Text="Choose a frame, module, or object source" Style="{StaticResource MutedText}" FontSize="11" Margin="0,2,0,0" />
                                 </StackPanel>
-                            </DockPanel>
-                            <DataGrid Grid.Row="1" ItemsSource="{Binding FilteredVariables}" SelectedItem="{Binding SelectedVariable}" AutoGenerateColumns="False"
-                                      IsReadOnly="True" SelectionMode="Single" EnableRowVirtualization="True" EnableColumnVirtualization="True"
-                                      VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True">
-                                <DataGrid.Columns>
-                                    <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="160" />
-                                    <DataGridTextColumn Header="Scope" Binding="{Binding Scope}" Width="75" />
-                                    <DataGridTextColumn Header="Type" Binding="{Binding TypeName}" Width="120" />
-                                    <DataGridTextColumn Header="Safe Preview" Binding="{Binding SafePreview}" Width="2*" />
-                                    <DataGridTextColumn Header="Shape" Binding="{Binding Shape}" Width="120" />
-                                    <DataGridTextColumn Header="DType" Binding="{Binding DType}" Width="80" />
-                                    <DataGridTextColumn Header="Shallow" Binding="{Binding ShallowSize}" Width="85" />
-                                    <DataGridTextColumn Header="Payload" Binding="{Binding PayloadSize}" Width="90" />
-                                    <DataGridTextColumn Header="Address" Binding="{Binding Address}" Width="140" />
-                                    <DataGridCheckBoxColumn Header="Changed" Binding="{Binding Changed}" Width="65" />
-                                    <DataGridCheckBoxColumn Header="Expand" Binding="{Binding Expandable}" Width="60" />
-                                </DataGrid.Columns>
-                            </DataGrid>
-                            <DockPanel Grid.Row="2" Margin="0,7,0,0">
-                                <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
-                                    <Button Content="Previous" Command="{Binding PreviousPageCommand}" />
-                                    <TextBlock Text="{Binding PageLabel}" Margin="8,0" VerticalAlignment="Center" />
-                                    <Button Content="Next" Command="{Binding NextPageCommand}" />
-                                </StackPanel>
-                            </DockPanel>
+                            </Border>
+                            <TreeView Grid.Row="1"
+                                      ItemsSource="{Binding RuntimeRoots}"
+                                      SelectedItemChanged="RuntimeTree_SelectedItemChanged"
+                                      AutomationProperties.Name="Runtime navigation tree">
+                                <TreeView.Resources>
+                                    <HierarchicalDataTemplate DataType="{x:Type vm:RuntimeTreeNode}" ItemsSource="{Binding Children}">
+                                        <TextBlock Text="{Binding Label}" ToolTip="{Binding Label}" TextTrimming="CharacterEllipsis" />
+                                    </HierarchicalDataTemplate>
+                                </TreeView.Resources>
+                            </TreeView>
+                            <Border Grid.Row="2" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,1" Padding="11,7">
+                                <DockPanel>
+                                    <TextBlock DockPanel.Dock="Left" Text="PINNED OBJECTS" Style="{StaticResource SectionLabel}" VerticalAlignment="Center" />
+                                    <Button DockPanel.Dock="Right" Content="Open" Command="{Binding NavigatePinnedCommand}" Style="{StaticResource QuietButton}" Padding="7,2" MinHeight="24" />
+                                </DockPanel>
+                            </Border>
+                            <ListBox Grid.Row="3"
+                                     ItemsSource="{Binding PinnedObjects}"
+                                     SelectedItem="{Binding SelectedPinnedObject}"
+                                     BorderThickness="0"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                     AutomationProperties.Name="Pinned objects">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Margin="6,4">
+                                            <TextBlock Text="{Binding Display}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding Path}" Style="{StaticResource MutedText}" FontSize="11" TextTrimming="CharacterEllipsis" ToolTip="{Binding Path}" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
                         </Grid>
-                    </TabItem>
-                    <TabItem Header="Object Inspector">
-                        <DataGrid Margin="8" ItemsSource="{Binding ObjectChildren}" AutoGenerateColumns="False" IsReadOnly="True"
-                                  EnableRowVirtualization="True" VirtualizingPanel.VirtualizationMode="Recycling">
-                            <DataGrid.Columns>
-                                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="180" />
-                                <DataGridTextColumn Header="Origin" Binding="{Binding Origin}" Width="120" />
-                                <DataGridTextColumn Header="Type" Binding="{Binding Type}" Width="140" />
-                                <DataGridTextColumn Header="Safe Preview" Binding="{Binding Preview}" Width="*" />
-                                <DataGridTextColumn Header="Address" Binding="{Binding Address}" Width="150" />
-                            </DataGrid.Columns>
-                        </DataGrid>
-                    </TabItem>
-                    <TabItem Header="Managed Launch">
-                        <Grid Margin="10">
+                    </Border>
+
+                    <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch" Background="Transparent" ShowsPreview="True" />
+
+                    <!-- Variable master list -->
+                    <Border Grid.Column="2" Style="{StaticResource CardBorder}">
+                        <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
-                                <RowDefinition Height="8" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
-                            <Grid Grid.Row="0">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="1.2*" />
-                                    <ColumnDefinition Width="12" />
-                                    <ColumnDefinition Width="*" />
-                                </Grid.ColumnDefinitions>
-                                <Grid Grid.Column="0">
+                            <Border Grid.Row="0" Background="{DynamicResource RaisedBackground}" Padding="11,8" CornerRadius="7,7,0,0">
+                                <Grid>
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="105" />
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
-                                    </Grid.RowDefinitions>
-                                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Python" VerticalAlignment="Center" Foreground="{StaticResource SecondaryText}" />
-                                    <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding PythonExecutable, UpdateSourceTrigger=PropertyChanged}" />
-                                    <Button Grid.Row="0" Grid.Column="2" Content="Browse…" Command="{Binding BrowsePythonCommand}" />
-                                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Script" VerticalAlignment="Center" Foreground="{StaticResource SecondaryText}" />
-                                    <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding ScriptPath, UpdateSourceTrigger=PropertyChanged}" />
-                                    <Button Grid.Row="1" Grid.Column="2" Content="Browse…" Command="{Binding BrowseScriptCommand}" />
-                                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Arguments" VerticalAlignment="Center" Foreground="{StaticResource SecondaryText}" />
-                                    <TextBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Text="{Binding ScriptArguments, UpdateSourceTrigger=PropertyChanged}" ToolTip="Windows command-line quoting is supported." />
-                                    <TextBlock Grid.Row="3" Grid.Column="0" Text="Working directory" VerticalAlignment="Center" Foreground="{StaticResource SecondaryText}" />
-                                    <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding WorkingDirectory, UpdateSourceTrigger=PropertyChanged}" />
-                                    <Button Grid.Row="3" Grid.Column="2" Content="Browse…" Command="{Binding BrowseWorkingDirectoryCommand}" />
-                                    <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,7,0,0">
-                                        <Button Content="Launch" Command="{Binding LaunchCommand}" Background="#238636" BorderBrush="#2EA043" />
-                                        <Button Content="Stop" Command="{Binding StopCommand}" />
-                                        <Button Content="Restart" Command="{Binding RestartCommand}" />
-                                        <TextBlock Text="Status" Foreground="{StaticResource SecondaryText}" Margin="12,0,4,0" VerticalAlignment="Center" />
-                                        <TextBlock Text="{Binding ManagedStatus}" VerticalAlignment="Center" />
-                                        <TextBlock Text="PID" Foreground="{StaticResource SecondaryText}" Margin="12,0,4,0" VerticalAlignment="Center" />
-                                        <TextBlock Text="{Binding ManagedProcessId, TargetNullValue=—}" VerticalAlignment="Center" FontFamily="Cascadia Mono" />
-                                        <TextBlock Text="Exit" Foreground="{StaticResource SecondaryText}" Margin="12,0,4,0" VerticalAlignment="Center" />
-                                        <TextBlock Text="{Binding ManagedExitCode}" VerticalAlignment="Center" FontFamily="Cascadia Mono" />
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Breadcrumb}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding Breadcrumb}" />
+                                        <TextBlock Text="{Binding SnapshotStatus}" FontSize="11" Margin="0,2,0,0">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource MutedText}">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsSnapshotStale}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                            <Setter Property="FontWeight" Value="SemiBold" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
                                     </StackPanel>
+                                    <Button Grid.Column="1" Content="Reset comparison" Command="{Binding ResetBaselineCommand}" Style="{StaticResource QuietButton}" ToolTip="Use the current values as the comparison baseline" />
                                 </Grid>
-                                <Grid Grid.Column="2">
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="110" />
-                                        <RowDefinition Height="Auto" />
-                                    </Grid.RowDefinitions>
-                                    <TextBlock Grid.Row="0" Text="Environment overrides" Foreground="{StaticResource SecondaryText}" Margin="0,0,0,4" />
-                                    <DataGrid Grid.Row="1" ItemsSource="{Binding LaunchEnvironment}" SelectedItem="{Binding SelectedEnvironmentVariable}"
-                                              AutoGenerateColumns="False" CanUserAddRows="False" EnableRowVirtualization="True">
-                                        <DataGrid.Columns>
-                                            <DataGridTextColumn Header="Name" Binding="{Binding Name, UpdateSourceTrigger=PropertyChanged}" Width="*" />
-                                            <DataGridTextColumn Header="Value" Binding="{Binding Value, UpdateSourceTrigger=PropertyChanged}" Width="2*" />
-                                        </DataGrid.Columns>
-                                    </DataGrid>
-                                    <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
-                                        <Button Content="Add" Command="{Binding AddEnvironmentCommand}" />
-                                        <Button Content="Remove" Command="{Binding RemoveEnvironmentCommand}" />
-                                    </StackPanel>
-                                </Grid>
+                            </Border>
+                            <Grid Grid.Row="1" Margin="8,7,8,2">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="SearchBox"
+                                         Grid.Column="0"
+                                         Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="Search variable name, type, scope, preview, or address"
+                                         AutomationProperties.Name="Search variables" />
+                                <Button Grid.Column="1" Content="Search" Command="{Binding SearchCurrentCommand}" ToolTip="Search or explicitly scan GC-tracked objects" />
+                                <Button Grid.Column="2" Content="Clear" Command="{Binding ClearSearchCommand}" Style="{StaticResource QuietButton}" />
+                                <TextBlock Grid.Column="3" Text="Filtering…" VerticalAlignment="Center" Margin="6,0,0,0" AutomationProperties.LiveSetting="Polite">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock" BasedOn="{StaticResource MutedText}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsSearchPending}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
                             </Grid>
-                            <Border Grid.Row="2" Background="#05070A" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
-                                <DockPanel>
-                                    <Grid DockPanel.Dock="Top" Margin="8,5">
+                            <WrapPanel Grid.Row="2" Margin="8,1,8,6">
+                                <ComboBox Width="105" ItemsSource="{Binding ScopeFilters}" SelectedItem="{Binding ScopeFilter}" AutomationProperties.Name="Scope filter" />
+                                <ComboBox Width="112" ItemsSource="{Binding ChangeFilters}" SelectedItem="{Binding ChangeFilter}" AutomationProperties.Name="Change filter" />
+                                <ComboBox Width="118" ItemsSource="{Binding TypeFilters}" SelectedItem="{Binding TypeFilter}" AutomationProperties.Name="Type filter" />
+                                <CheckBox Content="Arrays" IsChecked="{Binding ArraysOnly}" />
+                                <CheckBox Content="Expandable" IsChecked="{Binding ExpandableOnly}" />
+                                <CheckBox Content="Pinned" IsChecked="{Binding PinnedOnly}" />
+                                <Button Content="Clear filters" Command="{Binding ClearFiltersCommand}" Style="{StaticResource QuietButton}" Padding="6,2" MinHeight="24" />
+                            </WrapPanel>
+                            <Grid Grid.Row="3">
+                                <DataGrid ItemsSource="{Binding FilteredVariables}"
+                                          SelectedItem="{Binding SelectedVariable}"
+                                          IsReadOnly="True"
+                                          EnableRowVirtualization="True"
+                                          EnableColumnVirtualization="True"
+                                          VirtualizingPanel.IsVirtualizing="True"
+                                          VirtualizingPanel.VirtualizationMode="Recycling"
+                                          ScrollViewer.CanContentScroll="True"
+                                          RowStyle="{StaticResource VariableDataGridRow}"
+                                          BorderThickness="0,1,0,1"
+                                          AutomationProperties.Name="Variables">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn x:Name="VariableNameColumn" Header="Name" Binding="{Binding Name}" Width="92" />
+                                        <DataGridTextColumn x:Name="VariableTypeColumn" Header="Type" Binding="{Binding TypeName}" Width="78">
+                                            <DataGridTextColumn.ElementStyle>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                                    <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                                                    <Setter Property="ToolTip" Value="{Binding TypeName}" />
+                                                </Style>
+                                            </DataGridTextColumn.ElementStyle>
+                                        </DataGridTextColumn>
+                                        <DataGridTextColumn x:Name="VariablePreviewColumn" Header="Safe value" Binding="{Binding SafePreview}" Width="*" MinWidth="78">
+                                            <DataGridTextColumn.ElementStyle>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                                    <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                                                    <Setter Property="ToolTip" Value="{Binding SafePreview}" />
+                                                </Style>
+                                            </DataGridTextColumn.ElementStyle>
+                                        </DataGridTextColumn>
+                                        <DataGridTemplateColumn x:Name="VariableChangeColumn" Header="Change" Width="118">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel Margin="0,2" ToolTip="{Binding ChangeDetail}">
+                                                        <TextBlock Text="{Binding ChangeDisplay}" FontWeight="SemiBold" />
+                                                        <TextBlock Text="{Binding ChangeTimeDisplay}" Style="{StaticResource MutedText}" FontSize="10" TextTrimming="CharacterEllipsis" />
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                                <Border Background="{DynamicResource PanelBackground}"
+                                        BorderBrush="{DynamicResource BorderBrush}"
+                                        BorderThickness="0,1"
+                                        IsHitTestVisible="False"
+                                        AutomationProperties.Name="Variable list state">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsScopeLoading}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding ShowVariableListEmpty}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="250">
+                                        <ProgressBar Width="120" Height="4" IsIndeterminate="True" Margin="0,0,0,12">
+                                            <ProgressBar.Style>
+                                                <Style TargetType="ProgressBar">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsScopeLoading}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </ProgressBar.Style>
+                                        </ProgressBar>
+                                        <TextBlock Text="{Binding VariableListStatusMessage}"
+                                                   TextAlignment="Center"
+                                                   TextWrapping="Wrap">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource MutedText}">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsScopeLoading}" Value="True">
+                                                            <Setter Property="Text" Value="Loading variables…" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                            <Grid Grid.Row="4" Margin="9,4">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBlock Text="{Binding FilterResultLabel}" Style="{StaticResource MutedText}" VerticalAlignment="Center" />
+                                <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,2,0,0">
+                                    <Button Content="Previous" Command="{Binding PreviousPageCommand}" Style="{StaticResource QuietButton}" Padding="7,3" MinHeight="25" />
+                                    <TextBlock Text="{Binding PageLabel}" Margin="5,0" VerticalAlignment="Center" />
+                                    <Button Content="Next" Command="{Binding NextPageCommand}" Style="{StaticResource QuietButton}" Padding="7,3" MinHeight="25" />
+                                </StackPanel>
+                            </Grid>
+                        </Grid>
+                    </Border>
+
+                    <GridSplitter Grid.Column="3" Width="5" HorizontalAlignment="Stretch" Background="Transparent" ShowsPreview="True" />
+
+                    <!-- Persistent selected-object context -->
+                    <Border Grid.Column="4" Style="{StaticResource CardBorder}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <Border Grid.Row="0" Background="{DynamicResource RaisedBackground}" Padding="10,8" CornerRadius="7,7,0,0">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <WrapPanel Grid.Row="0" Margin="0,0,0,3">
+                                        <Button Content="{Binding BackNavigationLabel}"
+                                                Command="{Binding NavigateBackCommand}"
+                                                Style="{StaticResource QuietButton}"
+                                                MaxWidth="160"
+                                                ToolTip="{Binding BackNavigationToolTip}"
+                                                AutomationProperties.Name="Back in object history"
+                                                AutomationProperties.HelpText="{Binding BackNavigationToolTip}" />
+                                        <Button Content="{Binding ForwardNavigationLabel}"
+                                                Command="{Binding NavigateForwardCommand}"
+                                                Style="{StaticResource QuietButton}"
+                                                MaxWidth="160"
+                                                ToolTip="{Binding ForwardNavigationToolTip}"
+                                                AutomationProperties.Name="Forward in object history"
+                                                AutomationProperties.HelpText="{Binding ForwardNavigationToolTip}" />
+                                        <Button Content="{Binding ParentNavigationLabel}"
+                                                Command="{Binding NavigateParentCommand}"
+                                                Style="{StaticResource QuietButton}"
+                                                MaxWidth="160"
+                                                ToolTip="{Binding ParentNavigationToolTip}"
+                                                AutomationProperties.Name="Go to parent object"
+                                                AutomationProperties.HelpText="{Binding ParentNavigationToolTip}" />
+                                        <Border Background="{DynamicResource SubtleBackground}"
+                                                BorderBrush="{DynamicResource BorderBrush}"
+                                                BorderThickness="1"
+                                                CornerRadius="10"
+                                                Padding="8,3"
+                                                Margin="5,4,2,4"
+                                                VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding NavigationHistoryLabel}"
+                                                       Style="{StaticResource MutedText}"
+                                                       FontSize="11"
+                                                       FontWeight="SemiBold"
+                                                       AutomationProperties.Name="{Binding NavigationHistoryLabel}"
+                                                       AutomationProperties.LiveSetting="Polite" />
+                                        </Border>
+                                    </WrapPanel>
+                                    <Grid Grid.Row="1" Margin="4,0,0,3">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="PROCESS OUTPUT" Foreground="{StaticResource SecondaryText}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" />
-                                        <Button Grid.Column="1" Content="Clear" Command="{Binding ClearOutputCommand}" />
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding SelectedObjectName, TargetNullValue=Selected object}"
+                                                       FontSize="15"
+                                                       FontWeight="SemiBold"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       VerticalAlignment="Center" />
+                                            <Border Background="{DynamicResource SelectionBrush}"
+                                                    BorderBrush="{DynamicResource BorderBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="10"
+                                                    Padding="8,2"
+                                                    Margin="8,0,0,0"
+                                                    VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding ObjectDepthLabel}"
+                                                           FontSize="11"
+                                                           FontWeight="SemiBold"
+                                                           AutomationProperties.Name="{Binding ObjectDepthLabel}" />
+                                            </Border>
+                                        </StackPanel>
+                                        <WrapPanel Grid.Column="1" HorizontalAlignment="Right">
+                                            <Button Content="Copy path" Command="{Binding CopyObjectPathCommand}" Style="{StaticResource QuietButton}" AutomationProperties.Name="Copy selected object path" />
+                                            <Button Content="Copy type" Command="{Binding CopyObjectTypeCommand}" Style="{StaticResource QuietButton}" AutomationProperties.Name="Copy selected object type" />
+                                            <Button Content="Copy address" Command="{Binding CopyObjectAddressCommand}" Style="{StaticResource QuietButton}" AutomationProperties.Name="Copy selected object address" />
+                                            <Button Content="Pin or unpin" Command="{Binding TogglePinCommand}" AutomationProperties.Name="Pin or unpin selected object" />
+                                        </WrapPanel>
                                     </Grid>
-                                    <ListBox x:Name="LaunchOutputList" ItemsSource="{Binding LaunchOutput}" Background="Transparent" BorderThickness="0"
-                                             FontFamily="Cascadia Mono" FontSize="12" VirtualizingPanel.IsVirtualizing="True"
-                                             VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True">
-                                        <ListBox.ItemTemplate>
-                                            <DataTemplate>
-                                                <TextBlock Text="{Binding Display}" TextWrapping="NoWrap">
-                                                    <TextBlock.Style>
-                                                        <Style TargetType="TextBlock">
-                                                            <Setter Property="Foreground" Value="#C9D1D9" />
+                                    <Border Grid.Row="2"
+                                            Background="{DynamicResource SubtleBackground}"
+                                            BorderBrush="{DynamicResource BorderBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="5"
+                                            Padding="7,4"
+                                            Margin="3,2,3,3"
+                                            ToolTip="{Binding SelectedObjectPath}"
+                                            AutomationProperties.Name="{Binding NavigationLocationDescription}"
+                                            AutomationProperties.HelpText="{Binding SelectedObjectPath}"
+                                            Visibility="{Binding HasSelectedObject, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        <DockPanel LastChildFill="True">
+                                            <TextBlock DockPanel.Dock="Left" Text="OBJECT PATH" Style="{StaticResource SectionLabel}" Margin="1,0,8,0" VerticalAlignment="Center" />
+                                            <ItemsControl ItemsSource="{Binding ObjectBreadcrumbs}"
+                                                          AutomationProperties.Name="Object ancestry breadcrumb">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <WrapPanel Orientation="Horizontal" />
+                                                    </ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate DataType="{x:Type vm:ObjectBreadcrumbItem}">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <Border Width="1" Height="14" Background="{DynamicResource BorderBrush}" Margin="5,0,4,0" VerticalAlignment="Center">
+                                                                <Border.Style>
+                                                                    <Style TargetType="Border">
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsRoot}" Value="True">
+                                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </Border.Style>
+                                                            </Border>
+                                                            <Button Content="{Binding Label}"
+                                                                    Click="ObjectBreadcrumb_Click"
+                                                                    ToolTip="{Binding ToolTip}"
+                                                                    AutomationProperties.Name="{Binding AccessibilityName}"
+                                                                    AutomationProperties.HelpText="{Binding Path}">
+                                                                <Button.Style>
+                                                                    <Style TargetType="Button" BasedOn="{StaticResource QuietButton}">
+                                                                        <Setter Property="Padding" Value="7,3" />
+                                                                        <Setter Property="Margin" Value="1" />
+                                                                        <Setter Property="MinHeight" Value="25" />
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsCurrent}" Value="True">
+                                                                                <Setter Property="Background" Value="{DynamicResource SelectionBrush}" />
+                                                                                <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                                                                <Setter Property="FontWeight" Value="SemiBold" />
+                                                                                <Setter Property="Cursor" Value="Arrow" />
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </Button.Style>
+                                                            </Button>
+                                                        </StackPanel>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </DockPanel>
+                                    </Border>
+                                    <Grid Grid.Row="3" Margin="4,4,4,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{Binding SelectedType}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="1" Text="{Binding SelectedObjectPreview}" Style="{StaticResource MutedText}" Margin="10,0" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="2" Text="{Binding SelectedObjectStatus}" Style="{StaticResource MutedText}" VerticalAlignment="Center" />
+                                    </Grid>
+                                </Grid>
+                            </Border>
+
+                            <Grid Grid.Row="1">
+                                <TabControl Margin="0" AutomationProperties.Name="Selected object details">
+                                    <TabItem Header="Overview">
+                                        <Grid Margin="10">
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="*" />
+                                            </Grid.RowDefinitions>
+                                            <UniformGrid Grid.Row="0" Columns="3" Margin="0,0,0,10">
+                                                <Border Style="{StaticResource CardBorder}" Padding="10" Margin="0,0,6,0">
+                                                    <StackPanel><TextBlock Text="TYPE" Style="{StaticResource SectionLabel}" /><TextBlock Text="{Binding SelectedType}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,4,0,0" /><TextBlock Text="{Binding SelectedQualifiedName}" Style="{StaticResource MutedText}" FontSize="11" TextWrapping="Wrap" /></StackPanel>
+                                                </Border>
+                                                <Border Style="{StaticResource CardBorder}" Padding="10" Margin="3,0">
+                                                    <StackPanel><TextBlock Text="ADDRESS" Style="{StaticResource SectionLabel}" /><TextBlock Text="{Binding SelectedAddress}" FontFamily="Cascadia Mono" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" /><TextBlock Text="{Binding SelectedModule}" Style="{StaticResource MutedText}" FontSize="11" TextTrimming="CharacterEllipsis" /></StackPanel>
+                                                </Border>
+                                                <Border Style="{StaticResource CardBorder}" Padding="10" Margin="6,0,0,0">
+                                                    <StackPanel><TextBlock Text="SIZE" Style="{StaticResource SectionLabel}" /><TextBlock Text="{Binding SelectedShallowSize, StringFormat=Shallow: {0}}" Margin="0,4,0,0" /><TextBlock Text="{Binding SelectedPayloadSize, StringFormat=Payload: {0}}" Style="{StaticResource MutedText}" FontSize="11" /></StackPanel>
+                                                </Border>
+                                            </UniformGrid>
+                                            <TextBlock Grid.Row="1" Text="Immediate children" Style="{StaticResource SectionLabel}" Margin="2,0,0,6" />
+                                            <DataGrid Grid.Row="2" ItemsSource="{Binding ObjectChildren}" IsReadOnly="True" EnableRowVirtualization="True" VirtualizingPanel.VirtualizationMode="Recycling" AutomationProperties.Name="Immediate object children">
+                                                <DataGrid.Columns>
+                                                    <DataGridTextColumn x:Name="ObjectNameColumn" Header="Name" Binding="{Binding Name}" Width="145" />
+                                                    <DataGridTextColumn x:Name="ObjectOriginColumn" Header="Origin" Binding="{Binding Origin}" Width="85" />
+                                                    <DataGridTextColumn x:Name="ObjectTypeColumn" Header="Type" Binding="{Binding Type}" Width="110">
+                                                        <DataGridTextColumn.ElementStyle>
+                                                            <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                                                <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                                                                <Setter Property="ToolTip" Value="{Binding Type}" />
+                                                            </Style>
+                                                        </DataGridTextColumn.ElementStyle>
+                                                    </DataGridTextColumn>
+                                                    <DataGridTextColumn x:Name="ObjectPreviewColumn" Header="Safe value" Binding="{Binding Preview}" Width="*">
+                                                        <DataGridTextColumn.ElementStyle>
+                                                            <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                                                <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                                                                <Setter Property="ToolTip" Value="{Binding Preview}" />
+                                                            </Style>
+                                                        </DataGridTextColumn.ElementStyle>
+                                                    </DataGridTextColumn>
+                                                </DataGrid.Columns>
+                                            </DataGrid>
+                                        </Grid>
+                                    </TabItem>
+
+                                    <TabItem Header="Object Tree">
+                                        <Grid Margin="9">
+                                            <TreeView ItemsSource="{Binding ObjectRoots}"
+                                                      SelectedItemChanged="ObjectTree_SelectedItemChanged"
+                                                      TreeViewItem.Expanded="ObjectTreeItem_Expanded"
+                                                      AutomationProperties.Name="Object member tree">
+                                                <TreeView.ItemContainerStyle>
+                                                    <Style TargetType="{x:Type TreeViewItem}" BasedOn="{StaticResource {x:Type TreeViewItem}}">
+                                                        <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                                                    </Style>
+                                                </TreeView.ItemContainerStyle>
+                                                <TreeView.Resources>
+                                                    <HierarchicalDataTemplate DataType="{x:Type vm:ObjectTreeNode}" ItemsSource="{Binding Children}">
+                                                        <Grid Margin="1,2">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="Auto" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                                <ColumnDefinition Width="*" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock Text="{Binding Label}" FontWeight="SemiBold" />
+                                                            <TextBlock Grid.Column="1" Text="{Binding TypeName}" Style="{StaticResource MutedText}" FontSize="11" Margin="8,0" />
+                                                            <TextBlock Grid.Column="2" Text="{Binding Preview}" Style="{StaticResource MutedText}" FontFamily="Cascadia Mono" FontSize="11" TextTrimming="CharacterEllipsis" ToolTip="{Binding Preview}" />
+                                                        </Grid>
+                                                    </HierarchicalDataTemplate>
+                                                </TreeView.Resources>
+                                            </TreeView>
+                                        </Grid>
+                                    </TabItem>
+
+                                    <TabItem Header="Class and Methods">
+                                        <Grid Margin="9">
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="*" />
+                                            </Grid.RowDefinitions>
+                                            <Border Grid.Row="0" Background="{DynamicResource SubtleBackground}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="5" Padding="10" Margin="0,0,0,7">
+                                                <TextBlock Text="{Binding ClassSummary}" TextWrapping="Wrap" />
+                                            </Border>
+                                            <TreeView Grid.Row="1" ItemsSource="{Binding ClassTree}" AutomationProperties.Name="Class members methods and parameters">
+                                                <TreeView.Resources>
+                                                    <HierarchicalDataTemplate DataType="{x:Type vm:ClassTreeNode}" ItemsSource="{Binding Children}">
+                                                        <StackPanel Margin="1,2">
+                                                            <StackPanel Orientation="Horizontal">
+                                                                <TextBlock Text="{Binding Label}" FontWeight="SemiBold" />
+                                                                <TextBlock Text="{Binding Kind}" Style="{StaticResource MutedText}" FontSize="11" Margin="8,0" />
+                                                                <TextBlock Text="{Binding DeclaredBy}" Style="{StaticResource MutedText}" FontSize="11" />
+                                                            </StackPanel>
+                                                            <TextBlock Text="{Binding Detail}" Style="{StaticResource MutedText}" FontFamily="Cascadia Mono" FontSize="11" TextWrapping="Wrap" MaxWidth="700" />
+                                                            <TextBlock Text="{Binding Source}" Style="{StaticResource MutedText}" FontSize="11" TextTrimming="CharacterEllipsis" ToolTip="{Binding Source}" />
+                                                        </StackPanel>
+                                                    </HierarchicalDataTemplate>
+                                                </TreeView.Resources>
+                                            </TreeView>
+                                        </Grid>
+                                    </TabItem>
+
+                                    <TabItem Header="DataFrame"
+                                             IsEnabled="{Binding HasDataFrameSelection}"
+                                             Visibility="{Binding HasDataFrameSelection, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                             AutomationProperties.Name="Pandas DataFrame preview">
+                                        <Grid Margin="9">
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="*" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+                                            <Border Grid.Row="0"
+                                                    Background="{DynamicResource SubtleBackground}"
+                                                    BorderBrush="{DynamicResource BorderBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="5"
+                                                    Padding="10"
+                                                    Margin="0,0,0,7">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <StackPanel>
+                                                        <TextBlock Text="DATAFRAME" Style="{StaticResource SectionLabel}" />
+                                                        <TextBlock Text="{Binding DataFrameShape}" FontSize="16" FontWeight="SemiBold" Margin="0,3,14,0" AutomationProperties.Name="DataFrame shape" />
+                                                    </StackPanel>
+                                                    <StackPanel Grid.Column="1" Margin="10,0" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding DataFrameStatus}" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" ToolTip="{Binding DataFrameStatus}" AutomationProperties.Name="DataFrame preview status" AutomationProperties.LiveSetting="Polite" />
+                                                        <TextBlock Text="Bounded preview · at most 50 rows and 20 columns per page" Style="{StaticResource MutedText}" FontSize="11" Margin="0,3,0,0" />
+                                                    </StackPanel>
+                                                    <Button Grid.Column="2"
+                                                            Content="Refresh preview"
+                                                            Command="{Binding RefreshDataFrameCommand}"
+                                                            Style="{StaticResource PrimaryButton}"
+                                                            AutomationProperties.Name="Refresh DataFrame preview" />
+                                                </Grid>
+                                            </Border>
+                                            <ScrollViewer Grid.Row="1"
+                                                          HorizontalScrollBarVisibility="Auto"
+                                                          VerticalScrollBarVisibility="Disabled"
+                                                          Margin="0,0,0,6"
+                                                          AutomationProperties.Name="DataFrame column data types">
+                                                <ItemsControl ItemsSource="{Binding DataFrameColumns}">
+                                                    <ItemsControl.ItemsPanel>
+                                                        <ItemsPanelTemplate>
+                                                            <StackPanel Orientation="Horizontal" />
+                                                        </ItemsPanelTemplate>
+                                                    </ItemsControl.ItemsPanel>
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate DataType="{x:Type vm:DataFrameColumnInfo}">
+                                                            <Border Background="{DynamicResource RaisedBackground}"
+                                                                    BorderBrush="{DynamicResource BorderBrush}"
+                                                                    BorderThickness="1"
+                                                                    CornerRadius="10"
+                                                                    Padding="8,3"
+                                                                    Margin="0,0,5,0"
+                                                                    ToolTip="{Binding Display}"
+                                                                    AutomationProperties.Name="{Binding Display}">
+                                                                <TextBlock Text="{Binding Display}" FontSize="11" TextTrimming="CharacterEllipsis" MaxWidth="220" />
+                                                            </Border>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </ScrollViewer>
+                                            <Grid Grid.Row="2">
+                                                <DataGrid x:Name="DataFrameGrid"
+                                                          ItemsSource="{Binding DataFrameRows}"
+                                                          AutoGenerateColumns="True"
+                                                          AutoGeneratingColumn="DataFrameGrid_AutoGeneratingColumn"
+                                                          IsReadOnly="True"
+                                                          EnableRowVirtualization="True"
+                                                          EnableColumnVirtualization="True"
+                                                          VirtualizingPanel.IsVirtualizing="True"
+                                                          VirtualizingPanel.VirtualizationMode="Recycling"
+                                                          ScrollViewer.CanContentScroll="True"
+                                                          HeadersVisibility="Column"
+                                                          AutomationProperties.Name="DataFrame preview table" />
+                                                <Border Background="{DynamicResource PanelBackground}"
+                                                        BorderBrush="{DynamicResource BorderBrush}"
+                                                        BorderThickness="1"
+                                                        IsHitTestVisible="False"
+                                                        AutomationProperties.Name="DataFrame preview state">
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
                                                             <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding Kind}" Value="StandardError">
-                                                                    <Setter Property="Foreground" Value="#FF7B72" />
-                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding DataFrameState}" Value="{x:Static vm:DataFramePaneState.Loading}"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                                                <DataTrigger Binding="{Binding DataFrameState}" Value="{x:Static vm:DataFramePaneState.Empty}"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                                                <DataTrigger Binding="{Binding DataFrameState}" Value="{x:Static vm:DataFramePaneState.Error}"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
                                                             </Style.Triggers>
                                                         </Style>
-                                                    </TextBlock.Style>
-                                                </TextBlock>
-                                            </DataTemplate>
-                                        </ListBox.ItemTemplate>
-                                    </ListBox>
-                                </DockPanel>
-                            </Border>
+                                                    </Border.Style>
+                                                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="420" Margin="30">
+                                                        <TextBlock FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" TextAlignment="Center">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="Text" Value="Loading DataFrame preview" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding DataFrameState}" Value="{x:Static vm:DataFramePaneState.Empty}"><Setter Property="Text" Value="This DataFrame page has no cells" /></DataTrigger>
+                                                                        <DataTrigger Binding="{Binding DataFrameState}" Value="{x:Static vm:DataFramePaneState.Error}"><Setter Property="Text" Value="DataFrame preview unavailable" /></DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                        <TextBlock Text="{Binding DataFrameErrorMessage}"
+                                                                   TextAlignment="Center"
+                                                                   TextWrapping="Wrap"
+                                                                   Margin="0,6,0,0">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock" BasedOn="{StaticResource MutedText}">
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding DataFrameState}" Value="{x:Static vm:DataFramePaneState.Error}"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                        <TextBlock Text="Use Refresh preview after the DataFrame changes, or choose another variable."
+                                                                   TextAlignment="Center"
+                                                                   TextWrapping="Wrap"
+                                                                   Margin="0,4,0,0">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock" BasedOn="{StaticResource MutedText}">
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding DataFrameState}" Value="{x:Static vm:DataFramePaneState.Empty}">
+                                                                            <Setter Property="Visibility" Value="Visible" />
+                                                                            <Setter Property="Text" Value="Choose another variable or page when one is available." />
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding DataFrameState}" Value="{x:Static vm:DataFramePaneState.Error}">
+                                                                            <Setter Property="Visibility" Value="Visible" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                    </StackPanel>
+                                                </Border>
+                                            </Grid>
+                                            <StackPanel Grid.Row="3" Margin="0,7,0,0">
+                                                <TextBlock Text="Index values and cells are safe bounded text; the target DataFrame is never evaluated through public pandas APIs."
+                                                           Style="{StaticResource MutedText}"
+                                                           FontSize="11"
+                                                           TextWrapping="Wrap"
+                                                           VerticalAlignment="Center" />
+                                                <WrapPanel HorizontalAlignment="Right" Margin="0,4,0,0">
+                                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,10,0">
+                                                        <Button Content="Previous rows" Command="{Binding PreviousDataFrameRowsCommand}" Style="{StaticResource QuietButton}" AutomationProperties.Name="Previous DataFrame rows" />
+                                                        <TextBlock Text="{Binding DataFrameRowPageLabel}" Margin="5,0" VerticalAlignment="Center" AutomationProperties.Name="DataFrame row page" />
+                                                        <Button Content="Next rows" Command="{Binding NextDataFrameRowsCommand}" Style="{StaticResource QuietButton}" AutomationProperties.Name="Next DataFrame rows" />
+                                                    </StackPanel>
+                                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                        <Button Content="Previous columns" Command="{Binding PreviousDataFrameColumnsCommand}" Style="{StaticResource QuietButton}" AutomationProperties.Name="Previous DataFrame columns" />
+                                                        <TextBlock Text="{Binding DataFrameColumnPageLabel}" Margin="5,0" VerticalAlignment="Center" AutomationProperties.Name="DataFrame column page" />
+                                                        <Button Content="Next columns" Command="{Binding NextDataFrameColumnsCommand}" Style="{StaticResource QuietButton}" AutomationProperties.Name="Next DataFrame columns" />
+                                                    </StackPanel>
+                                                </WrapPanel>
+                                            </StackPanel>
+                                        </Grid>
+                                    </TabItem>
+
+                                    <TabItem Header="Array and Image"
+                                             IsEnabled="{Binding HasArraySelection}"
+                                             Visibility="{Binding HasArraySelection, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        <Grid Margin="9">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="190" />
+                                                <ColumnDefinition Width="5" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                                <StackPanel Margin="0,0,7,0">
+                                                    <TextBlock Text="ARRAY METADATA" Style="{StaticResource SectionLabel}" Margin="3,2,0,6" />
+                                                    <Border Style="{StaticResource CardBorder}" Padding="9" Margin="3,0,3,8">
+                                                        <StackPanel>
+                                                            <TextBlock Text="{Binding ArrayShape, StringFormat=Shape: {0}}" FontFamily="Cascadia Mono" />
+                                                            <TextBlock Text="{Binding ArrayDType, StringFormat=Type: {0}}" Margin="0,3,0,0" />
+                                                            <TextBlock Text="{Binding ArrayStrides, StringFormat=Strides: {0}}" Style="{StaticResource MutedText}" FontSize="11" TextWrapping="Wrap" />
+                                                            <TextBlock Text="{Binding LayoutConfidence, StringFormat=Layout: {0}}" Style="{StaticResource MutedText}" FontSize="11" />
+                                                        </StackPanel>
+                                                    </Border>
+                                                    <TextBlock Text="VIEW" Style="{StaticResource SectionLabel}" Margin="3,0,0,4" />
+                                                    <TextBlock Text="Layout" Style="{StaticResource MutedText}" Margin="3,3,0,0" />
+                                                    <ComboBox ItemsSource="{Binding Layouts}" SelectedItem="{Binding ArrayLayout}" AutomationProperties.Name="Array layout" />
+                                                    <TextBlock Text="Color order" Style="{StaticResource MutedText}" Margin="3,5,0,0" />
+                                                    <ComboBox ItemsSource="{Binding ColorOrders}" SelectedItem="{Binding ColorOrder}" AutomationProperties.Name="Array color order" />
+                                                    <TextBlock Text="Normalization" Style="{StaticResource MutedText}" Margin="3,5,0,0" />
+                                                    <ComboBox ItemsSource="{Binding NormalizationModes}" SelectedItem="{Binding NormalizationMode}" AutomationProperties.Name="Preview normalization" />
+                                                    <StackPanel Orientation="Horizontal" Margin="3,2,0,0">
+                                                        <TextBlock Text="Percentile" VerticalAlignment="Center" Margin="0,0,4,0" />
+                                                        <TextBox Text="{Binding PercentileLow, UpdateSourceTrigger=PropertyChanged}" Width="43" AutomationProperties.Name="Lower normalization percentile" />
+                                                        <TextBlock Text="to" VerticalAlignment="Center" Margin="2,0" />
+                                                        <TextBox Text="{Binding PercentileHigh, UpdateSourceTrigger=PropertyChanged}" Width="43" AutomationProperties.Name="Upper normalization percentile" />
+                                                    </StackPanel>
+                                                    <TextBlock Text="Channels" Style="{StaticResource MutedText}" Margin="3,5,0,0" />
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <CheckBox Content="R" IsChecked="{Binding ChannelR}" AutomationProperties.Name="Show red channel" />
+                                                        <CheckBox Content="G" IsChecked="{Binding ChannelG}" AutomationProperties.Name="Show green channel" />
+                                                        <CheckBox Content="B" IsChecked="{Binding ChannelB}" AutomationProperties.Name="Show blue channel" />
+                                                    </StackPanel>
+                                                    <TextBlock Text="Slice axis" Style="{StaticResource MutedText}" Margin="3,5,0,0" />
+                                                    <ComboBox ItemsSource="{Binding SliceAxes}" SelectedItem="{Binding SliceAxis}" AutomationProperties.Name="Array slice axis" />
+                                                    <TextBlock Text="Slice index" Style="{StaticResource MutedText}" Margin="3,5,0,0" />
+                                                    <Slider Minimum="0" Maximum="{Binding SliceMaximum}" Value="{Binding SliceIndex}" TickFrequency="1" IsSnapToTickEnabled="True" Margin="5,3" AutomationProperties.Name="Array slice index" />
+                                                    <TextBlock Text="{Binding SliceIndex}" HorizontalAlignment="Right" Margin="0,0,5,0" />
+                                                    <Button Content="Apply preview" Command="{Binding ReloadPreviewCommand}" Style="{StaticResource PrimaryButton}" />
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <Button Content="Fit" Command="{Binding FitCommand}" />
+                                                        <Button Content="Actual size" Command="{Binding OneToOneCommand}" />
+                                                    </StackPanel>
+                                                    <TextBlock Text="Zoom" Style="{StaticResource MutedText}" Margin="3,5,0,0" />
+                                                    <Slider Minimum="0.05" Maximum="32" Value="{Binding Zoom}" Margin="5,3" AutomationProperties.Name="Image preview zoom" />
+                                                    <TextBlock Text="{Binding Zoom, StringFormat={}{0:F2}x}" HorizontalAlignment="Right" Margin="0,0,5,0" />
+                                                    <Separator Margin="3,8" />
+                                                    <TextBlock Text="Source tile: x, y, width, height" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="3,0" />
+                                                    <UniformGrid Columns="2">
+                                                        <TextBox Text="{Binding TileX, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Tile X" />
+                                                        <TextBox Text="{Binding TileY, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Tile Y" />
+                                                        <TextBox Text="{Binding TileWidth, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Tile width" />
+                                                        <TextBox Text="{Binding TileHeight, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Tile height" />
+                                                    </UniformGrid>
+                                                    <Button Content="Load source tile" Command="{Binding LoadTileCommand}" />
+                                                    <StackPanel Orientation="Horizontal" Margin="3,5,0,0">
+                                                        <TextBlock Text="Histogram bins" VerticalAlignment="Center" />
+                                                        <TextBox Text="{Binding HistogramBinCount, UpdateSourceTrigger=PropertyChanged}" Width="48" AutomationProperties.Name="Histogram bin count" />
+                                                    </StackPanel>
+                                                    <StackPanel Orientation="Horizontal" Margin="3,0,0,0">
+                                                        <TextBlock Text="Channel" VerticalAlignment="Center" />
+                                                        <TextBox Text="{Binding HistogramChannel, UpdateSourceTrigger=PropertyChanged}" Width="42" AutomationProperties.Name="Histogram channel" />
+                                                        <Button Content="Load" Command="{Binding LoadHistogramCommand}" />
+                                                    </StackPanel>
+                                                </StackPanel>
+                                            </ScrollViewer>
+                                            <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch" Background="Transparent" />
+                                            <Grid Grid.Column="2">
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="*" />
+                                                    <RowDefinition Height="178" />
+                                                </Grid.RowDefinitions>
+                                                <Border Grid.Row="0" Background="{DynamicResource TerminalBackground}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="5">
+                                                    <ScrollViewer x:Name="ImageViewerScroll"
+                                                                  HorizontalScrollBarVisibility="Auto"
+                                                                  VerticalScrollBarVisibility="Auto"
+                                                                  SizeChanged="ImageViewerScroll_SizeChanged"
+                                                                  PreviewMouseWheel="ImageViewerScroll_PreviewMouseWheel"
+                                                                  PreviewMouseRightButtonDown="ImageViewerScroll_RightButtonDown"
+                                                                  PreviewMouseRightButtonUp="ImageViewerScroll_RightButtonUp"
+                                                                  PreviewMouseMove="ImageViewerScroll_PreviewMouseMove">
+                                                        <Grid Width="{Binding ImageDisplayWidth}" Height="{Binding ImageDisplayHeight}">
+                                                            <Image x:Name="PreviewImage"
+                                                                   Source="{Binding ArrayPreview}"
+                                                                   Stretch="Fill"
+                                                                   RenderOptions.BitmapScalingMode="NearestNeighbor"
+                                                                   MouseMove="PreviewImage_MouseMove"
+                                                                   MouseLeftButtonUp="PreviewImage_MouseLeftButtonUp" />
+                                                            <controls:PixelGridOverlay Zoom="{Binding Zoom}" IsHitTestVisible="False" />
+                                                        </Grid>
+                                                    </ScrollViewer>
+                                                </Border>
+                                                <TabControl Grid.Row="1" Margin="0,6,0,0">
+                                                    <TabItem Header="Pixel">
+                                                        <Grid Margin="8">
+                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Coordinate" Style="{StaticResource MutedText}" Margin="0,0,12,5" />
+                                                            <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding CursorCoordinate}" FontFamily="Cascadia Mono" />
+                                                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Raw value" Style="{StaticResource MutedText}" Margin="0,0,12,5" />
+                                                            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding RawPixelValue}" FontFamily="Cascadia Mono" TextWrapping="Wrap" />
+                                                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Displayed" Style="{StaticResource MutedText}" Margin="0,0,12,5" />
+                                                            <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding DisplayPixelValue}" FontFamily="Cascadia Mono" TextWrapping="Wrap" />
+                                                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Normalization" Style="{StaticResource MutedText}" Margin="0,0,12,0" />
+                                                            <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding Normalization}" TextWrapping="Wrap" />
+                                                        </Grid>
+                                                    </TabItem>
+                                                    <TabItem Header="Histogram">
+                                                        <Grid Margin="7">
+                                                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                                                            <TextBlock Text="{Binding HistogramSummary}" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,5" />
+                                                            <DataGrid Grid.Row="1" ItemsSource="{Binding HistogramBins}" IsReadOnly="True" EnableRowVirtualization="True">
+                                                                <DataGrid.Columns>
+                                                                    <DataGridTextColumn Header="Start" Binding="{Binding Start, StringFormat={}{0:G5}}" Width="*" />
+                                                                    <DataGridTextColumn Header="End" Binding="{Binding End, StringFormat={}{0:G5}}" Width="*" />
+                                                                    <DataGridTextColumn Header="Count" Binding="{Binding Count, StringFormat={}{0:N0}}" Width="80" />
+                                                                </DataGrid.Columns>
+                                                            </DataGrid>
+                                                        </Grid>
+                                                    </TabItem>
+                                                </TabControl>
+                                            </Grid>
+                                        </Grid>
+                                    </TabItem>
+                                </TabControl>
+
+                                <!-- One state surface covers no selection, loading, empty, expired, and error. -->
+                                <Border Panel.ZIndex="20" Background="{DynamicResource PanelBackground}" Margin="1">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding InspectorState}" Value="{x:Static vm:InspectorPaneState.Ready}">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="420" Margin="30">
+                                        <TextBlock FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center" TextAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="Select a variable to inspect" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding InspectorState}" Value="{x:Static vm:InspectorPaneState.Loading}"><Setter Property="Text" Value="Loading object details" /></DataTrigger>
+                                                        <DataTrigger Binding="{Binding InspectorState}" Value="{x:Static vm:InspectorPaneState.Empty}"><Setter Property="Text" Value="No inspectable details" /></DataTrigger>
+                                                        <DataTrigger Binding="{Binding InspectorState}" Value="{x:Static vm:InspectorPaneState.Expired}"><Setter Property="Text" Value="Object handle expired" /></DataTrigger>
+                                                        <DataTrigger Binding="{Binding InspectorState}" Value="{x:Static vm:InspectorPaneState.Error}"><Setter Property="Text" Value="Object details unavailable" /></DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <TextBlock Text="Choose an item from Variables. Its structure, class, methods, and array data will appear here."
+                                                   Style="{StaticResource MutedText}"
+                                                   TextAlignment="Center"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,8,0,0" />
+                                        <TextBlock Text="{Binding SelectedObjectStatus}"
+                                                   Style="{StaticResource MutedText}"
+                                                   TextAlignment="Center"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,4,0,0" />
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
                         </Grid>
-                    </TabItem>
-                    <TabItem Header="Class &amp; Methods">
-                        <DataGrid Margin="8" ItemsSource="{Binding ClassMembers}" AutoGenerateColumns="False" IsReadOnly="True"
-                                  EnableRowVirtualization="True" VirtualizingPanel.VirtualizationMode="Recycling">
-                            <DataGrid.Columns>
-                                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="180" />
-                                <DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="130" />
-                                <DataGridTextColumn Header="Declared by" Binding="{Binding DeclaredBy}" Width="150" />
-                                <DataGridTextColumn Header="Signature" Binding="{Binding Signature}" Width="*" />
-                            </DataGrid.Columns>
-                        </DataGrid>
-                    </TabItem>
-                    <TabItem Header="Array / Image">
-                        <Grid Margin="8">
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Launch" AutomationProperties.Name="Managed Python launch">
+                <Grid Background="{DynamicResource WindowBackground}" Margin="4,8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Border Grid.Row="0" Style="{StaticResource CardBorder}" Padding="14" Margin="0,0,0,8">
+                        <Grid>
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="220" />
+                                <ColumnDefinition Width="1.15*" />
+                                <ColumnDefinition Width="18" />
                                 <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="280" />
                             </Grid.ColumnDefinitions>
-                            <ScrollViewer Grid.Column="0" Margin="0,0,8,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                            <StackPanel>
-                                <TextBlock Text="VIEW" Foreground="{StaticResource SecondaryText}" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,7" />
-                                <TextBlock Text="Layout" />
-                                <ComboBox ItemsSource="{Binding Layouts}" SelectedItem="{Binding ArrayLayout}" />
-                                <TextBlock Text="Color order" Margin="0,8,0,0" />
-                                <ComboBox ItemsSource="{Binding ColorOrders}" SelectedItem="{Binding ColorOrder}" />
-                                <TextBlock Text="Normalization" Margin="0,8,0,0" />
-                                <ComboBox ItemsSource="{Binding NormalizationModes}" SelectedItem="{Binding NormalizationMode}" />
-                                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                                    <TextBlock Text="Percentile" VerticalAlignment="Center" Margin="0,0,4,0" />
-                                    <TextBox Text="{Binding PercentileLow, UpdateSourceTrigger=PropertyChanged}" Width="42" />
-                                    <TextBlock Text="–" VerticalAlignment="Center" Margin="4,0" />
-                                    <TextBox Text="{Binding PercentileHigh, UpdateSourceTrigger=PropertyChanged}" Width="42" />
+                            <Grid Grid.Column="0">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="120" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                <TextBlock Grid.Row="0" Text="Python executable" Style="{StaticResource MutedText}" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding PythonExecutable, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Python executable" />
+                                <Button Grid.Row="0" Grid.Column="2" Content="Browse" Command="{Binding BrowsePythonCommand}" />
+                                <TextBlock Grid.Row="1" Text="Script" Style="{StaticResource MutedText}" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding ScriptPath, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Python script path" />
+                                <Button Grid.Row="1" Grid.Column="2" Content="Browse" Command="{Binding BrowseScriptCommand}" />
+                                <TextBlock Grid.Row="2" Text="Arguments" Style="{StaticResource MutedText}" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Text="{Binding ScriptArguments, UpdateSourceTrigger=PropertyChanged}" ToolTip="Windows command-line quoting is supported" AutomationProperties.Name="Python script arguments" />
+                                <TextBlock Grid.Row="3" Text="Working directory" Style="{StaticResource MutedText}" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding WorkingDirectory, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Python working directory" />
+                                <Button Grid.Row="3" Grid.Column="2" Content="Browse" Command="{Binding BrowseWorkingDirectoryCommand}" />
+                                <StackPanel Grid.Row="4" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,8,0,0">
+                                    <Button Content="Launch and inspect" Command="{Binding LaunchCommand}" Style="{StaticResource PrimaryButton}" />
+                                    <Button Content="Stop" Command="{Binding StopCommand}" />
+                                    <Button Content="Restart" Command="{Binding RestartCommand}" />
+                                    <TextBlock Text="{Binding ManagedStatus}" FontWeight="SemiBold" VerticalAlignment="Center" Margin="12,0,0,0" />
+                                    <TextBlock Text="{Binding ManagedProcessId, StringFormat=PID {0}, TargetNullValue=PID -}" Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="12,0,0,0" />
+                                    <TextBlock Text="{Binding ManagedExitCode, StringFormat=Exit {0}}" Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="12,0,0,0" />
                                 </StackPanel>
-                                <TextBlock Text="Channels" Margin="0,8,0,2" />
-                                <StackPanel Orientation="Horizontal">
-                                    <CheckBox Content="R" IsChecked="{Binding ChannelR}" Margin="0,0,10,0" />
-                                    <CheckBox Content="G" IsChecked="{Binding ChannelG}" Margin="0,0,10,0" />
-                                    <CheckBox Content="B" IsChecked="{Binding ChannelB}" />
-                                </StackPanel>
-                                <TextBlock Text="Slice axis" Margin="0,8,0,0" />
-                                <ComboBox ItemsSource="{Binding SliceAxes}" SelectedItem="{Binding SliceAxis}" />
-                                <TextBlock Text="Slice index" Margin="0,8,0,0" />
-                                <Slider Minimum="0" Maximum="{Binding SliceMaximum}" Value="{Binding SliceIndex}" TickFrequency="1" IsSnapToTickEnabled="True" />
-                                <TextBlock Text="{Binding SliceIndex}" HorizontalAlignment="Right" />
-                                <Button Content="Apply preview" Command="{Binding ReloadPreviewCommand}" Margin="0,10,0,0" />
-                                <Separator Margin="0,10" />
-                                <Button Content="Fit" Command="{Binding FitCommand}" />
-                                <Button Content="1:1" Command="{Binding OneToOneCommand}" />
-                                <TextBlock Text="Zoom" Margin="0,8,0,0" />
-                                <Slider Minimum="0.05" Maximum="32" Value="{Binding Zoom}" />
-                                <TextBlock Text="{Binding Zoom, StringFormat={}{0:F2}×}" HorizontalAlignment="Right" />
-                                <Separator Margin="0,10" />
-                                <TextBlock Text="Source tile (x, y, width, height)" Foreground="{StaticResource SecondaryText}" />
-                                <UniformGrid Columns="4" Margin="0,3,0,0">
-                                    <TextBox Text="{Binding TileX, UpdateSourceTrigger=PropertyChanged}" />
-                                    <TextBox Text="{Binding TileY, UpdateSourceTrigger=PropertyChanged}" />
-                                    <TextBox Text="{Binding TileWidth, UpdateSourceTrigger=PropertyChanged}" />
-                                    <TextBox Text="{Binding TileHeight, UpdateSourceTrigger=PropertyChanged}" />
-                                </UniformGrid>
-                                <Button Content="Load source tile" Command="{Binding LoadTileCommand}" Margin="0,4,0,0" />
-                                <TextBlock Margin="0,3,0,0" Foreground="{StaticResource SecondaryText}">
-                                    <Run Text="Source " /><Run Text="{Binding SourceImageWidth, Mode=OneWay}" /><Run Text=" × " /><Run Text="{Binding SourceImageHeight, Mode=OneWay}" />
-                                </TextBlock>
-                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                                    <TextBlock Text="Histogram bins" VerticalAlignment="Center" />
-                                    <TextBox Text="{Binding HistogramBinCount, UpdateSourceTrigger=PropertyChanged}" Width="48" Margin="5,0,8,0" />
-                                    <TextBlock Text="Channel" VerticalAlignment="Center" />
-                                    <TextBox Text="{Binding HistogramChannel, UpdateSourceTrigger=PropertyChanged}" Width="34" Margin="5,0,0,0" />
-                                </StackPanel>
-                                <Button Content="Load histogram" Command="{Binding LoadHistogramCommand}" Margin="0,4,0,0" />
-                            </StackPanel>
-                            </ScrollViewer>
-                            <Border Grid.Column="1" Background="#05070A" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
-                                <ScrollViewer x:Name="ImageViewerScroll" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
-                                              SizeChanged="ImageViewerScroll_SizeChanged" PreviewMouseWheel="ImageViewerScroll_PreviewMouseWheel"
-                                              PreviewMouseRightButtonDown="ImageViewerScroll_RightButtonDown"
-                                              PreviewMouseRightButtonUp="ImageViewerScroll_RightButtonUp"
-                                              PreviewMouseMove="ImageViewerScroll_PreviewMouseMove">
-                                    <Grid Width="{Binding ImageDisplayWidth}" Height="{Binding ImageDisplayHeight}">
-                                        <Image x:Name="PreviewImage" Source="{Binding ArrayPreview}" Stretch="Fill"
-                                               RenderOptions.BitmapScalingMode="NearestNeighbor"
-                                               MouseMove="PreviewImage_MouseMove" MouseLeftButtonUp="PreviewImage_MouseLeftButtonUp" />
-                                        <controls:PixelGridOverlay Zoom="{Binding Zoom}" IsHitTestVisible="False" />
-                                    </Grid>
-                                </ScrollViewer>
-                            </Border>
-                            <ScrollViewer Grid.Column="2" Margin="10,0,0,0" VerticalScrollBarVisibility="Auto">
-                            <StackPanel>
-                                <TextBlock Text="PIXEL" Foreground="{StaticResource SecondaryText}" FontSize="11" FontWeight="SemiBold" />
-                                <TextBlock Text="{Binding CursorCoordinate}" FontFamily="Cascadia Mono" Margin="0,7,0,10" />
-                                <TextBlock Text="Raw value" Foreground="{StaticResource SecondaryText}" />
-                                <TextBlock Text="{Binding RawPixelValue}" FontFamily="Cascadia Mono" TextWrapping="Wrap" Margin="0,2,0,9" />
-                                <TextBlock Text="Displayed value" Foreground="{StaticResource SecondaryText}" />
-                                <TextBlock Text="{Binding DisplayPixelValue}" FontFamily="Cascadia Mono" TextWrapping="Wrap" Margin="0,2,0,9" />
-                                <TextBlock Text="Normalization" Foreground="{StaticResource SecondaryText}" />
-                                <TextBlock Text="{Binding Normalization}" TextWrapping="Wrap" Margin="0,2,0,9" />
-                                <TextBlock Text="Preview" Foreground="{StaticResource SecondaryText}" />
-                                <TextBlock FontFamily="Cascadia Mono">
-                                    <Run Text="{Binding PreviewWidth, Mode=OneWay}" /><Run Text=" × " /><Run Text="{Binding PreviewHeight, Mode=OneWay}" />
-                                </TextBlock>
-                                <TextBlock Text="Click a pixel to request its exact source value." Foreground="{StaticResource SecondaryText}" TextWrapping="Wrap" Margin="0,12,0,0" />
-                                <Separator Margin="0,12" />
-                                <TextBlock Text="HISTOGRAM" Foreground="{StaticResource SecondaryText}" FontSize="11" FontWeight="SemiBold" />
-                                <TextBlock Text="{Binding HistogramSummary}" TextWrapping="Wrap" Margin="0,5,0,7" />
-                                <DataGrid ItemsSource="{Binding HistogramBins}" AutoGenerateColumns="False" IsReadOnly="True" Height="260" EnableRowVirtualization="True">
+                            </Grid>
+                            <Grid Grid.Column="2">
+                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="120" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                <TextBlock Text="Environment overrides" Style="{StaticResource SectionLabel}" Margin="3,0,0,5" />
+                                <DataGrid Grid.Row="1" ItemsSource="{Binding LaunchEnvironment}" SelectedItem="{Binding SelectedEnvironmentVariable}" CanUserAddRows="False" EnableRowVirtualization="True" AutomationProperties.Name="Managed launch environment variables">
                                     <DataGrid.Columns>
-                                        <DataGridTextColumn Header="Range start" Binding="{Binding Start, StringFormat={}{0:G5}}" Width="*" />
-                                        <DataGridTextColumn Header="End" Binding="{Binding End, StringFormat={}{0:G5}}" Width="*" />
-                                        <DataGridTextColumn Header="Count" Binding="{Binding Count, StringFormat={}{0:N0}}" Width="75" />
+                                        <DataGridTextColumn Header="Name" Binding="{Binding Name, UpdateSourceTrigger=PropertyChanged}" Width="*" />
+                                        <DataGridTextColumn Header="Value" Binding="{Binding Value, UpdateSourceTrigger=PropertyChanged}" Width="2*" />
                                     </DataGrid.Columns>
                                 </DataGrid>
-                            </StackPanel>
-                            </ScrollViewer>
-                        </Grid>
-                    </TabItem>
-                    <TabItem Header="Memory">
-                        <Grid Margin="16">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="*" />
-                                <RowDefinition Height="150" />
-                            </Grid.RowDefinitions>
-                            <UniformGrid Grid.Row="0" Columns="4" Margin="0,0,0,12">
-                                <StackPanel><TextBlock Text="Working set" Foreground="{StaticResource SecondaryText}" /><TextBlock Text="{Binding WorkingSet}" FontSize="16" FontWeight="SemiBold" /></StackPanel>
-                                <StackPanel><TextBlock Text="Private bytes" Foreground="{StaticResource SecondaryText}" /><TextBlock Text="{Binding PrivateBytes}" FontSize="16" FontWeight="SemiBold" /></StackPanel>
-                                <StackPanel><TextBlock Text="Virtual size" Foreground="{StaticResource SecondaryText}" /><TextBlock Text="{Binding VirtualSize}" FontSize="16" FontWeight="SemiBold" /></StackPanel>
-                                <StackPanel><TextBlock Text="Peak working set" Foreground="{StaticResource SecondaryText}" /><TextBlock Text="{Binding PeakWorkingSet}" FontSize="16" FontWeight="SemiBold" /></StackPanel>
-                            </UniformGrid>
-                            <Grid Grid.Row="1" Margin="0,0,0,10">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                <Button Grid.Column="0" Content="Start tracemalloc" Command="{Binding StartTracingCommand}" Background="#238636" BorderBrush="#2EA043" />
-                                <Button Grid.Column="1" Content="Stop" Command="{Binding StopTracingCommand}" />
-                                <TextBlock Grid.Column="2" Text="Depth" Foreground="{StaticResource SecondaryText}" VerticalAlignment="Center" Margin="12,0,4,0" />
-                                <TextBox Grid.Column="3" Text="{Binding TracebackDepth, UpdateSourceTrigger=PropertyChanged}" Width="42" />
-                                <Button Grid.Column="4" Content="Refresh" Command="{Binding RefreshMemoryCommand}" Margin="8,0,0,0" />
-                                <StackPanel Grid.Column="5" Orientation="Horizontal" HorizontalAlignment="Right">
-                                    <TextBlock Text="{Binding TracemallocStatus}" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,14,0" />
-                                    <TextBlock Text="{Binding PythonCurrentMemory, StringFormat=Current: {0}}" VerticalAlignment="Center" Margin="0,0,14,0" />
-                                    <TextBlock Text="{Binding PythonPeakMemory, StringFormat=Peak: {0}}" VerticalAlignment="Center" Margin="0,0,14,0" />
-                                    <TextBlock Text="{Binding TracemallocOverhead, StringFormat=Overhead: {0}}" VerticalAlignment="Center" />
+                                <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
+                                    <Button Content="Add" Command="{Binding AddEnvironmentCommand}" />
+                                    <Button Content="Remove" Command="{Binding RemoveEnvironmentCommand}" />
                                 </StackPanel>
                             </Grid>
-                            <StackPanel Grid.Row="2" Margin="0,0,0,10">
-                                <TextBlock Text="{Binding TracemallocCoverage}" Foreground="{StaticResource SecondaryText}" TextWrapping="Wrap" Margin="0,0,0,7" />
-                                <StackPanel Orientation="Horizontal">
-                                    <Button Content="Take snapshot" Command="{Binding TakeMemorySnapshotCommand}" />
-                                    <TextBlock Text="Before" VerticalAlignment="Center" Margin="12,0,4,0" />
-                                    <ComboBox ItemsSource="{Binding MemorySnapshots}" SelectedItem="{Binding BeforeMemorySnapshot}" DisplayMemberPath="Display" Width="240" />
-                                    <TextBlock Text="After" VerticalAlignment="Center" Margin="12,0,4,0" />
-                                    <ComboBox ItemsSource="{Binding MemorySnapshots}" SelectedItem="{Binding AfterMemorySnapshot}" DisplayMemberPath="Display" Width="240" />
-                                    <Button Content="Compare" Command="{Binding CompareMemorySnapshotsCommand}" Margin="8,0,0,0" />
-                                </StackPanel>
-                            </StackPanel>
-                            <DataGrid Grid.Row="3" ItemsSource="{Binding MemoryStatistics}" IsReadOnly="True" AutoGenerateColumns="False" EnableRowVirtualization="True">
-                                <DataGrid.Columns>
-                                    <DataGridTextColumn Header="Allocation location" Binding="{Binding Location}" Width="*" />
-                                    <DataGridTextColumn Header="Size" Binding="{Binding SizeBytes, StringFormat={}{0:N0}}" Width="110" />
-                                    <DataGridTextColumn Header="Count" Binding="{Binding Count, StringFormat={}{0:N0}}" Width="90" />
-                                    <DataGridTextColumn Header="Size Δ" Binding="{Binding SizeDiffBytes, StringFormat={}{0:+#,#;-#,#;0}}" Width="110" />
-                                    <DataGridTextColumn Header="Count Δ" Binding="{Binding CountDiff, StringFormat={}{0:+#,#;-#,#;0}}" Width="90" />
-                                </DataGrid.Columns>
-                            </DataGrid>
-                            <DataGrid Grid.Row="4" ItemsSource="{Binding MemoryTimeline}" IsReadOnly="True" AutoGenerateColumns="False" EnableRowVirtualization="True" Margin="0,10,0,0">
-                                <DataGrid.Columns>
-                                    <DataGridTextColumn Header="Time" Binding="{Binding Timestamp, StringFormat={}{0:HH:mm:ss}}" Width="90" />
-                                    <DataGridTextColumn Header="Working set" Binding="{Binding WorkingSetBytes, StringFormat={}{0:N0}}" Width="*" />
-                                    <DataGridTextColumn Header="Private" Binding="{Binding PrivateBytes, StringFormat={}{0:N0}}" Width="*" />
-                                    <DataGridTextColumn Header="Virtual" Binding="{Binding VirtualBytes, StringFormat={}{0:N0}}" Width="*" />
-                                    <DataGridTextColumn Header="Python current" Binding="{Binding PythonCurrentBytes, StringFormat={}{0:N0}}" Width="*" />
-                                    <DataGridTextColumn Header="Python peak" Binding="{Binding PythonPeakBytes, StringFormat={}{0:N0}}" Width="*" />
-                                </DataGrid.Columns>
-                            </DataGrid>
                         </Grid>
-                    </TabItem>
-                    <TabItem Header="Execution Events">
-                        <Grid Margin="16">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="*" />
-                            </Grid.RowDefinitions>
-                            <StackPanel Grid.Row="0" Orientation="Horizontal">
-                                <Button Content="Start monitoring" Command="{Binding StartExecutionMonitoringCommand}" Background="#238636" BorderBrush="#2EA043" />
-                                <Button Content="Stop" Command="{Binding StopExecutionMonitoringCommand}" />
-                                <Button Content="Refresh" Command="{Binding RefreshExecutionEventsCommand}" />
-                                <Button Content="Clear" Command="{Binding ClearExecutionEventsCommand}" />
-                                <TextBlock Text="Capacity" Foreground="{StaticResource SecondaryText}" VerticalAlignment="Center" Margin="14,0,4,0" />
-                                <TextBox Text="{Binding ExecutionBufferCapacity, UpdateSourceTrigger=PropertyChanged}" Width="65" />
-                                <TextBlock Text="{Binding ExecutionStatus}" VerticalAlignment="Center" Margin="16,0,0,0" />
-                            </StackPanel>
-                            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,9,0,0">
-                                <TextBlock Text="Events" Foreground="{StaticResource SecondaryText}" VerticalAlignment="Center" Margin="0,0,7,0" />
-                                <CheckBox Content="Start" IsChecked="{Binding MonitorPyStart}" Margin="0,0,10,0" />
-                                <CheckBox Content="Return" IsChecked="{Binding MonitorPyReturn}" Margin="0,0,10,0" />
-                                <CheckBox Content="Yield" IsChecked="{Binding MonitorPyYield}" Margin="0,0,10,0" />
-                                <CheckBox Content="Unwind" IsChecked="{Binding MonitorPyUnwind}" Margin="0,0,10,0" />
-                                <CheckBox Content="Raise" IsChecked="{Binding MonitorRaise}" Margin="0,0,10,0" />
-                                <CheckBox Content="Line" IsChecked="{Binding MonitorLine}" Margin="0,0,10,0" />
-                                <CheckBox Content="Call" IsChecked="{Binding MonitorCall}" />
-                            </StackPanel>
-                            <Grid Grid.Row="2" Margin="0,8,0,9">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="Include path prefix" Foreground="{StaticResource SecondaryText}" VerticalAlignment="Center" Margin="0,0,7,0" />
-                                <TextBox Grid.Column="1" Text="{Binding ExecutionPathPrefix, UpdateSourceTrigger=PropertyChanged}" FontFamily="Cascadia Mono" />
-                            </Grid>
-                            <DataGrid Grid.Row="3" ItemsSource="{Binding ExecutionEvents}" AutoGenerateColumns="False" IsReadOnly="True"
-                                      EnableRowVirtualization="True" VirtualizingPanel.VirtualizationMode="Recycling">
-                                <DataGrid.Columns>
-                                    <DataGridTextColumn Header="#" Binding="{Binding Sequence}" Width="70" />
-                                    <DataGridTextColumn Header="Time" Binding="{Binding Timestamp, StringFormat={}{0:HH:mm:ss.fff}}" Width="105" />
-                                    <DataGridTextColumn Header="Event" Binding="{Binding EventName}" Width="95" />
-                                    <DataGridTextColumn Header="Thread" Binding="{Binding ThreadId}" Width="110" />
-                                    <DataGridTextColumn Header="Function" Binding="{Binding FunctionName}" Width="*" />
-                                    <DataGridTextColumn Header="Location" Binding="{Binding Location}" Width="190" />
-                                    <DataGridTextColumn Header="Offset" Binding="{Binding InstructionOffset}" Width="70" />
-                                    <DataGridTextColumn Header="Detail" Binding="{Binding Detail}" Width="120" />
-                                </DataGrid.Columns>
-                            </DataGrid>
+                    </Border>
+                    <Border Grid.Row="1" Background="{DynamicResource TerminalBackground}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="7">
+                        <DockPanel>
+                            <Border DockPanel.Dock="Top" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1" Padding="10,6">
+                                <DockPanel>
+                                    <TextBlock DockPanel.Dock="Left" Text="PROCESS OUTPUT" Foreground="{DynamicResource TerminalText}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                    <Button DockPanel.Dock="Right" Content="Clear" Command="{Binding ClearOutputCommand}" />
+                                </DockPanel>
+                            </Border>
+                            <ListBox x:Name="LaunchOutputList"
+                                     ItemsSource="{Binding LaunchOutput}"
+                                     Background="Transparent"
+                                     Foreground="{DynamicResource TerminalText}"
+                                     BorderThickness="0"
+                                     FontFamily="Cascadia Mono"
+                                     FontSize="12"
+                                     VirtualizingPanel.IsVirtualizing="True"
+                                     VirtualizingPanel.VirtualizationMode="Recycling"
+                                     ScrollViewer.CanContentScroll="True"
+                                     AutomationProperties.Name="Managed process output">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate><TextBlock Text="{Binding Display}" Foreground="{DynamicResource TerminalText}" TextWrapping="NoWrap" /></DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </DockPanel>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Memory" AutomationProperties.Name="Memory analysis">
+                <Grid Background="{DynamicResource WindowBackground}" Margin="4,8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="165" />
+                    </Grid.RowDefinitions>
+                    <UniformGrid Grid.Row="0" Columns="4" Margin="0,0,0,8">
+                        <Border Style="{StaticResource CardBorder}" Padding="13" Margin="0,0,5,0"><StackPanel><TextBlock Text="WORKING SET" Style="{StaticResource SectionLabel}" /><TextBlock Text="{Binding WorkingSet}" FontSize="18" FontWeight="SemiBold" Margin="0,4,0,0" /></StackPanel></Border>
+                        <Border Style="{StaticResource CardBorder}" Padding="13" Margin="3,0"><StackPanel><TextBlock Text="PRIVATE BYTES" Style="{StaticResource SectionLabel}" /><TextBlock Text="{Binding PrivateBytes}" FontSize="18" FontWeight="SemiBold" Margin="0,4,0,0" /></StackPanel></Border>
+                        <Border Style="{StaticResource CardBorder}" Padding="13" Margin="3,0"><StackPanel><TextBlock Text="VIRTUAL SIZE" Style="{StaticResource SectionLabel}" /><TextBlock Text="{Binding VirtualSize}" FontSize="18" FontWeight="SemiBold" Margin="0,4,0,0" /></StackPanel></Border>
+                        <Border Style="{StaticResource CardBorder}" Padding="13" Margin="5,0,0,0"><StackPanel><TextBlock Text="PEAK WORKING SET" Style="{StaticResource SectionLabel}" /><TextBlock Text="{Binding PeakWorkingSet}" FontSize="18" FontWeight="SemiBold" Margin="0,4,0,0" /></StackPanel></Border>
+                    </UniformGrid>
+                    <Border Grid.Row="1" Style="{StaticResource CardBorder}" Padding="9" Margin="0,0,0,8">
+                        <WrapPanel>
+                            <Button Content="Start tracemalloc" Command="{Binding StartTracingCommand}" Style="{StaticResource PrimaryButton}" />
+                            <Button Content="Stop" Command="{Binding StopTracingCommand}" />
+                            <TextBlock Text="Traceback depth" Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="12,0,3,0" />
+                            <TextBox Text="{Binding TracebackDepth, UpdateSourceTrigger=PropertyChanged}" Width="48" AutomationProperties.Name="Traceback depth" />
+                            <Button Content="Refresh" Command="{Binding RefreshMemoryCommand}" />
+                            <TextBlock Text="{Binding TracemallocStatus}" FontWeight="SemiBold" VerticalAlignment="Center" Margin="14,0" />
+                            <TextBlock Text="{Binding PythonCurrentMemory, StringFormat=Current: {0}}" VerticalAlignment="Center" Margin="0,0,12,0" />
+                            <TextBlock Text="{Binding PythonPeakMemory, StringFormat=Peak: {0}}" VerticalAlignment="Center" Margin="0,0,12,0" />
+                            <TextBlock Text="{Binding TracemallocOverhead, StringFormat=Overhead: {0}}" VerticalAlignment="Center" />
+                        </WrapPanel>
+                    </Border>
+                    <Border Grid.Row="2" Style="{StaticResource CardBorder}" Padding="9" Margin="0,0,0,8">
+                        <Grid>
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                            <TextBlock Text="{Binding TracemallocCoverage}" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="3,0,3,5" />
+                            <WrapPanel Grid.Row="1">
+                                <Button Content="Take snapshot" Command="{Binding TakeMemorySnapshotCommand}" />
+                                <TextBlock Text="Before" VerticalAlignment="Center" Margin="12,0,3,0" />
+                                <ComboBox ItemsSource="{Binding MemorySnapshots}" SelectedItem="{Binding BeforeMemorySnapshot}" DisplayMemberPath="Display" Width="245" AutomationProperties.Name="Before memory snapshot" />
+                                <TextBlock Text="After" VerticalAlignment="Center" Margin="12,0,3,0" />
+                                <ComboBox ItemsSource="{Binding MemorySnapshots}" SelectedItem="{Binding AfterMemorySnapshot}" DisplayMemberPath="Display" Width="245" AutomationProperties.Name="After memory snapshot" />
+                                <Button Content="Compare" Command="{Binding CompareMemorySnapshotsCommand}" />
+                            </WrapPanel>
                         </Grid>
-                    </TabItem>
-                </TabControl>
-            </Border>
-            <GridSplitter Grid.Column="3" Width="5" HorizontalAlignment="Stretch" Background="{StaticResource BorderBrush}" />
+                    </Border>
+                    <DataGrid Grid.Row="3" ItemsSource="{Binding MemoryStatistics}" IsReadOnly="True" EnableRowVirtualization="True" AutomationProperties.Name="Memory allocation statistics">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Allocation location" Binding="{Binding Location}" Width="*" />
+                            <DataGridTextColumn Header="Size" Binding="{Binding SizeBytes, StringFormat={}{0:N0}}" Width="110" />
+                            <DataGridTextColumn Header="Count" Binding="{Binding Count, StringFormat={}{0:N0}}" Width="90" />
+                            <DataGridTextColumn Header="Size change" Binding="{Binding SizeDiffBytes, StringFormat={}{0:+#,#;-#,#;0}}" Width="115" />
+                            <DataGridTextColumn Header="Count change" Binding="{Binding CountDiff, StringFormat={}{0:+#,#;-#,#;0}}" Width="115" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <DataGrid Grid.Row="4" ItemsSource="{Binding MemoryTimeline}" IsReadOnly="True" EnableRowVirtualization="True" Margin="0,8,0,0" AutomationProperties.Name="Memory timeline">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding Timestamp, StringFormat={}{0:HH:mm:ss}}" Width="90" />
+                            <DataGridTextColumn Header="Working set" Binding="{Binding WorkingSetBytes, StringFormat={}{0:N0}}" Width="*" />
+                            <DataGridTextColumn Header="Private" Binding="{Binding PrivateBytes, StringFormat={}{0:N0}}" Width="*" />
+                            <DataGridTextColumn Header="Virtual" Binding="{Binding VirtualBytes, StringFormat={}{0:N0}}" Width="*" />
+                            <DataGridTextColumn Header="Python current" Binding="{Binding PythonCurrentBytes, StringFormat={}{0:N0}}" Width="*" />
+                            <DataGridTextColumn Header="Python peak" Binding="{Binding PythonPeakBytes, StringFormat={}{0:N0}}" Width="*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </TabItem>
 
-            <Border Grid.Column="4" Background="{StaticResource PanelBackground}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1,0,0,0" Padding="12">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel>
-                        <TextBlock Text="DETAILS" Foreground="{StaticResource SecondaryText}" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,10" />
-                        <TextBlock Text="Type" Foreground="{StaticResource SecondaryText}" />
-                        <TextBlock Text="{Binding SelectedType}" FontWeight="SemiBold" Margin="0,2,0,9" />
-                        <TextBlock Text="Module" Foreground="{StaticResource SecondaryText}" />
-                        <TextBlock Text="{Binding SelectedModule}" Margin="0,2,0,9" />
-                        <TextBlock Text="Qualified name" Foreground="{StaticResource SecondaryText}" />
-                        <TextBlock Text="{Binding SelectedQualifiedName}" TextWrapping="Wrap" Margin="0,2,0,9" />
-                        <TextBlock Text="Object address" Foreground="{StaticResource SecondaryText}" />
-                        <TextBlock Text="{Binding SelectedAddress}" FontFamily="Cascadia Mono" Margin="0,2,0,9" />
-                        <TextBlock Text="Shallow size" Foreground="{StaticResource SecondaryText}" />
-                        <TextBlock Text="{Binding SelectedShallowSize}" Margin="0,2,0,9" />
-                        <TextBlock Text="Payload size" Foreground="{StaticResource SecondaryText}" />
-                        <TextBlock Text="{Binding SelectedPayloadSize}" Margin="0,2,0,9" />
-                        <Separator Margin="0,5,0,10" />
-                        <TextBlock Text="ARRAY" Foreground="{StaticResource SecondaryText}" FontSize="11" FontWeight="SemiBold" />
-                        <TextBlock Text="Shape" Foreground="{StaticResource SecondaryText}" Margin="0,8,0,0" />
-                        <TextBlock Text="{Binding ArrayShape}" FontFamily="Cascadia Mono" />
-                        <TextBlock Text="DType" Foreground="{StaticResource SecondaryText}" Margin="0,8,0,0" />
-                        <TextBlock Text="{Binding ArrayDType}" />
-                        <TextBlock Text="Strides" Foreground="{StaticResource SecondaryText}" Margin="0,8,0,0" />
-                        <TextBlock Text="{Binding ArrayStrides}" FontFamily="Cascadia Mono" />
-                        <TextBlock Text="Data address" Foreground="{StaticResource SecondaryText}" Margin="0,8,0,0" />
-                        <TextBlock Text="{Binding ArrayDataAddress}" FontFamily="Cascadia Mono" />
-                        <TextBlock Text="Owner" Foreground="{StaticResource SecondaryText}" Margin="0,8,0,0" />
-                        <TextBlock Text="{Binding ArrayOwner}" />
-                        <TextBlock Text="Layout confidence" Foreground="{StaticResource SecondaryText}" Margin="0,8,0,0" />
-                        <TextBlock Text="{Binding LayoutConfidence}" />
-                    </StackPanel>
-                </ScrollViewer>
-            </Border>
-        </Grid>
+            <TabItem Header="Events" AutomationProperties.Name="Python execution events">
+                <Grid Background="{DynamicResource WindowBackground}" Margin="4,8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Border Grid.Row="0" Style="{StaticResource CardBorder}" Padding="9" Margin="0,0,0,8">
+                        <WrapPanel>
+                            <Button Content="Start monitoring" Command="{Binding StartExecutionMonitoringCommand}" Style="{StaticResource PrimaryButton}" />
+                            <Button Content="Stop" Command="{Binding StopExecutionMonitoringCommand}" />
+                            <Button Content="Refresh" Command="{Binding RefreshExecutionEventsCommand}" />
+                            <Button Content="Clear" Command="{Binding ClearExecutionEventsCommand}" />
+                            <TextBlock Text="Capacity" Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="14,0,3,0" />
+                            <TextBox Text="{Binding ExecutionBufferCapacity, UpdateSourceTrigger=PropertyChanged}" Width="70" AutomationProperties.Name="Execution event buffer capacity" />
+                            <TextBlock Text="{Binding ExecutionStatus}" FontWeight="SemiBold" VerticalAlignment="Center" Margin="14,0" />
+                            <TextBlock Text="{Binding ExecutionDroppedCount, StringFormat=Dropped: {0:N0}}" Style="{StaticResource MutedText}" VerticalAlignment="Center" />
+                        </WrapPanel>
+                    </Border>
+                    <Border Grid.Row="1" Style="{StaticResource CardBorder}" Padding="9" Margin="0,0,0,8">
+                        <WrapPanel>
+                            <TextBlock Text="Events" Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="3,0,7,0" />
+                            <CheckBox Content="Start" IsChecked="{Binding MonitorPyStart}" />
+                            <CheckBox Content="Return" IsChecked="{Binding MonitorPyReturn}" />
+                            <CheckBox Content="Yield" IsChecked="{Binding MonitorPyYield}" />
+                            <CheckBox Content="Unwind" IsChecked="{Binding MonitorPyUnwind}" />
+                            <CheckBox Content="Raise" IsChecked="{Binding MonitorRaise}" />
+                            <CheckBox Content="Line" IsChecked="{Binding MonitorLine}" />
+                            <CheckBox Content="Call" IsChecked="{Binding MonitorCall}" />
+                        </WrapPanel>
+                    </Border>
+                    <Grid Grid.Row="2" Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <TextBlock Text="Include path prefix" Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="3,0,7,0" />
+                        <TextBox Grid.Column="1" Text="{Binding ExecutionPathPrefix, UpdateSourceTrigger=PropertyChanged}" FontFamily="Cascadia Mono" AutomationProperties.Name="Execution event path prefix" />
+                    </Grid>
+                    <DataGrid Grid.Row="3" ItemsSource="{Binding ExecutionEvents}" IsReadOnly="True" EnableRowVirtualization="True" VirtualizingPanel.VirtualizationMode="Recycling" AutomationProperties.Name="Execution events">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="#" Binding="{Binding Sequence}" Width="70" />
+                            <DataGridTextColumn Header="Time" Binding="{Binding Timestamp, StringFormat={}{0:HH:mm:ss.fff}}" Width="105" />
+                            <DataGridTextColumn Header="Event" Binding="{Binding EventName}" Width="95" />
+                            <DataGridTextColumn Header="Thread" Binding="{Binding ThreadId}" Width="105" />
+                            <DataGridTextColumn Header="Function" Binding="{Binding FunctionName}" Width="*" />
+                            <DataGridTextColumn Header="Location" Binding="{Binding Location}" Width="190" />
+                            <DataGridTextColumn Header="Offset" Binding="{Binding InstructionOffset}" Width="70" />
+                            <DataGridTextColumn Header="Detail" Binding="{Binding Detail}" Width="150" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </TabItem>
+        </TabControl>
 
-        <Border Grid.Row="2" Background="#0B0F14" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="12,8">
+        <!-- Compact status line keeps critical diagnostics visible without consuming workspace. -->
+        <Border Grid.Row="2"
+                Background="{DynamicResource PanelBackground}"
+                BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="0,1,0,0"
+                Padding="12,6">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="2*" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <StackPanel Grid.Column="0">
-                    <TextBlock Text="DIAGNOSTICS" Foreground="{StaticResource SecondaryText}" FontSize="11" FontWeight="SemiBold" />
-                    <TextBlock Text="{Binding Status}" Margin="0,5,0,0" />
-                    <TextBlock Text="{Binding ErrorMessage}" Foreground="#FF7B72" TextWrapping="Wrap" Margin="0,3,12,0" />
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Status}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxWidth="320" />
+                    <TextBlock Text="{Binding ConnectionMode}" Style="{StaticResource MutedText}" TextTrimming="CharacterEllipsis" MaxWidth="175" Margin="10,0,0,0" ToolTip="Connection method" />
+                    <TextBlock Text="{Binding ErrorMessage}" Foreground="{DynamicResource DangerBrush}" TextTrimming="CharacterEllipsis" MaxWidth="430" Margin="12,0,0,0" ToolTip="{Binding ErrorMessage}" />
                 </StackPanel>
-                <StackPanel Grid.Column="1">
-                    <TextBlock Text="REQUEST" Foreground="{StaticResource SecondaryText}" FontSize="11" FontWeight="SemiBold" />
-                    <TextBlock Text="{Binding LastLatency, StringFormat=Latency  {0}}" Margin="0,5,0,0" />
-                    <TextBlock Text="Async socket calls only" Foreground="{StaticResource SecondaryText}" Margin="0,3,0,0" />
-                </StackPanel>
-                <StackPanel Grid.Column="2">
-                    <TextBlock Text="AGENT" Foreground="{StaticResource SecondaryText}" FontSize="11" FontWeight="SemiBold" />
-                    <TextBlock Text="Bounded handles • read-only" Margin="0,5,0,0" />
-                    <TextBlock Text="Snapshots may be stale" Foreground="{StaticResource WarningBrush}" Margin="0,3,0,0" />
+                <TextBlock Grid.Column="1" Text="{Binding TargetPid, StringFormat=PID {0}, TargetNullValue=PID -}" Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="12,0" />
+                <TextBlock Grid.Column="2" Text="{Binding PythonVersion}" Style="{StaticResource MutedText}" VerticalAlignment="Center" MaxWidth="190" TextTrimming="CharacterEllipsis" />
+                <TextBlock Grid.Column="3" Text="{Binding Architecture}" Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="10,0" />
+                <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding PrivateBytes, StringFormat=Private {0}}" Style="{StaticResource MutedText}" />
+                    <TextBlock Text="{Binding LastLatency, StringFormat=Latency {0}}" Style="{StaticResource MutedText}" Margin="12,0" />
+                    <TextBlock Text="{Binding SnapshotStatusBar}" ToolTip="{Binding SnapshotStatus}" TextTrimming="CharacterEllipsis" MaxWidth="170" Margin="0,0,12,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource MutedText}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsSnapshotStale}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                        <Setter Property="FontWeight" Value="SemiBold" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <Border Background="{DynamicResource SuccessBackground}" BorderBrush="{DynamicResource SuccessBrush}" BorderThickness="1" CornerRadius="10" Padding="8,2">
+                        <TextBlock Text="Read-only" Foreground="{DynamicResource SuccessBrush}" FontSize="11" FontWeight="SemiBold" />
+                    </Border>
+                    <ProgressBar Width="55" Height="4" IsIndeterminate="True" Margin="10,0,0,0">
+                        <ProgressBar.Style>
+                            <Style TargetType="ProgressBar">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers><DataTrigger Binding="{Binding IsBusy}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
+                            </Style>
+                        </ProgressBar.Style>
+                    </ProgressBar>
                 </StackPanel>
             </Grid>
         </Border>

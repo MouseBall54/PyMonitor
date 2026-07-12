@@ -147,7 +147,7 @@ public sealed class QuickAttachReplTests
             var scope = Result(await client.RequestAsync("modules.listNamespace", new JsonObject
             {
                 ["moduleName"] = "__main__",
-                ["pageSize"] = 1000,
+                ["pageSize"] = 200,
             }, timeout.Token));
             var items = scope["items"]!.AsArray();
             Assert.Equal("1235", Find(items, "example_value")["safePreview"]!.GetValue<string>());

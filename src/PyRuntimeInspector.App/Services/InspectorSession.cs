@@ -6,8 +6,9 @@ using PyRuntimeInspector.Protocol;
 
 namespace PyRuntimeInspector.App.Services;
 
-public sealed class InspectorSession : IInspectorSession
+public sealed class InspectorSession(TimeSpan? requestTimeout = null) : IInspectorSession
 {
+    private static readonly TimeSpan CooperativeDetachTimeout = TimeSpan.FromSeconds(1);
     private TcpListener? _listener;
     private TcpClient? _socket;
     private InspectorClient? _client;
@@ -31,7 +32,7 @@ public sealed class InspectorSession : IInspectorSession
             _listener = null;
         }
 
-        _client = new InspectorClient(_socket.GetStream());
+        _client = new InspectorClient(_socket.GetStream(), requestTimeout);
         try
         {
             await _client.HelloAsync(token, cancellationToken);
@@ -67,6 +68,11 @@ public sealed class InspectorSession : IInspectorSession
         {
             throw;
         }
+        catch (TimeoutException)
+        {
+            MarkDisconnected("Target request timed out.");
+            throw;
+        }
         catch (Exception exception) when (exception is IOException or SocketException or ObjectDisposedException or ProtocolException)
         {
             MarkDisconnected("Target connection closed.");
@@ -76,18 +82,32 @@ public sealed class InspectorSession : IInspectorSession
 
     public async Task DetachAsync()
     {
-        if (_client is not null && IsConnected)
+        var client = _client;
+        var wasConnected = IsConnected;
+        IsConnected = false;
+        try
         {
-            try
+            if (client is not null && wasConnected)
             {
-                await _client.RequestAsync("session.detach");
-            }
-            catch (Exception exception) when (exception is IOException or SocketException or ObjectDisposedException or ProtocolException)
-            {
+                var detachTask = client.RequestAsync("session.detach");
+                try
+                {
+                    await detachTask.WaitAsync(CooperativeDetachTimeout);
+                }
+                catch (TimeoutException)
+                {
+                    client.Abort();
+                    ObserveFailure(detachTask);
+                }
+                catch (Exception exception) when (exception is IOException or SocketException or ObjectDisposedException or ProtocolException)
+                {
+                }
             }
         }
-        IsConnected = false;
-        CloseSocket();
+        finally
+        {
+            CloseSocket();
+        }
     }
 
     public async ValueTask DisposeAsync() => await DetachAsync();
@@ -103,8 +123,18 @@ public sealed class InspectorSession : IInspectorSession
 
     private void CloseSocket()
     {
+        var client = _client;
         _client = null;
-        _socket?.Dispose();
+        client?.Abort();
+        var socket = _socket;
         _socket = null;
+        socket?.Dispose();
     }
+
+    private static void ObserveFailure(Task task) =>
+        _ = task.ContinueWith(
+            static completed => _ = completed.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously | TaskContinuationOptions.OnlyOnFaulted,
+            TaskScheduler.Default);
 }

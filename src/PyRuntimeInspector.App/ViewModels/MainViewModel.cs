@@ -1,5 +1,7 @@
 using System.Collections.ObjectModel;
+using System.Data;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
@@ -21,24 +23,53 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private readonly ILiveAttachService _liveAttachService;
     private readonly IClipboardService _clipboardService;
     private readonly SynchronizationContext? _uiContext;
-    private readonly Dictionary<string, string> _changeTokens = [];
+    private readonly Dictionary<string, ScopeSnapshot> _scopeSnapshots = [];
+    private readonly Dictionary<string, ChangeMarker> _activeChanges = [];
+    private readonly HashSet<string> _pinnedKeys = [];
+    private readonly Dictionary<string, NavigationContext> _pinnedContexts = [];
+    private readonly List<NavigationContext> _navigationHistory = [];
+    private readonly object _handleLifetimeSync = new();
+    private readonly HashSet<string> _knownObjectHandles = new(StringComparer.Ordinal);
+    private HashSet<string> _referencedObjectHandles = new(StringComparer.Ordinal);
+    private int _activeHandleResponses;
+    private int _handleSessionGeneration;
+    private bool _handleReleaseInProgress;
+    private bool _handleReleaseRequested;
+    private bool _handleSessionClosing;
+    private TaskCompletionSource? _handleReleaseCompleted;
     private CancellationTokenSource? _connectionCts;
     private CancellationTokenSource? _selectionCts;
     private CancellationTokenSource? _detailCts;
     private CancellationTokenSource? _refreshCts;
+    private CancellationTokenSource? _searchDebounceCts;
     private RuntimeTreeNode? _currentScope;
     private long _selectionGeneration;
     private long _detailGeneration;
     private int _pageOffset;
     private int _pageTotal;
     private const int PageSize = 200;
+    private const int ObjectPageSize = 100;
+    private const int DataFrameRowPageSize = 50;
+    private const int DataFrameColumnPageSize = 20;
+    private const int MaxObjectDepth = 8;
+    // Bound retained navigation contexts so history cannot outgrow the agent handle store.
+    private const int MaxNavigationHistory = 128;
     private const int GcScanLimit = 100_000;
+    private const int MaxHandleReleaseBatch = 8;
+    private const int MaxDetachHandleReleaseBatch = 32;
+    private static readonly TimeSpan ChangeHighlightDuration = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan DetachHandleReleaseBudget = TimeSpan.FromMilliseconds(750);
     private double _fitViewportWidth;
     private double _fitViewportHeight;
     private bool _fitMode = true;
 
     private ProcessItem? _selectedProcess;
     private VariableRow? _selectedVariable;
+    private ObjectTreeNode? _selectedObjectNode;
+    private PinnedObjectRow? _selectedPinnedObject;
+    private NavigationContext? _currentObject;
+    private int _navigationIndex = -1;
+    private bool _suppressVariableNavigation;
     private string _portText;
     private string _token;
     private string _status = "Disconnected";
@@ -68,7 +99,37 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private long? _pythonPeakBytes;
     private double _refreshIntervalSeconds = 1;
     private string _breadcrumb = "Select a frame scope";
+    private string _selectedObjectPath = "Select a variable to inspect";
+    private string _backNavigationLabel = "Back";
+    private string _forwardNavigationLabel = "Forward";
+    private string _parentNavigationLabel = "Parent";
+    private string _backNavigationToolTip = "No earlier object in navigation history";
+    private string _forwardNavigationToolTip = "No later object in navigation history";
+    private string _parentNavigationToolTip = "The selected object is already at the root";
+    private string _objectDepthLabel = "No level";
+    private string _navigationHistoryLabel = "History 0 / 0";
+    private string _navigationLocationDescription = "No object selected";
+    private string _selectedObjectName = "No object selected";
+    private string _selectedObjectPreview = "Choose a variable from the table to inspect its structure.";
+    private string _selectedObjectStatus = "No selection";
+    private string _classSummary = "Select an object to inspect its class.";
+    private InspectorPaneState _inspectorState = InspectorPaneState.NoSelection;
+    private bool _hasSelectedObject;
+    private bool _hasArraySelection;
+    private bool _hasDataFrameSelection;
+    private bool _autoRefreshEnabled = true;
+    private bool _isScopeLoading;
+    private bool _isSearchPending;
+    private DateTime? _lastSnapshotAt;
+    private string _connectionMode = "Not connected";
     private string _searchText = "";
+    private string _scopeFilter = "All scopes";
+    private string _changeFilter = "All changes";
+    private string _typeFilter = "All types";
+    private bool _arraysOnly;
+    private bool _expandableOnly;
+    private bool _pinnedOnly;
+    private string _filterResultLabel = "0 visible";
     private string _pageLabel = "0 items";
     private string _lastLatency = "—";
     private int _selectedWorkspaceTabIndex;
@@ -131,6 +192,24 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private bool _monitorLine;
     private bool _monitorCall;
     private string? _arrayHandle;
+    private bool _arrayPreviewSupported;
+    private string? _dataFrameHandle;
+    private DataTable? _dataFrameTable;
+    private DataView? _dataFrameRows;
+    private DataFramePaneState _dataFrameState = DataFramePaneState.NoSelection;
+    private int _dataFrameRowOffset;
+    private int _dataFrameColumnOffset;
+    private int _dataFrameRowCount;
+    private int _dataFrameColumnCount;
+    private int _dataFrameTotalRows;
+    private int _dataFrameTotalColumns;
+    private bool _dataFrameHasMoreRows;
+    private bool _dataFrameHasMoreColumns;
+    private string _dataFrameShape = "—";
+    private string _dataFrameStatus = "Select a pandas DataFrame to preview it.";
+    private string _dataFrameRowPageLabel = "Rows 0 of 0";
+    private string _dataFrameColumnPageLabel = "Columns 0 of 0";
+    private string _dataFrameErrorMessage = "";
     private int[] _arrayDimensions = [];
     private int _previewRowStep = 1;
     private int _previewColumnStep = 1;
@@ -182,9 +261,26 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         PreviousPageCommand = new AsyncCommand(PreviousPageAsync, () => IsConnected && _pageOffset > 0);
         NextPageCommand = new AsyncCommand(NextPageAsync, () => IsConnected && _pageOffset + PageSize < _pageTotal);
         SearchCurrentCommand = new AsyncCommand(SearchCurrentAsync, () => IsConnected && _currentScope is not null);
-        ReloadPreviewCommand = new AsyncCommand(ReloadArrayPreviewAsync, () => IsConnected && _arrayHandle is not null);
-        LoadTileCommand = new AsyncCommand(LoadArrayTileAsync, () => IsConnected && _arrayHandle is not null);
-        LoadHistogramCommand = new AsyncCommand(LoadHistogramAsync, () => IsConnected && _arrayHandle is not null);
+        NavigateBackCommand = new AsyncCommand(NavigateBackAsync, () => _navigationIndex > 0);
+        NavigateForwardCommand = new AsyncCommand(NavigateForwardAsync, () => _navigationIndex >= 0 && _navigationIndex < _navigationHistory.Count - 1);
+        NavigateParentCommand = new AsyncCommand(NavigateParentAsync, () => _currentObject?.Parent is not null);
+        NavigatePinnedCommand = new AsyncCommand(NavigatePinnedAsync, () => SelectedPinnedObject is not null && IsConnected);
+        ReloadPreviewCommand = new AsyncCommand(ReloadArrayPreviewAsync, () => IsConnected && _arrayHandle is not null && _arrayPreviewSupported);
+        LoadTileCommand = new AsyncCommand(LoadArrayTileAsync, () => IsConnected && _arrayHandle is not null && _arrayPreviewSupported);
+        LoadHistogramCommand = new AsyncCommand(LoadHistogramAsync, () => IsConnected && _arrayHandle is not null && _arrayPreviewSupported);
+        RefreshDataFrameCommand = new AsyncCommand(RefreshDataFrameAsync, () => IsConnected && _dataFrameHandle is not null);
+        PreviousDataFrameRowsCommand = new AsyncCommand(
+            () => MoveDataFramePageAsync(rowDelta: -DataFrameRowPageSize, columnDelta: 0),
+            () => IsConnected && _dataFrameHandle is not null && _dataFrameRowOffset > 0);
+        NextDataFrameRowsCommand = new AsyncCommand(
+            () => MoveDataFramePageAsync(rowDelta: DataFrameRowPageSize, columnDelta: 0),
+            () => IsConnected && _dataFrameHandle is not null && _dataFrameHasMoreRows);
+        PreviousDataFrameColumnsCommand = new AsyncCommand(
+            () => MoveDataFramePageAsync(rowDelta: 0, columnDelta: -DataFrameColumnPageSize),
+            () => IsConnected && _dataFrameHandle is not null && _dataFrameColumnOffset > 0);
+        NextDataFrameColumnsCommand = new AsyncCommand(
+            () => MoveDataFramePageAsync(rowDelta: 0, columnDelta: DataFrameColumnPageSize),
+            () => IsConnected && _dataFrameHandle is not null && _dataFrameHasMoreColumns);
         StartTracingCommand = new AsyncCommand(StartTracingAsync, () => IsConnected && !IsTracemallocTracing);
         StopTracingCommand = new AsyncCommand(StopTracingAsync, () => IsConnected && IsTracemallocTracing);
         TakeMemorySnapshotCommand = new AsyncCommand(TakeMemorySnapshotAsync, () => IsConnected && IsTracemallocTracing);
@@ -198,6 +294,13 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         StopCommand = new AsyncCommand(StopManagedAsync, () => IsManagedRunning);
         RestartCommand = new AsyncCommand(RestartManagedAsync, () => !IsBusy && (!IsConnected || IsManagedRunning));
         RefreshProcessesCommand = new RelayCommand(RefreshProcesses);
+        ClearSearchCommand = new RelayCommand(ClearSearch);
+        ClearFiltersCommand = new RelayCommand(ClearFilters);
+        ResetBaselineCommand = new RelayCommand(ResetCurrentBaseline, () => _currentScope is not null);
+        TogglePinCommand = new RelayCommand(ToggleSelectedPin, () => _currentObject is not null && !_currentObject.Row.IsRemoved);
+        CopyObjectPathCommand = new RelayCommand(CopySelectedObjectPath, () => _currentObject is not null);
+        CopyObjectTypeCommand = new RelayCommand(CopySelectedObjectType, () => _currentObject is not null);
+        CopyObjectAddressCommand = new RelayCommand(CopySelectedObjectAddress, () => _currentObject is not null);
         CopyEnvironmentCommand = new RelayCommand(CopyEnvironment);
         BrowsePythonCommand = new RelayCommand(BrowsePython);
         BrowseScriptCommand = new RelayCommand(BrowseScript);
@@ -216,6 +319,12 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public ObservableCollection<VariableRow> FilteredVariables { get; } = [];
     public ObservableCollection<ObjectChildRow> ObjectChildren { get; } = [];
     public ObservableCollection<ClassMemberRow> ClassMembers { get; } = [];
+    public ObservableCollection<ObjectTreeNode> ObjectRoots { get; } = [];
+    public ObservableCollection<ObjectBreadcrumbItem> ObjectBreadcrumbs { get; } = [];
+    public ObservableCollection<DataFrameColumnInfo> DataFrameColumns { get; } = [];
+    public ObservableCollection<ClassTreeNode> ClassTree { get; } = [];
+    public ObservableCollection<PinnedObjectRow> PinnedObjects { get; } = [];
+    public ObservableCollection<string> TypeFilters { get; } = ["All types"];
     public ObservableCollection<MemorySnapshotRow> MemorySnapshots { get; } = [];
     public ObservableCollection<MemoryStatisticRow> MemoryStatistics { get; } = [];
     public ObservableCollection<MemorySampleRow> MemoryTimeline { get; } = [];
@@ -228,6 +337,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public IReadOnlyList<string> ColorOrders { get; } = ["RGB", "BGR"];
     public IReadOnlyList<string> NormalizationModes { get; } = ["AUTO", "NONE", "MINMAX", "PERCENTILE", "LABEL"];
     public IReadOnlyList<int> SliceAxes { get; } = [0, 1, 2];
+    public IReadOnlyList<string> ScopeFilters { get; } = ["All scopes", "locals", "globals", "builtins", "module", "gc-tracked"];
+    public IReadOnlyList<string> ChangeFilters { get; } = ["All changes", "Changed only", "Added", "Removed", "Rebound", "Updated"];
 
     public AsyncCommand AttachCommand { get; }
     public AsyncCommand QuickAttachCommand { get; }
@@ -237,9 +348,18 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public AsyncCommand PreviousPageCommand { get; }
     public AsyncCommand NextPageCommand { get; }
     public AsyncCommand SearchCurrentCommand { get; }
+    public AsyncCommand NavigateBackCommand { get; }
+    public AsyncCommand NavigateForwardCommand { get; }
+    public AsyncCommand NavigateParentCommand { get; }
+    public AsyncCommand NavigatePinnedCommand { get; }
     public AsyncCommand ReloadPreviewCommand { get; }
     public AsyncCommand LoadTileCommand { get; }
     public AsyncCommand LoadHistogramCommand { get; }
+    public AsyncCommand RefreshDataFrameCommand { get; }
+    public AsyncCommand PreviousDataFrameRowsCommand { get; }
+    public AsyncCommand NextDataFrameRowsCommand { get; }
+    public AsyncCommand PreviousDataFrameColumnsCommand { get; }
+    public AsyncCommand NextDataFrameColumnsCommand { get; }
     public AsyncCommand StartTracingCommand { get; }
     public AsyncCommand StopTracingCommand { get; }
     public AsyncCommand TakeMemorySnapshotCommand { get; }
@@ -253,6 +373,13 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public AsyncCommand StopCommand { get; }
     public AsyncCommand RestartCommand { get; }
     public RelayCommand RefreshProcessesCommand { get; }
+    public RelayCommand ClearSearchCommand { get; }
+    public RelayCommand ClearFiltersCommand { get; }
+    public RelayCommand ResetBaselineCommand { get; }
+    public RelayCommand TogglePinCommand { get; }
+    public RelayCommand CopyObjectPathCommand { get; }
+    public RelayCommand CopyObjectTypeCommand { get; }
+    public RelayCommand CopyObjectAddressCommand { get; }
     public RelayCommand CopyEnvironmentCommand { get; }
     public RelayCommand BrowsePythonCommand { get; }
     public RelayCommand BrowseScriptCommand { get; }
@@ -365,18 +492,88 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                 CompareMemorySnapshotsCommand.RaiseCanExecuteChanged();
         }
     }
-    public double RefreshIntervalSeconds { get => _refreshIntervalSeconds; set => SetProperty(ref _refreshIntervalSeconds, Math.Max(1, value)); }
+    public double RefreshIntervalSeconds
+    {
+        get => _refreshIntervalSeconds;
+        set
+        {
+            if (SetProperty(ref _refreshIntervalSeconds, Math.Max(1, value)))
+                NotifySnapshotState();
+        }
+    }
+    public bool AutoRefreshEnabled
+    {
+        get => _autoRefreshEnabled;
+        set
+        {
+            if (SetProperty(ref _autoRefreshEnabled, value))
+                NotifySnapshotState();
+        }
+    }
     public string Breadcrumb { get => _breadcrumb; private set => SetProperty(ref _breadcrumb, value); }
+    public DateTime? LastSnapshotAt { get => _lastSnapshotAt; private set { if (SetProperty(ref _lastSnapshotAt, value)) NotifySnapshotState(); } }
+    public string ConnectionMode { get => _connectionMode; private set => SetProperty(ref _connectionMode, value); }
+    public bool IsSnapshotStale => LastSnapshotAt is DateTime value
+        && DateTime.Now - value > TimeSpan.FromSeconds(Math.Max(AutoRefreshEnabled ? RefreshIntervalSeconds * 3 : 10, 5));
+    public string SnapshotStatus => LastSnapshotAt is DateTime value
+        ? $"Snapshot {value:HH:mm:ss} · {(IsSnapshotStale ? "stale" : "fresh")} · {(AutoRefreshEnabled ? $"auto {RefreshIntervalSeconds:0.#}s" : "manual")}"
+        : "No snapshot";
+    public string SnapshotStatusBar => LastSnapshotAt is DateTime value
+        ? $"Snapshot {value:HH:mm:ss} · {(IsSnapshotStale ? "stale" : "fresh")}"
+        : "Snapshot —";
+    public bool IsScopeLoading
+    {
+        get => _isScopeLoading;
+        private set
+        {
+            if (SetProperty(ref _isScopeLoading, value))
+            {
+                OnPropertyChanged(nameof(ShowVariableListEmpty));
+                OnPropertyChanged(nameof(VariableListStatusMessage));
+            }
+        }
+    }
+    public bool IsSearchPending
+    {
+        get => _isSearchPending;
+        private set
+        {
+            if (SetProperty(ref _isSearchPending, value))
+            {
+                OnPropertyChanged(nameof(ShowVariableListEmpty));
+                OnPropertyChanged(nameof(VariableListStatusMessage));
+            }
+        }
+    }
+    public bool ShowVariableListEmpty => !IsScopeLoading && !IsSearchPending && FilteredVariables.Count == 0;
+    public string VariableListStatusMessage => _currentScope is null
+        ? "Select a frame, module, or GC source to load variables."
+        : Variables.Count == 0
+            ? "No variables are available in this scope."
+            : "No variables match the current search and filters.";
     public string SearchText
     {
         get => _searchText;
         set
         {
-            if (SetProperty(ref _searchText, value) && _currentScope?.Kind != RuntimeNodeKind.GcObjects)
-                ApplyFilter();
+            if (!SetProperty(ref _searchText, value))
+                return;
+            if (_currentScope?.Kind == RuntimeNodeKind.GcObjects)
+            {
+                CancelSearchDebounce();
+                return;
+            }
+            ScheduleSearchFilter();
         }
     }
     public string PageLabel { get => _pageLabel; private set => SetProperty(ref _pageLabel, value); }
+    public string FilterResultLabel { get => _filterResultLabel; private set => SetProperty(ref _filterResultLabel, value); }
+    public string ScopeFilter { get => _scopeFilter; set { if (SetProperty(ref _scopeFilter, value)) ApplyFilter(); } }
+    public string ChangeFilter { get => _changeFilter; set { if (SetProperty(ref _changeFilter, value)) ApplyFilter(); } }
+    public string TypeFilter { get => _typeFilter; set { if (SetProperty(ref _typeFilter, value)) ApplyFilter(); } }
+    public bool ArraysOnly { get => _arraysOnly; set { if (SetProperty(ref _arraysOnly, value)) ApplyFilter(); } }
+    public bool ExpandableOnly { get => _expandableOnly; set { if (SetProperty(ref _expandableOnly, value)) ApplyFilter(); } }
+    public bool PinnedOnly { get => _pinnedOnly; set { if (SetProperty(ref _pinnedOnly, value)) ApplyFilter(); } }
     public string LastLatency { get => _lastLatency; private set => SetProperty(ref _lastLatency, value); }
     public int SelectedWorkspaceTabIndex { get => _selectedWorkspaceTabIndex; set => SetProperty(ref _selectedWorkspaceTabIndex, Math.Max(0, value)); }
 
@@ -385,10 +582,58 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         get => _selectedVariable;
         set
         {
-            if (SetProperty(ref _selectedVariable, value) && value is not null)
-                _ = LoadDetailsAsync(value);
+            if (!SetProperty(ref _selectedVariable, value))
+                return;
+            if (_suppressVariableNavigation)
+                return;
+            if (value is null || value.IsRemoved)
+                ClearSelectedObject();
+            else
+                _ = NavigateToObjectAsync(value, $"{Breadcrumb} / {value.Name}", null, addHistory: true);
         }
     }
+
+    public ObjectTreeNode? SelectedObjectNode
+    {
+        get => _selectedObjectNode;
+        set => SetProperty(ref _selectedObjectNode, value);
+    }
+    public PinnedObjectRow? SelectedPinnedObject
+    {
+        get => _selectedPinnedObject;
+        set
+        {
+            if (SetProperty(ref _selectedPinnedObject, value))
+                NavigatePinnedCommand.RaiseCanExecuteChanged();
+        }
+    }
+    public string SelectedObjectPath { get => _selectedObjectPath; private set => SetProperty(ref _selectedObjectPath, value); }
+    public string BackNavigationLabel { get => _backNavigationLabel; private set => SetProperty(ref _backNavigationLabel, value); }
+    public string ForwardNavigationLabel { get => _forwardNavigationLabel; private set => SetProperty(ref _forwardNavigationLabel, value); }
+    public string ParentNavigationLabel { get => _parentNavigationLabel; private set => SetProperty(ref _parentNavigationLabel, value); }
+    public string BackNavigationToolTip { get => _backNavigationToolTip; private set => SetProperty(ref _backNavigationToolTip, value); }
+    public string ForwardNavigationToolTip { get => _forwardNavigationToolTip; private set => SetProperty(ref _forwardNavigationToolTip, value); }
+    public string ParentNavigationToolTip { get => _parentNavigationToolTip; private set => SetProperty(ref _parentNavigationToolTip, value); }
+    public string ObjectDepthLabel { get => _objectDepthLabel; private set => SetProperty(ref _objectDepthLabel, value); }
+    public string NavigationHistoryLabel { get => _navigationHistoryLabel; private set => SetProperty(ref _navigationHistoryLabel, value); }
+    public string NavigationLocationDescription { get => _navigationLocationDescription; private set => SetProperty(ref _navigationLocationDescription, value); }
+    public string SelectedObjectName { get => _selectedObjectName; private set => SetProperty(ref _selectedObjectName, value); }
+    public string SelectedObjectPreview { get => _selectedObjectPreview; private set => SetProperty(ref _selectedObjectPreview, value); }
+    public string SelectedObjectStatus { get => _selectedObjectStatus; private set => SetProperty(ref _selectedObjectStatus, value); }
+    public string ClassSummary { get => _classSummary; private set => SetProperty(ref _classSummary, value); }
+    public InspectorPaneState InspectorState { get => _inspectorState; private set => SetProperty(ref _inspectorState, value); }
+    public bool HasSelectedObject { get => _hasSelectedObject; private set => SetProperty(ref _hasSelectedObject, value); }
+    public bool HasArraySelection { get => _hasArraySelection; private set => SetProperty(ref _hasArraySelection, value); }
+    public bool HasDataFrameSelection { get => _hasDataFrameSelection; private set => SetProperty(ref _hasDataFrameSelection, value); }
+    public bool IsSelectedObjectPinned => _currentObject is not null && _pinnedKeys.Contains(_currentObject.PinKey);
+
+    public DataView? DataFrameRows { get => _dataFrameRows; private set => SetProperty(ref _dataFrameRows, value); }
+    public DataFramePaneState DataFrameState { get => _dataFrameState; private set => SetProperty(ref _dataFrameState, value); }
+    public string DataFrameShape { get => _dataFrameShape; private set => SetProperty(ref _dataFrameShape, value); }
+    public string DataFrameStatus { get => _dataFrameStatus; private set => SetProperty(ref _dataFrameStatus, value); }
+    public string DataFrameRowPageLabel { get => _dataFrameRowPageLabel; private set => SetProperty(ref _dataFrameRowPageLabel, value); }
+    public string DataFrameColumnPageLabel { get => _dataFrameColumnPageLabel; private set => SetProperty(ref _dataFrameColumnPageLabel, value); }
+    public string DataFrameErrorMessage { get => _dataFrameErrorMessage; private set => SetProperty(ref _dataFrameErrorMessage, value); }
 
     public string SelectedType { get => _selectedType; private set => SetProperty(ref _selectedType, value); }
     public string SelectedModule { get => _selectedModule; private set => SetProperty(ref _selectedModule, value); }
@@ -490,7 +735,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
-    public async Task LoadScopeAsync(RuntimeTreeNode node, bool resetPage = false)
+    public async Task LoadScopeAsync(RuntimeTreeNode node, bool resetPage = false, bool showLoadingOverlay = true)
     {
         var isModule = node.Kind == RuntimeNodeKind.Module && node.ModuleName is not null;
         var isFrameScope = node.Kind == RuntimeNodeKind.Scope && node.FrameHandle is not null && node.ScopeType is not null;
@@ -500,11 +745,16 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         if (resetPage)
             _pageOffset = 0;
         _currentScope = node;
+        OnPropertyChanged(nameof(VariableListStatusMessage));
+        OnPropertyChanged(nameof(ShowVariableListEmpty));
         _selectionCts?.Cancel();
         _selectionCts?.Dispose();
         _selectionCts = CancellationTokenSource.CreateLinkedTokenSource(_connectionCts?.Token ?? CancellationToken.None);
         var generation = Interlocked.Increment(ref _selectionGeneration);
         var token = _selectionCts.Token;
+        // Automatic refresh keeps the existing table interactive. Initial, navigational,
+        // and explicit refreshes still expose the full loading state.
+        IsScopeLoading = showLoadingOverlay;
         Breadcrumb = isGcObjects
             ? "GC-tracked objects"
             : isModule ? $"Modules / {node.ModuleName}" : $"Threads / {node.Label}";
@@ -531,12 +781,22 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                     ["scopeType"] = node.ScopeType,
                     ["offset"] = _pageOffset,
                     ["pageSize"] = PageSize,
-                };
+            };
             var method = isGcObjects ? "gc.listObjects" : isModule ? "modules.listNamespace" : "scopes.list";
-            var frame = await RequestAsync(method, parameters, token);
+            using var handleResponse = await RequestHandleResponseAsync(method, parameters, token);
+            var frame = handleResponse.Frame;
             if (generation != _selectionGeneration || token.IsCancellationRequested)
                 return;
-            ApplyScopeResult(frame.Header["result"]!.AsObject(), node);
+            try
+            {
+                ApplyScopeResult(frame.Header["result"]!.AsObject(), node);
+                if (!showLoadingOverlay)
+                    await RefreshSelectedDetailInBackgroundAsync(token);
+            }
+            finally
+            {
+                RefreshObjectHandleReferences();
+            }
         }
         catch (OperationCanceledException)
         {
@@ -544,6 +804,11 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         catch (Exception exception)
         {
             SetError(exception);
+        }
+        finally
+        {
+            if (generation == _selectionGeneration)
+                IsScopeLoading = false;
         }
     }
 
@@ -670,12 +935,13 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             var actualPid = runtime["pid"]!.GetValue<int>();
             if (actualPid != handle.ProcessId)
             {
-                await _session.DetachAsync();
+                await DetachInspectorSessionAsync();
                 await _launcher.StopAsync();
                 throw new InvalidOperationException($"Connected PID {actualPid} does not match launched PID {handle.ProcessId}.");
             }
             ApplyRuntime(runtime);
             IsConnected = true;
+            ConnectionMode = "Managed launch";
             Status = "Connected (managed launch)";
             await LoadRuntimeTreeAsync(_connectionCts.Token, autoSelectMain: true);
             StartRefreshLoop();
@@ -691,7 +957,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             if (_launcher.IsRunning)
                 await _launcher.StopAsync();
             if (_session.IsConnected)
-                await _session.DetachAsync();
+                await DetachInspectorSessionAsync();
         }
         finally
         {
@@ -704,7 +970,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     {
         _connectionCts?.Cancel();
         if (_session.IsConnected)
-            await _session.DetachAsync();
+            await DetachInspectorSessionAsync();
         await _launcher.StopAsync();
         ResetConnection("Managed target stopped");
     }
@@ -714,7 +980,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         if (IsBusy)
             return;
         if (_session.IsConnected)
-            await _session.DetachAsync();
+            await DetachInspectorSessionAsync();
         if (_launcher.IsRunning)
             await _launcher.StopAsync();
         ResetConnection("Restarting managed target");
@@ -744,6 +1010,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             var runtime = await _session.AttachAsync(port, Token, SelectedProcess?.Id, _connectionCts.Token);
             ApplyRuntime(runtime);
             IsConnected = true;
+            ConnectionMode = "Cooperative listener";
             Status = "Connected";
             await LoadRuntimeTreeAsync(_connectionCts.Token, autoSelectMain: true);
             StartRefreshLoop();
@@ -818,6 +1085,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             var runtime = await attachTask;
             ApplyRuntime(runtime);
             IsConnected = true;
+            ConnectionMode = "Quick Attach · REPL bootstrap";
             Status = "Connected · showing __main__ globals";
             await LoadRuntimeTreeAsync(_connectionCts.Token, autoSelectMain: true);
             StartRefreshLoop();
@@ -854,7 +1122,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
         if (string.IsNullOrWhiteSpace(SelectedProcess.ExecutablePath) || !File.Exists(SelectedProcess.ExecutablePath))
         {
-            ErrorMessage = "The selected process executable is unavailable. Try running PyRuntime Inspector with sufficient permission.";
+            ErrorMessage = "The selected process executable is unavailable. Try running PyMonitor with sufficient permission.";
             return;
         }
 
@@ -887,6 +1155,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             var runtime = await attachTask;
             ApplyRuntime(runtime);
             IsConnected = true;
+            ConnectionMode = "Live Attach";
             Status = "Connected (live attach)";
             await LoadRuntimeTreeAsync(_connectionCts.Token, autoSelectMain: true);
             StartRefreshLoop();
@@ -925,7 +1194,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _refreshCts?.Cancel();
         try
         {
-            await _session.DetachAsync();
+            await DetachInspectorSessionAsync();
         }
         finally
         {
@@ -942,6 +1211,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             await LoadRuntimeTreeAsync(_connectionCts?.Token ?? CancellationToken.None);
             if (_currentScope is not null)
                 await LoadScopeAsync(_currentScope);
+            if (_currentObject is not null)
+                await LoadObjectContextAsync(_currentObject);
         }
         catch (Exception exception)
         {
@@ -1340,7 +1611,12 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
     private void ApplyRuntime(JsonObject runtime)
     {
-        TargetPid = runtime["pid"]!.GetValue<int>();
+        BeginObjectHandleSession();
+        var targetPid = runtime["pid"]!.GetValue<int>();
+        TargetPid = targetPid;
+        Replace(Processes, _processDiscovery.GetPythonProcesses());
+        SetProperty(ref _selectedProcess, Processes.FirstOrDefault(process => process.Id == targetPid), nameof(SelectedProcess));
+        UpdateCommandStates();
         PythonVersion = runtime["version"]!.GetValue<string>().Split('\n')[0];
         Architecture = runtime["processArchitecture"]?.GetValue<string>() ?? "—";
         Executable = runtime["executable"]?.GetValue<string>() ?? "—";
@@ -1351,47 +1627,145 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     {
         var isGcObjects = node.Kind == RuntimeNodeKind.GcObjects;
         _pageTotal = result["total"]!.GetValue<int>();
+        var scopeLabel = isGcObjects
+            ? "gc-tracked"
+            : node.ModuleName is null ? node.ScopeType! : $"module:{node.ModuleName}";
+        var scopeKey = isGcObjects
+            ? "gc-tracked"
+            : node.ModuleName is null ? $"{node.FrameHandle}:{node.ScopeType}" : $"module:{node.ModuleName}";
+        var snapshotKey = $"{scopeKey}|page:{_pageOffset}|query:{(isGcObjects ? SearchText.Trim() : "")}";
+        var now = DateTime.Now;
+        ScopeSnapshot? priorSnapshot = null;
+        var hasPrior = !isGcObjects && _scopeSnapshots.TryGetValue(snapshotKey, out priorSnapshot);
+        var prior = hasPrior ? priorSnapshot!.Items : new Dictionary<string, VariableSnapshot>(StringComparer.Ordinal);
+        var completeSnapshot = !isGcObjects && _pageOffset == 0 && _pageTotal <= PageSize;
         var rows = new List<VariableRow>();
         foreach (var item in result["items"]!.AsArray())
         {
             var name = item!["name"]!.GetValue<string>();
             var value = item["value"]!.AsObject();
-            var changeToken = value["changeToken"]?.GetValue<string>() ?? "";
-            var scopeKey = isGcObjects
-                ? "gc-tracked"
-                : node.ModuleName is null ? $"{node.FrameHandle}:{node.ScopeType}" : $"module:{node.ModuleName}";
-            var changeKey = isGcObjects
-                ? $"{scopeKey}:{value["addressHex"]?.GetValue<string>()}"
-                : $"{scopeKey}:{name}";
-            var changed = _changeTokens.TryGetValue(changeKey, out var previous) && previous != changeToken;
-            _changeTokens[changeKey] = changeToken;
-            var shape = value["shape"] is JsonArray shapeArray
-                ? "(" + string.Join(", ", shapeArray.Select(part => part!.GetValue<int>())) + ")"
-                : "";
-            rows.Add(new VariableRow
+            var identityToken = value["identityToken"]?.GetValue<string>()
+                ?? value["changeToken"]?.GetValue<string>()
+                ?? value["addressHex"]?.GetValue<string>()
+                ?? "";
+            var changeToken = identityToken;
+            var metadataToken = value["metadataToken"]?.GetValue<string>() ?? BuildMetadataToken(value);
+            var markerKey = $"{scopeKey}:{name}";
+            var changeKind = VariableChangeKind.Unchanged;
+            DateTime? changedAt = null;
+            if (hasPrior)
             {
-                Name = name,
-                Scope = isGcObjects
-                    ? "gc-tracked"
-                    : node.ModuleName is null ? node.ScopeType! : $"module:{node.ModuleName}",
-                HandleId = value["handleId"]!.GetValue<string>(),
-                TypeName = value["typeName"]?.GetValue<string>() ?? "?",
-                ModuleName = value["moduleName"]?.GetValue<string>() ?? "?",
-                QualifiedTypeName = value["qualifiedTypeName"]?.GetValue<string>() ?? "?",
-                SafePreview = value["safePreview"]?.GetValue<string>() ?? "",
-                Address = value["addressHex"]?.GetValue<string>() ?? "",
-                ShallowSize = value["shallowSizeBytes"]?.GetValue<long>() ?? 0,
-                PayloadSize = value["payloadSizeBytes"]?.GetValue<long>(),
-                Shape = shape,
-                DType = value["dtype"]?.GetValue<string>() ?? "",
-                Expandable = value["expandable"]?.GetValue<bool>() ?? false,
-                AdapterKind = value["adapterKind"]?.GetValue<string>(),
-                ChangeToken = changeToken,
-                Changed = changed,
-            });
+                if (!prior.TryGetValue(name, out var previous))
+                    changeKind = VariableChangeKind.Added;
+                else if (previous.Row.IsRemoved)
+                    changeKind = VariableChangeKind.Added;
+                else if (!string.Equals(previous.IdentityToken, identityToken, StringComparison.Ordinal))
+                    changeKind = VariableChangeKind.Rebound;
+                else if (!string.Equals(previous.MetadataToken, metadataToken, StringComparison.Ordinal))
+                    changeKind = VariableChangeKind.MetadataChanged;
+            }
+            if (changeKind != VariableChangeKind.Unchanged)
+                _activeChanges[markerKey] = new ChangeMarker(changeKind, now);
+            if (_activeChanges.TryGetValue(markerKey, out var marker))
+            {
+                if (now - marker.ChangedAt <= ChangeHighlightDuration)
+                {
+                    changeKind = marker.Kind;
+                    changedAt = marker.ChangedAt;
+                }
+                else
+                {
+                    _activeChanges.Remove(markerKey);
+                }
+            }
+            rows.Add(CreateVariableRow(
+                name,
+                scopeLabel,
+                value,
+                changeKind,
+                changedAt,
+                _pinnedKeys.Contains($"{scopeKey}:{name}"),
+                scopeKey));
         }
-        Replace(Variables, rows);
+
+        if (hasPrior && priorSnapshot!.IsComplete && completeSnapshot)
+        {
+            var currentNames = rows.Select(row => row.Name).ToHashSet(StringComparer.Ordinal);
+            foreach (var removed in prior.Where(pair => !currentNames.Contains(pair.Key)))
+            {
+                var markerKey = $"{scopeKey}:{removed.Key}";
+                if (!_activeChanges.TryGetValue(markerKey, out var marker) || marker.Kind != VariableChangeKind.Removed)
+                {
+                    marker = new ChangeMarker(VariableChangeKind.Removed, now);
+                    _activeChanges[markerKey] = marker;
+                }
+                if (now - marker.ChangedAt <= ChangeHighlightDuration)
+                    rows.Add(CloneRemovedRow(removed.Value.Row, marker.ChangedAt));
+                else
+                    _activeChanges.Remove(markerKey);
+            }
+        }
+
+        if (!isGcObjects)
+            _scopeSnapshots[snapshotKey] = new ScopeSnapshot(
+                rows.ToDictionary(
+                    row => row.Name,
+                    row => new VariableSnapshot(row.ChangeToken, row.MetadataToken, row),
+                    StringComparer.Ordinal),
+                completeSnapshot);
+
+        var selectedKey = SelectedVariable?.StableKey;
+        var selectedContext = _currentObject;
+        var selectedIdentityToken = selectedContext?.Row.IdentityToken;
+        var selectedMetadataToken = selectedContext?.Row.MetadataToken;
+        VariableRow? replacement = null;
+        _suppressVariableNavigation = true;
+        try
+        {
+            var currentRows = ReconcileVariableRows(rows);
+            replacement = selectedKey is null ? null : currentRows.FirstOrDefault(row => row.StableKey == selectedKey);
+            SelectedVariable = replacement;
+        }
+        finally
+        {
+            _suppressVariableNavigation = false;
+        }
+        var typeOptions = new[] { "All types" }.Concat(Variables
+            .Where(row => !row.IsRemoved)
+            .Select(row => row.TypeName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
+            .ToArray();
+        if (!TypeFilters.SequenceEqual(typeOptions, StringComparer.OrdinalIgnoreCase))
+        {
+            var selectedTypeFilter = string.IsNullOrWhiteSpace(TypeFilter) ? "All types" : TypeFilter;
+            Replace(TypeFilters, typeOptions);
+            TypeFilter = typeOptions.Contains(selectedTypeFilter, StringComparer.OrdinalIgnoreCase)
+                ? selectedTypeFilter
+                : "All types";
+        }
+        var selectedScopeChanged = selectedContext is not null
+            && !string.Equals(selectedContext.RootScopeKey, scopeKey, StringComparison.Ordinal);
+        if (selectedScopeChanged)
+        {
+            ClearSelectedObject();
+        }
+        else if (selectedKey is not null)
+        {
+            if (replacement is { IsRemoved: false } && selectedContext is { Parent: null } context && context.PinKey == replacement.StableKey)
+            {
+                var identityChanged = !string.Equals(selectedIdentityToken, replacement.IdentityToken, StringComparison.Ordinal);
+                var metadataChanged = !string.Equals(selectedMetadataToken, replacement.MetadataToken, StringComparison.Ordinal);
+                if (identityChanged || InspectorState != InspectorPaneState.Ready)
+                    _ = NavigateToObjectAsync(replacement, context.Path, null, addHistory: false);
+                else if (metadataChanged)
+                    UpdateSelectedObjectSummary(context with { Row = replacement });
+            }
+            else if (replacement?.IsRemoved == true && selectedContext is { Parent: null })
+                ClearSelectedObject("The selected variable was removed from the latest snapshot.", InspectorPaneState.Expired);
+        }
         ApplyFilter();
+        LastSnapshotAt = ParseTimestamp(result["snapshotTimestamp"]) ?? DateTime.Now;
         var first = _pageTotal == 0 ? 0 : _pageOffset + 1;
         var last = Math.Min(_pageOffset + PageSize, _pageTotal);
         if (isGcObjects)
@@ -1411,62 +1785,373 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         UpdateCommandStates();
     }
 
-    private async Task LoadDetailsAsync(VariableRow row)
+    private async Task NavigateToObjectAsync(VariableRow row, string path, NavigationContext? parent, bool addHistory)
+    {
+        var ancestors = parent is null
+            ? new HashSet<string>(StringComparer.OrdinalIgnoreCase) { row.Address }
+            : new HashSet<string>(parent.AncestorAddresses, StringComparer.OrdinalIgnoreCase) { row.Address };
+        var ancestorIdentityTokens = parent is null
+            ? new List<string>()
+            : new List<string>(parent.AncestorIdentityTokens);
+        if (!string.IsNullOrWhiteSpace(row.IdentityToken))
+            ancestorIdentityTokens.Add(row.IdentityToken);
+        var context = new NavigationContext(row, path, parent?.Depth + 1 ?? 0, parent, ancestors, ancestorIdentityTokens);
+        if (addHistory)
+        {
+            if (_navigationIndex < _navigationHistory.Count - 1)
+                _navigationHistory.RemoveRange(_navigationIndex + 1, _navigationHistory.Count - _navigationIndex - 1);
+            _navigationHistory.Add(context);
+            _navigationIndex = _navigationHistory.Count - 1;
+            TrimNavigationHistory();
+        }
+        else if (_navigationIndex >= 0 && _navigationIndex < _navigationHistory.Count && parent is null)
+        {
+            _navigationHistory[_navigationIndex] = context;
+        }
+        RefreshObjectHandleReferences();
+        await LoadObjectContextAsync(context);
+    }
+
+    private void TrimNavigationHistory()
+    {
+        var overflow = _navigationHistory.Count - MaxNavigationHistory;
+        if (overflow <= 0)
+            return;
+        _navigationHistory.RemoveRange(0, overflow);
+        _navigationIndex = Math.Max(-1, _navigationIndex - overflow);
+    }
+
+    private async Task LoadObjectContextAsync(NavigationContext context)
     {
         _detailCts?.Cancel();
         _detailCts?.Dispose();
         _detailCts = CancellationTokenSource.CreateLinkedTokenSource(_connectionCts?.Token ?? CancellationToken.None);
         var token = _detailCts.Token;
         var generation = Interlocked.Increment(ref _detailGeneration);
+        _currentObject = context;
+        UpdateObjectNavigationPresentation(context);
+        var row = context.Row;
+        HasSelectedObject = true;
+        HasArraySelection = row.AdapterKind == "numpy.ndarray";
+        HasDataFrameSelection = row.AdapterKind == "pandas.DataFrame";
+        InspectorState = InspectorPaneState.Loading;
+        SelectedObjectName = row.Name;
+        SelectedObjectPath = context.Path;
+        SelectedObjectPreview = row.SafePreview;
+        SelectedObjectStatus = "Loading object structure…";
         SelectedType = row.TypeName;
         SelectedModule = row.ModuleName;
         SelectedQualifiedName = row.QualifiedTypeName;
         SelectedAddress = row.Address;
         SelectedShallowSize = FormatBytes(row.ShallowSize);
         SelectedPayloadSize = row.PayloadSize is long payload ? FormatBytes(payload) : "—";
-        _arrayHandle = row.AdapterKind == "numpy.ndarray" ? row.HandleId : null;
-        UpdateCommandStates();
         ObjectChildren.Clear();
+        ObjectRoots.Clear();
         ClassMembers.Clear();
+        ClassTree.Clear();
+        ClearArrayDetails();
+        ClearDataFrameDetails(resetOffsets: true);
+        _arrayHandle = HasArraySelection ? row.HandleId : null;
+        _dataFrameHandle = HasDataFrameSelection ? row.HandleId : null;
+        OnPropertyChanged(nameof(IsSelectedObjectPinned));
+        UpdateCommandStates();
+
+        var root = new ObjectTreeNode
+        {
+            Label = row.Name,
+            Origin = "selected",
+            Path = context.Path,
+            Depth = context.Depth,
+            Kind = ObjectNodeKind.Object,
+            Value = row,
+            IsExpanded = true,
+        };
+        ObjectRoots.Add(root);
+        RefreshObjectHandleReferences();
         try
         {
-            var children = await RequestAsync("objects.listChildren", new JsonObject
+            using var childResponse = await RequestHandleResponseAsync("objects.listChildren", new JsonObject
             {
                 ["handleId"] = row.HandleId,
                 ["offset"] = 0,
-                ["pageSize"] = 200,
+                ["pageSize"] = ObjectPageSize,
+                ["depth"] = context.Depth,
+                ["ancestorIdentityTokens"] = ToJsonArray(context.AncestorIdentityTokens),
             }, token);
+            var children = childResponse.Frame;
             if (generation != _detailGeneration || token.IsCancellationRequested)
                 return;
-            var childRows = children.Header["result"]!["items"]!.AsArray().Select(item =>
+            try
             {
-                var value = item!["value"]!.AsObject();
-                return new ObjectChildRow(
-                    item["name"]!.GetValue<string>(),
-                    item["origin"]!.GetValue<string>(),
-                    value["typeName"]?.GetValue<string>() ?? "?",
-                    value["safePreview"]?.GetValue<string>() ?? "",
-                    value["addressHex"]?.GetValue<string>() ?? "");
-            }).ToArray();
-            Replace(ObjectChildren, childRows);
+                ApplyObjectChildren(root, context, children.Header["result"]!.AsObject(), clear: true);
+            }
+            finally
+            {
+                RefreshObjectHandleReferences();
+            }
 
             var classFrame = await RequestAsync("classes.describe", new JsonObject { ["handleId"] = row.HandleId }, token);
             if (generation != _detailGeneration || token.IsCancellationRequested)
                 return;
-            var description = classFrame.Header["result"]!.AsObject();
-            Replace(ClassMembers, description["members"]!.AsArray().Select(member => new ClassMemberRow(
-                member!["name"]!.GetValue<string>(),
-                member["kind"]!.GetValue<string>(),
-                member["declaredBy"]!.GetValue<string>(),
-                member["signature"]?.GetValue<string>() ?? "unavailable")));
+            ApplyClassDescription(classFrame.Header["result"]!.AsObject());
 
+            var arrayPreviewAvailable = true;
             if (_arrayHandle is not null)
-                await LoadArrayDescriptionAndPreviewAsync(generation, token);
-            else
-                ClearArrayDetails();
+                arrayPreviewAvailable = await LoadArrayDescriptionAndPreviewAsync(generation, token);
+            var dataFramePreviewAvailable = true;
+            if (_dataFrameHandle is not null)
+            {
+                try
+                {
+                    dataFramePreviewAvailable = await LoadDataFrameDescriptionAndPreviewAsync(generation, token, showLoading: true);
+                }
+                catch (RemoteInspectionException exception) when (exception.Code == "OBJECT_EXPIRED")
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    dataFramePreviewAvailable = false;
+                    SetDataFrameError(exception);
+                }
+            }
+            if (generation != _detailGeneration || token.IsCancellationRequested)
+                return;
+            var hasInspectableDetails = ObjectChildren.Count > 0
+                || ClassMembers.Count > 0
+                || HasArraySelection
+                || HasDataFrameSelection;
+            InspectorState = hasInspectableDetails ? InspectorPaneState.Ready : InspectorPaneState.Empty;
+            SelectedObjectStatus = !hasInspectableDetails
+                ? "No safe child values, class members, array, or DataFrame details"
+                : _arrayHandle is not null && !arrayPreviewAvailable
+                    ? "Ready · array metadata only; preview unavailable for this dtype or shape"
+                : _dataFrameHandle is not null && !dataFramePreviewAvailable
+                    ? "Ready · DataFrame metadata available; preview could not be read consistently"
+                : _dataFrameHandle is not null
+                    ? $"Ready · {DataFrameShape}"
+                : ObjectChildren.Count == 0
+                    ? "Ready · class, array, or DataFrame details available"
+                    : $"Ready · {ObjectChildren.Count:N0} children";
         }
         catch (OperationCanceledException)
         {
+        }
+        catch (RemoteInspectionException exception) when (exception.Code == "OBJECT_EXPIRED")
+        {
+            if (generation != _detailGeneration)
+                return;
+            InspectorState = InspectorPaneState.Expired;
+            SelectedObjectStatus = "Object expired · refresh the scope and select it again";
+            ObjectRoots.Clear();
+            ObjectChildren.Clear();
+            RefreshObjectHandleReferences();
+        }
+        catch (Exception exception)
+        {
+            if (generation != _detailGeneration)
+                return;
+            InspectorState = InspectorPaneState.Error;
+            SelectedObjectStatus = "Object inspection failed";
+            SetError(exception);
+        }
+        finally
+        {
+            UpdateCommandStates();
+        }
+    }
+
+    public async Task SelectObjectNodeAsync(ObjectTreeNode? node)
+    {
+        SelectedObjectNode = node;
+        if (node is null)
+            return;
+        if (node.Kind == ObjectNodeKind.LoadMore)
+        {
+            await LoadMoreObjectChildrenAsync(node);
+            return;
+        }
+        if (!node.CanNavigate || node.Value is null || _currentObject is null)
+            return;
+        var parent = BuildNavigationParent(node);
+        await NavigateToObjectAsync(node.Value, node.Path, parent, addHistory: true);
+    }
+
+    public async Task NavigateBreadcrumbAsync(ObjectBreadcrumbItem? item)
+    {
+        if (item is null || item.IsCurrent || _currentObject is null)
+            return;
+
+        var target = _currentObject;
+        while (target is not null && target.Depth > item.Depth)
+            target = target.Parent;
+        if (target is null
+            || target.Depth != item.Depth
+            || !string.Equals(target.Path, item.Path, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        await NavigateToObjectAsync(target.Row, target.Path, target.Parent, addHistory: true);
+    }
+
+    public async Task ExpandObjectNodeAsync(ObjectTreeNode? node)
+    {
+        if (node is null || node.Kind != ObjectNodeKind.Object || node.Value is null || node.IsLoaded || node.IsCycle || node.Depth >= MaxObjectDepth)
+            return;
+        node.IsLoading = true;
+        try
+        {
+            var context = CreateNavigationContext(node.Value, node.Path, node.Depth, BuildNavigationParent(node));
+            using var handleResponse = await RequestHandleResponseAsync("objects.listChildren", new JsonObject
+            {
+                ["handleId"] = node.Value.HandleId,
+                ["offset"] = 0,
+                ["pageSize"] = ObjectPageSize,
+                ["depth"] = context.Depth,
+                ["ancestorIdentityTokens"] = ToJsonArray(context.AncestorIdentityTokens),
+            }, _connectionCts?.Token ?? CancellationToken.None);
+            var frame = handleResponse.Frame;
+            try
+            {
+                ApplyObjectChildren(node, context, frame.Header["result"]!.AsObject(), clear: true);
+            }
+            finally
+            {
+                RefreshObjectHandleReferences();
+            }
+        }
+        catch (RemoteInspectionException exception) when (exception.Code == "OBJECT_EXPIRED")
+        {
+            node.Children.Clear();
+            node.Children.Add(StatusNode("Object expired · refresh the scope", node));
+        }
+        catch (Exception exception)
+        {
+            node.Children.Clear();
+            node.Children.Add(StatusNode("Could not load children", node));
+            SetError(exception);
+        }
+        finally
+        {
+            node.IsLoading = false;
+            node.IsLoaded = true;
+            RefreshObjectHandleReferences();
+        }
+    }
+
+    private void ApplyObjectChildren(ObjectTreeNode parent, NavigationContext context, JsonObject result, bool clear)
+    {
+        if (clear)
+            parent.Children.Clear();
+        var items = result["items"]?.AsArray() ?? [];
+        var offset = result["offset"]?.GetValue<int>() ?? 0;
+        var total = result["total"]?.GetValue<int>() ?? items.Count;
+        var isCurrentRoot = ObjectRoots.FirstOrDefault() == parent;
+        if (clear && isCurrentRoot)
+            ObjectChildren.Clear();
+
+        foreach (var item in items)
+        {
+            var value = item!["value"]!.AsObject();
+            var name = item["name"]?.GetValue<string>() ?? "?";
+            var origin = item["origin"]?.GetValue<string>() ?? "item";
+            var pathSegment = item["pathSegment"]?.GetValue<string>() ?? name;
+            var path = AppendObjectPath(context.Path, pathSegment);
+            var childRow = CreateVariableRow(name, "object", value, VariableChangeKind.Unchanged, null, false);
+            var cycle = item["isCycle"]?.GetValue<bool>() ?? context.AncestorAddresses.Contains(childRow.Address);
+            var childDepth = item["depth"]?.GetValue<int>() ?? context.Depth + 1;
+            var canExpand = item["canExpand"]?.GetValue<bool>() ?? childRow.Expandable;
+            var depthLimited = childDepth >= MaxObjectDepth;
+            var child = new ObjectTreeNode
+            {
+                Label = cycle ? $"{name}  · cycle" : depthLimited && childRow.Expandable ? $"{name}  · depth limit" : name,
+                Origin = origin,
+                Path = path,
+                Depth = childDepth,
+                Kind = ObjectNodeKind.Object,
+                Value = childRow,
+                Parent = parent,
+                IsCycle = cycle,
+                IsLoaded = !canExpand || cycle || depthLimited,
+            };
+            if (canExpand && !cycle && !depthLimited)
+                child.Children.Add(StatusNode("Expand to load", child));
+
+            var groupLabel = ObjectGroupLabel(origin);
+            var group = parent.Children.FirstOrDefault(node => node.Kind == ObjectNodeKind.Group && node.Label == groupLabel);
+            if (group is null)
+            {
+                group = new ObjectTreeNode
+                {
+                    Label = groupLabel,
+                    Kind = ObjectNodeKind.Group,
+                    Path = context.Path,
+                    Depth = context.Depth,
+                    Parent = parent,
+                    IsExpanded = true,
+                    IsLoaded = true,
+                };
+                parent.Children.Add(group);
+            }
+            group.Children.Add(child);
+            if (isCurrentRoot)
+                ObjectChildren.Add(new ObjectChildRow(name, origin, childRow.TypeName, childRow.SafePreview, childRow.Address, childRow.HandleId, childRow.Expandable, path));
+        }
+
+        parent.TotalChildren = total;
+        parent.LoadedChildren = Math.Min(total, offset + items.Count);
+        parent.IsLoaded = true;
+        if (parent.LoadedChildren < total)
+        {
+            parent.Children.Add(new ObjectTreeNode
+            {
+                Label = $"Load more…  ({parent.LoadedChildren:N0} of {total:N0})",
+                Kind = ObjectNodeKind.LoadMore,
+                Path = context.Path,
+                Depth = context.Depth,
+                Parent = parent,
+                Offset = parent.LoadedChildren,
+                IsLoaded = true,
+            });
+        }
+        if (parent.Children.Count == 0)
+            parent.Children.Add(StatusNode("No safe child values", parent));
+    }
+
+    private async Task LoadMoreObjectChildrenAsync(ObjectTreeNode loadMore)
+    {
+        if (loadMore.Parent?.Value is not VariableRow parentRow)
+            return;
+        var parent = loadMore.Parent;
+        var context = ContextForNode(parent);
+        try
+        {
+            using var handleResponse = await RequestHandleResponseAsync("objects.listChildren", new JsonObject
+            {
+                ["handleId"] = parentRow.HandleId,
+                ["offset"] = loadMore.Offset,
+                ["pageSize"] = ObjectPageSize,
+                ["depth"] = context.Depth,
+                ["ancestorIdentityTokens"] = ToJsonArray(context.AncestorIdentityTokens),
+            }, _connectionCts?.Token ?? CancellationToken.None);
+            var frame = handleResponse.Frame;
+            parent.Children.Remove(loadMore);
+            try
+            {
+                ApplyObjectChildren(parent, context, frame.Header["result"]!.AsObject(), clear: false);
+            }
+            finally
+            {
+                RefreshObjectHandleReferences();
+            }
+        }
+        catch (RemoteInspectionException exception) when (exception.Code == "OBJECT_EXPIRED")
+        {
+            parent.Children.Remove(loadMore);
+            parent.Children.Add(StatusNode("Object expired · refresh the scope", parent));
+            InspectorState = InspectorPaneState.Expired;
+            SelectedObjectStatus = "Object expired · refresh and select it again";
         }
         catch (Exception exception)
         {
@@ -1474,11 +2159,533 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
-    private async Task LoadArrayDescriptionAndPreviewAsync(long generation, CancellationToken token)
+    private void ApplyClassDescription(JsonObject description)
     {
-        var descriptionFrame = await RequestAsync("arrays.describe", new JsonObject { ["handleId"] = _arrayHandle }, token);
-        if (generation != _detailGeneration || token.IsCancellationRequested)
+        var className = description["qualifiedName"]?.GetValue<string>()
+            ?? description["name"]?.GetValue<string>()
+            ?? SelectedType;
+        var classModule = description["module"]?.GetValue<string>() ?? SelectedModule;
+        var metaclass = ReadClassReference(description["metaclass"]) ?? "—";
+        var docstring = description["docstring"]?.GetValue<string>();
+        ClassSummary = $"{classModule}.{className} · metaclass {metaclass}";
+        if (!string.IsNullOrWhiteSpace(docstring))
+            ClassSummary += $" · {docstring}";
+
+        var overview = new ClassTreeNode { Label = "Class overview", Kind = "group" };
+        overview.Children.Add(new ClassTreeNode { Label = "Metaclass", Kind = "metadata", Detail = metaclass });
+        AddClassReferenceGroup(overview, "Base classes", description["baseClassRefs"] ?? description["baseClasses"]);
+        AddClassReferenceGroup(overview, "MRO", description["mroRefs"] ?? description["mro"]);
+        if (description["mroTruncated"]?.GetValue<bool>() == true)
+            overview.Children.Add(new ClassTreeNode { Label = "Additional MRO entries omitted", Kind = "status" });
+        ClassTree.Add(overview);
+
+        var fields = new ClassTreeNode { Label = "Instance fields", Kind = "group" };
+        foreach (var field in ObjectChildren.Where(child => child.Origin == "instance"))
+            fields.Children.Add(new ClassTreeNode { Label = field.Name, Kind = "field", Detail = $"{field.Type} · {field.Preview}" });
+        ClassTree.Add(fields);
+
+        var groups = new Dictionary<string, ClassTreeNode>(StringComparer.Ordinal)
+        {
+            ["instance method"] = new() { Label = "Instance methods", Kind = "group" },
+            ["staticmethod"] = new() { Label = "Static methods", Kind = "group" },
+            ["classmethod"] = new() { Label = "Class methods", Kind = "group" },
+            ["property"] = new() { Label = "Properties & descriptors", Kind = "group" },
+            ["descriptor"] = new() { Label = "Properties & descriptors", Kind = "group" },
+            ["attribute"] = new() { Label = "Class attributes", Kind = "group" },
+            ["inherited"] = new() { Label = "Inherited members", Kind = "group" },
+        };
+
+        var memberRows = new List<ClassMemberRow>();
+        foreach (var memberNode in description["members"]?.AsArray() ?? [])
+        {
+            var member = memberNode!.AsObject();
+            var name = member["name"]?.GetValue<string>() ?? "?";
+            var kind = member["kind"]?.GetValue<string>() ?? "class attribute";
+            var declaredBy = ReadClassReference(member["declaredBy"]) ?? "?";
+            var inherited = member["inherited"]?.GetValue<bool>() ?? false;
+            var signature = ReadSignatureDisplay(member["signatureDetails"] ?? member["signature"]);
+            var source = ReadSource(member["source"]);
+            memberRows.Add(new ClassMemberRow(name, kind, declaredBy, signature, inherited, source));
+            var groupKey = inherited ? "inherited" : ClassGroupKey(kind);
+            var group = groups[groupKey];
+            var item = new ClassTreeNode
+            {
+                Label = name,
+                Kind = kind,
+                DeclaredBy = declaredBy,
+                Detail = signature,
+                Source = source,
+            };
+            var parameters = member["parameters"] as JsonArray
+                ?? (member["signatureDetails"] as JsonObject)?["parameters"] as JsonArray;
+            if (parameters is not null)
+            {
+                var parameterGroup = new ClassTreeNode { Label = "Parameters", Kind = "parameters" };
+                foreach (var parameterNode in parameters)
+                {
+                    var parameter = parameterNode!.AsObject();
+                    var parameterName = parameter["name"]?.GetValue<string>() ?? "?";
+                    var parameterKind = parameter["kind"]?.GetValue<string>() ?? "parameter";
+                    var annotation = parameter["annotationText"]?.GetValue<string>();
+                    var defaultValue = parameter["defaultPreview"]?.GetValue<string>();
+                    var detail = parameterKind;
+                    if (!string.IsNullOrEmpty(annotation)) detail += $" · {annotation}";
+                    if (!string.IsNullOrEmpty(defaultValue)) detail += $" = {defaultValue}";
+                    parameterGroup.Children.Add(new ClassTreeNode { Label = parameterName, Kind = "parameter", Detail = detail });
+                }
+                if (parameterGroup.Children.Count > 0)
+                    item.Children.Add(parameterGroup);
+            }
+            group.Children.Add(item);
+        }
+        Replace(ClassMembers, memberRows);
+        foreach (var group in groups.Values.Distinct().Where(group => group.Children.Count > 0))
+            ClassTree.Add(group);
+        if (description["membersTruncated"]?.GetValue<bool>() == true)
+        {
+            var total = description["memberTotal"]?.ToString() ?? "unknown";
+            var limit = description["memberLimit"]?.GetValue<int>() ?? memberRows.Count;
+            ClassTree.Add(new ClassTreeNode
+            {
+                Label = "Additional class members omitted",
+                Kind = "status",
+                Detail = $"Showing {memberRows.Count:N0} of {total} members (limit {limit:N0})",
+            });
+        }
+    }
+
+    private async Task NavigateBackAsync()
+    {
+        if (_navigationIndex <= 0)
             return;
+        _navigationIndex--;
+        await LoadObjectContextAsync(_navigationHistory[_navigationIndex]);
+    }
+
+    private async Task NavigateForwardAsync()
+    {
+        if (_navigationIndex < 0 || _navigationIndex >= _navigationHistory.Count - 1)
+            return;
+        _navigationIndex++;
+        await LoadObjectContextAsync(_navigationHistory[_navigationIndex]);
+    }
+
+    private async Task NavigateParentAsync()
+    {
+        if (_currentObject?.Parent is not NavigationContext parent)
+            return;
+        await NavigateToObjectAsync(parent.Row, parent.Path, parent.Parent, addHistory: true);
+    }
+
+    private async Task NavigatePinnedAsync()
+    {
+        if (SelectedPinnedObject is null || !_pinnedContexts.TryGetValue(SelectedPinnedObject.StableKey, out var context))
+            return;
+        await NavigateToObjectAsync(context.Row, context.Path, context.Parent, addHistory: true);
+    }
+
+    private void UpdateObjectNavigationPresentation(NavigationContext context)
+    {
+        var ancestry = new List<NavigationContext>();
+        for (NavigationContext? current = context; current is not null; current = current.Parent)
+            ancestry.Add(current);
+        ancestry.Reverse();
+        Replace(ObjectBreadcrumbs, ancestry.Select((item, index) => new ObjectBreadcrumbItem(
+            item.Row.Name,
+            item.Path,
+            item.Depth,
+            IsCurrent: index == ancestry.Count - 1)));
+
+        ObjectDepthLabel = context.Depth == 0 ? "Level 0 · Root" : $"Level {context.Depth}";
+        NavigationHistoryLabel = _navigationIndex >= 0
+            ? $"History {_navigationIndex + 1} / {_navigationHistory.Count}"
+            : "History 0 / 0";
+
+        var previous = _navigationIndex > 0 ? _navigationHistory[_navigationIndex - 1] : null;
+        var next = _navigationIndex >= 0 && _navigationIndex < _navigationHistory.Count - 1
+            ? _navigationHistory[_navigationIndex + 1]
+            : null;
+        BackNavigationLabel = previous is null ? "Back" : $"Back · {CompactNavigationName(previous.Row.Name)}";
+        ForwardNavigationLabel = next is null ? "Forward" : $"Forward · {CompactNavigationName(next.Row.Name)}";
+        ParentNavigationLabel = context.Parent is null
+            ? "Parent"
+            : $"Parent · {CompactNavigationName(context.Parent.Row.Name)}";
+        BackNavigationToolTip = previous is null
+            ? "No earlier object in navigation history"
+            : $"Back to {previous.Path} (Alt+Left)";
+        ForwardNavigationToolTip = next is null
+            ? "No later object in navigation history"
+            : $"Forward to {next.Path} (Alt+Right)";
+        ParentNavigationToolTip = context.Parent is null
+            ? "The selected object is already at the root"
+            : $"Go to parent {context.Parent.Path}";
+        NavigationLocationDescription = context.Parent is null
+            ? $"Current object {context.Path}, root level, {NavigationHistoryLabel}"
+            : $"Current object {context.Path}, level {context.Depth}, parent {context.Parent.Row.Name}, {NavigationHistoryLabel}";
+    }
+
+    private static string CompactNavigationName(string name) =>
+        name.Length <= 18 ? name : $"{name[..17]}…";
+
+    private async Task RefreshDataFrameAsync()
+    {
+        if (_dataFrameHandle is null || !IsConnected)
+            return;
+        try
+        {
+            await LoadDataFrameDescriptionAndPreviewAsync(
+                Volatile.Read(ref _detailGeneration),
+                _detailCts?.Token ?? _connectionCts?.Token ?? CancellationToken.None,
+                showLoading: true);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            SetDataFrameError(exception);
+        }
+    }
+
+    private async Task MoveDataFramePageAsync(int rowDelta, int columnDelta)
+    {
+        if (_dataFrameHandle is null || !IsConnected)
+            return;
+        var previousRowOffset = _dataFrameRowOffset;
+        var previousColumnOffset = _dataFrameColumnOffset;
+        _dataFrameRowOffset = NormalizePageOffset(
+            _dataFrameRowOffset + rowDelta,
+            _dataFrameTotalRows,
+            DataFrameRowPageSize);
+        _dataFrameColumnOffset = NormalizePageOffset(
+            _dataFrameColumnOffset + columnDelta,
+            _dataFrameTotalColumns,
+            DataFrameColumnPageSize);
+        try
+        {
+            await LoadDataFramePreviewAsync(
+                Volatile.Read(ref _detailGeneration),
+                _detailCts?.Token ?? _connectionCts?.Token ?? CancellationToken.None,
+                showLoading: true);
+        }
+        catch (OperationCanceledException)
+        {
+            _dataFrameRowOffset = previousRowOffset;
+            _dataFrameColumnOffset = previousColumnOffset;
+        }
+        catch (Exception exception)
+        {
+            _dataFrameRowOffset = previousRowOffset;
+            _dataFrameColumnOffset = previousColumnOffset;
+            SetDataFrameError(exception);
+        }
+        finally
+        {
+            UpdateCommandStates();
+        }
+    }
+
+    private async Task<bool> LoadDataFrameDescriptionAndPreviewAsync(
+        long generation,
+        CancellationToken token,
+        bool showLoading)
+    {
+        if (_dataFrameHandle is null)
+            return false;
+        if (showLoading)
+        {
+            DataFrameState = DataFramePaneState.Loading;
+            DataFrameStatus = "Loading bounded DataFrame preview…";
+            DataFrameErrorMessage = "";
+        }
+
+        using var handleResponse = await RequestHandleResponseAsync(
+            "dataframes.describe",
+            new JsonObject { ["handleId"] = _dataFrameHandle },
+            token);
+        if (generation != _detailGeneration || token.IsCancellationRequested)
+            return false;
+        var description = handleResponse.Frame.Header["result"]!.AsObject();
+        _dataFrameTotalRows = description["totalRows"]?.GetValue<int>() ?? 0;
+        _dataFrameTotalColumns = description["totalColumns"]?.GetValue<int>() ?? 0;
+        _dataFrameRowOffset = NormalizePageOffset(
+            _dataFrameRowOffset,
+            _dataFrameTotalRows,
+            DataFrameRowPageSize);
+        _dataFrameColumnOffset = NormalizePageOffset(
+            _dataFrameColumnOffset,
+            _dataFrameTotalColumns,
+            DataFrameColumnPageSize);
+        DataFrameShape = $"{_dataFrameTotalRows:N0} rows × {_dataFrameTotalColumns:N0} columns";
+        return await LoadDataFramePreviewAsync(generation, token, showLoading);
+    }
+
+    private async Task<bool> LoadDataFramePreviewAsync(
+        long generation,
+        CancellationToken token,
+        bool showLoading)
+    {
+        if (_dataFrameHandle is null)
+            return false;
+        if (showLoading)
+        {
+            DataFrameState = DataFramePaneState.Loading;
+            DataFrameStatus = "Loading bounded DataFrame preview…";
+            DataFrameErrorMessage = "";
+        }
+
+        var frame = await RequestAsync("dataframes.preview", new JsonObject
+        {
+            ["handleId"] = _dataFrameHandle,
+            ["rowOffset"] = _dataFrameRowOffset,
+            ["rowCount"] = DataFrameRowPageSize,
+            ["columnOffset"] = _dataFrameColumnOffset,
+            ["columnCount"] = DataFrameColumnPageSize,
+        }, token);
+        if (generation != _detailGeneration || token.IsCancellationRequested)
+            return false;
+        ApplyDataFramePreview(frame.Header["result"]!.AsObject());
+        return true;
+    }
+
+    private void ApplyDataFramePreview(JsonObject result)
+    {
+        var columns = (result["columns"]?.AsArray() ?? [])
+            .Select(column => new DataFrameColumnInfo(
+                column!["position"]?.GetValue<int>() ?? 0,
+                column["name"]?.GetValue<string>() ?? "<unnamed>",
+                column["dtype"]?.GetValue<string>() ?? "unknown"))
+            .ToArray();
+        var indexLabels = result["indexLabels"]?.AsArray() ?? [];
+        var rows = result["rows"]?.AsArray() ?? [];
+        _dataFrameRowOffset = result["rowOffset"]?.GetValue<int>() ?? _dataFrameRowOffset;
+        _dataFrameColumnOffset = result["columnOffset"]?.GetValue<int>() ?? _dataFrameColumnOffset;
+        _dataFrameRowCount = result["rowCount"]?.GetValue<int>() ?? rows.Count;
+        _dataFrameColumnCount = result["columnCount"]?.GetValue<int>() ?? columns.Length;
+        _dataFrameTotalRows = result["totalRows"]?.GetValue<int>() ?? _dataFrameTotalRows;
+        _dataFrameTotalColumns = result["totalColumns"]?.GetValue<int>() ?? _dataFrameTotalColumns;
+        _dataFrameHasMoreRows = result["hasMoreRows"]?.GetValue<bool>() ?? false;
+        _dataFrameHasMoreColumns = result["hasMoreColumns"]?.GetValue<bool>() ?? false;
+        var snapshotConsistent = result["snapshotConsistent"]?.GetValue<bool>() ?? true;
+        var cellLimitApplied = result["cellLimitApplied"]?.GetValue<bool>() ?? false;
+
+        var columnMetadataChanged = !DataFrameColumns.SequenceEqual(columns);
+        if (columnMetadataChanged)
+            Replace(DataFrameColumns, columns);
+        ApplyDataFrameTable(columns, indexLabels, rows, forceSchemaRefresh: columnMetadataChanged);
+
+        DataFrameShape = $"{_dataFrameTotalRows:N0} rows × {_dataFrameTotalColumns:N0} columns";
+        DataFrameRowPageLabel = PageRangeLabel(
+            "Rows",
+            _dataFrameRowOffset,
+            _dataFrameRowCount,
+            _dataFrameTotalRows);
+        DataFrameColumnPageLabel = PageRangeLabel(
+            "Columns",
+            _dataFrameColumnOffset,
+            _dataFrameColumnCount,
+            _dataFrameTotalColumns);
+        var consistency = snapshotConsistent
+            ? "Consistent bounded snapshot"
+            : "Data changed while reading · refresh recommended";
+        DataFrameStatus = $"{DataFrameRowPageLabel} · {DataFrameColumnPageLabel} · {consistency}"
+            + (cellLimitApplied ? " · cell safety limit applied" : "");
+        DataFrameErrorMessage = "";
+        DataFrameState = rows.Count == 0 || columns.Length == 0
+            ? DataFramePaneState.Empty
+            : DataFramePaneState.Ready;
+        UpdateCommandStates();
+    }
+
+    private void ApplyDataFrameTable(
+        IReadOnlyList<DataFrameColumnInfo> columns,
+        JsonArray indexLabels,
+        JsonArray rows,
+        bool forceSchemaRefresh)
+    {
+        var expectedNames = new[] { "__index__" }
+            .Concat(columns.Select(column => column.DataColumnName))
+            .ToArray();
+        var schemaMatches = !forceSchemaRefresh
+            && _dataFrameTable is not null
+            && _dataFrameTable.Columns.Cast<DataColumn>()
+                .Select(column => column.ColumnName)
+                .SequenceEqual(expectedNames, StringComparer.Ordinal);
+        if (!schemaMatches)
+        {
+            _dataFrameTable?.Dispose();
+            _dataFrameTable = new DataTable("DataFramePreview")
+            {
+                CaseSensitive = true,
+                Locale = CultureInfo.InvariantCulture,
+            };
+            _dataFrameTable.Columns.Add("__index__", typeof(string));
+            foreach (var column in columns)
+            {
+                var dataColumn = _dataFrameTable.Columns.Add(column.DataColumnName, typeof(string));
+                dataColumn.Caption = column.Name;
+                dataColumn.ExtendedProperties["dtype"] = column.DType;
+            }
+            DataFrameRows = _dataFrameTable.DefaultView;
+        }
+
+        var table = _dataFrameTable!;
+        table.BeginLoadData();
+        try
+        {
+            while (table.Rows.Count > rows.Count)
+                table.Rows.RemoveAt(table.Rows.Count - 1);
+            for (var rowIndex = 0; rowIndex < rows.Count; rowIndex++)
+            {
+                var target = rowIndex < table.Rows.Count ? table.Rows[rowIndex] : table.NewRow();
+                target[0] = indexLabels.Count > rowIndex
+                    ? indexLabels[rowIndex]?.GetValue<string>() ?? ""
+                    : "";
+                var values = rows[rowIndex]?.AsArray() ?? [];
+                for (var columnIndex = 0; columnIndex < columns.Count; columnIndex++)
+                {
+                    target[columnIndex + 1] = values.Count > columnIndex
+                        ? values[columnIndex]?.GetValue<string>() ?? ""
+                        : "";
+                }
+                if (rowIndex >= table.Rows.Count)
+                    table.Rows.Add(target);
+            }
+        }
+        finally
+        {
+            table.EndLoadData();
+        }
+    }
+
+    private void SetDataFrameError(Exception exception)
+    {
+        DataFrameState = DataFramePaneState.Error;
+        DataFrameErrorMessage = exception switch
+        {
+            RemoteInspectionException remote => $"{remote.Code}: {remote.Message}",
+            _ => exception.Message,
+        };
+        DataFrameStatus = "DataFrame preview unavailable · refresh to retry";
+        UpdateCommandStates();
+    }
+
+    private static int NormalizePageOffset(int requested, int total, int pageSize)
+    {
+        if (total <= 0)
+            return 0;
+        var lastPageOffset = ((total - 1) / pageSize) * pageSize;
+        return Math.Clamp(requested, 0, lastPageOffset);
+    }
+
+    private static string PageRangeLabel(string label, int offset, int count, int total) =>
+        total == 0 ? $"{label} 0 of 0" : $"{label} {offset + 1:N0}–{offset + count:N0} of {total:N0}";
+
+    private async Task RefreshSelectedDetailInBackgroundAsync(CancellationToken scopeToken)
+    {
+        if (!IsConnected || InspectorState == InspectorPaneState.Loading || _currentObject is not NavigationContext context)
+            return;
+
+        if (context.Parent is null)
+        {
+            var selected = SelectedVariable;
+            if (selected is null
+                || selected.IsRemoved
+                || !string.Equals(context.PinKey, selected.StableKey, StringComparison.Ordinal)
+                || !string.Equals(context.Row.IdentityToken, selected.IdentityToken, StringComparison.Ordinal))
+            {
+                return;
+            }
+            context = context with { Row = selected };
+            UpdateSelectedObjectSummary(context, markDetailsPending: false);
+        }
+
+        var isArray = string.Equals(context.Row.AdapterKind, "numpy.ndarray", StringComparison.Ordinal);
+        var isDataFrame = string.Equals(context.Row.AdapterKind, "pandas.DataFrame", StringComparison.Ordinal);
+        if (!isArray && !isDataFrame)
+            return;
+
+        var generation = Volatile.Read(ref _detailGeneration);
+        var detailToken = _detailCts?.Token ?? CancellationToken.None;
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(scopeToken, detailToken);
+        try
+        {
+            bool previewAvailable;
+            if (isArray)
+            {
+                _arrayHandle = context.Row.HandleId;
+                HasArraySelection = true;
+                RefreshObjectHandleReferences();
+                previewAvailable = await LoadArrayDescriptionAndPreviewAsync(
+                    generation,
+                    linked.Token,
+                    preserveViewConfiguration: true);
+            }
+            else
+            {
+                _dataFrameHandle = context.Row.HandleId;
+                HasDataFrameSelection = true;
+                RefreshObjectHandleReferences();
+                previewAvailable = await LoadDataFrameDescriptionAndPreviewAsync(
+                    generation,
+                    linked.Token,
+                    showLoading: false);
+            }
+            if (generation != _detailGeneration || linked.IsCancellationRequested)
+                return;
+            SelectedObjectStatus = isDataFrame
+                ? previewAvailable
+                    ? $"Live DataFrame refreshed · {DateTime.Now:HH:mm:ss}"
+                    : "Live DataFrame refresh returned no consistent preview"
+                : previewAvailable
+                    ? $"Live image refreshed · {DateTime.Now:HH:mm:ss}"
+                    : "Live array metadata refreshed · preview unavailable for this dtype or shape";
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (RemoteInspectionException exception) when (exception.Code == "OBJECT_EXPIRED")
+        {
+            if (generation == _detailGeneration)
+            {
+                InspectorState = InspectorPaneState.Expired;
+                SelectedObjectStatus = "Object expired · refresh the scope and select it again";
+                if (isDataFrame)
+                {
+                    DataFrameState = DataFramePaneState.Error;
+                    DataFrameErrorMessage = "OBJECT_EXPIRED: The selected DataFrame is no longer available.";
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            if (generation == _detailGeneration)
+            {
+                if (isDataFrame)
+                {
+                    SetDataFrameError(exception);
+                    SelectedObjectStatus = "Live DataFrame refresh paused · use Refresh in the DataFrame tab to retry";
+                }
+                else
+                {
+                    SelectedObjectStatus = "Live image refresh paused · press F5 to retry";
+                }
+            }
+        }
+    }
+
+    private async Task<bool> LoadArrayDescriptionAndPreviewAsync(
+        long generation,
+        CancellationToken token,
+        bool preserveViewConfiguration = false)
+    {
+        using var handleResponse = await RequestHandleResponseAsync(
+            "arrays.describe",
+            new JsonObject { ["handleId"] = _arrayHandle },
+            token);
+        var descriptionFrame = handleResponse.Frame;
+        if (generation != _detailGeneration || token.IsCancellationRequested)
+            return false;
         var description = descriptionFrame.Header["result"]!.AsObject();
         _arrayDimensions = description["shape"]!.AsArray().Select(item => item!.GetValue<int>()).ToArray();
         ArrayShape = "(" + string.Join(", ", _arrayDimensions) + ")";
@@ -1487,11 +2694,47 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         ArrayDataAddress = description["dataAddressHex"]!.GetValue<string>();
         ArrayOwner = description["ownsData"]!.GetValue<bool>() ? "Owns data" : "View / shared owner";
         var guess = description["layoutGuess"]!.GetValue<string>();
-        ArrayLayout = guess switch { "GRAY" => "GRAY", "CHW" => "CHW", "volume" => "VOLUME", _ => "HWC" };
+        var suggestedLayout = guess switch { "GRAY" => "GRAY", "CHW" => "CHW", "volume" => "VOLUME", _ => "HWC" };
         LayoutConfidence = description["layoutConfidence"]!.GetValue<string>();
-        SliceAxis = 0;
-        SliceIndex = ArrayLayout == "VOLUME" && _arrayDimensions.Length == 3 ? _arrayDimensions[0] / 2 : 0;
-        await LoadArrayPreviewAsync(token);
+        var supportedModes = description["supportedPreviewModes"] as JsonArray;
+        var supportedLayouts = supportedModes?
+            .Select(item => item?.GetValue<string>())
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (!preserveViewConfiguration
+            || string.IsNullOrWhiteSpace(ArrayLayout)
+            || supportedLayouts is { Count: > 0 } && !supportedLayouts.Contains(ArrayLayout))
+        {
+            ArrayLayout = suggestedLayout;
+        }
+        if (!preserveViewConfiguration)
+            SliceAxis = 0;
+        UpdateSliceMaximum();
+        SliceIndex = preserveViewConfiguration
+            ? Math.Min(SliceIndex, SliceMaximum)
+            : ArrayLayout == "VOLUME" && _arrayDimensions.Length == 3 ? _arrayDimensions[0] / 2 : 0;
+        _arrayPreviewSupported = !string.Equals(guess, "unsupported", StringComparison.OrdinalIgnoreCase)
+            && (supportedModes is null || supportedModes.Count > 0);
+        RefreshObjectHandleReferences();
+        if (!_arrayPreviewSupported)
+        {
+            ArrayPreview = null;
+            Normalization = "Preview unavailable for this dtype or shape";
+            UpdateCommandStates();
+            return false;
+        }
+        try
+        {
+            return await LoadArrayPreviewAsync(token, generation);
+        }
+        catch (RemoteInspectionException exception) when (exception.Code == "INVALID_ARGUMENT")
+        {
+            _arrayPreviewSupported = false;
+            ArrayPreview = null;
+            Normalization = "Preview unavailable for this dtype or shape";
+            UpdateCommandStates();
+            return false;
+        }
     }
 
     private async Task ReloadArrayPreviewAsync()
@@ -1574,15 +2817,21 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
-    private async Task LoadArrayPreviewAsync(CancellationToken token)
+    private async Task<bool> LoadArrayPreviewAsync(CancellationToken token, long? expectedGeneration = null)
     {
         var parameters = BuildArrayViewParameters();
         parameters["maxWidth"] = 1024;
         parameters["maxHeight"] = 1024;
         var frame = await RequestAsync("arrays.preview", parameters, token);
+        if (expectedGeneration is long generation
+            && (generation != _detailGeneration || token.IsCancellationRequested))
+        {
+            return false;
+        }
         ApplyArrayBitmap(frame);
         if (_fitMode)
             ApplyFitZoom();
+        return true;
     }
 
     private JsonObject BuildArrayViewParameters()
@@ -1664,8 +2913,9 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             try
             {
                 await Task.Delay(TimeSpan.FromSeconds(RefreshIntervalSeconds), token);
-                if (_currentScope is not null && _currentScope.Kind != RuntimeNodeKind.GcObjects)
-                    await LoadScopeAsync(_currentScope);
+                NotifySnapshotState();
+                if (AutoRefreshEnabled && _currentScope is not null && _currentScope.Kind != RuntimeNodeKind.GcObjects)
+                    await LoadScopeAsync(_currentScope, showLoadingOverlay: false);
                 else if (IsConnected)
                     await RequestAsync("runtime.getInfo", cancellationToken: token);
                 await RefreshMemoryAsync(token);
@@ -1690,6 +2940,391 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _refreshCts?.Cancel();
         _refreshCts = CancellationTokenSource.CreateLinkedTokenSource(_connectionCts?.Token ?? CancellationToken.None);
         _ = RefreshLoopAsync(_refreshCts.Token);
+    }
+
+    private async Task<HandleResponseLease> RequestHandleResponseAsync(
+        string method,
+        JsonObject? parameters,
+        CancellationToken cancellationToken)
+    {
+        HandleActivityLease? activity = await EnterHandleActivityAsync(cancellationToken);
+        Task<ProtocolFrame>? requestTask = null;
+        try
+        {
+            // Transport cancellation would discard a response that may contain newly-created
+            // strong handles. Keep draining it, while allowing the UI operation to cancel.
+            requestTask = RequestAsync(method, parameters, CancellationToken.None);
+            try
+            {
+                var frame = await requestTask.WaitAsync(cancellationToken);
+                TrackObjectHandles(frame, activity.Generation);
+                var response = new HandleResponseLease(frame, activity);
+                activity = null;
+                return response;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                DrainCanceledHandleResponse(requestTask, activity!);
+                activity = null;
+                throw;
+            }
+        }
+        finally
+        {
+            activity?.Dispose();
+        }
+    }
+
+    private async Task<HandleActivityLease> EnterHandleActivityAsync(CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            Task? releaseCompleted;
+            lock (_handleLifetimeSync)
+            {
+                if (_handleSessionClosing)
+                    throw new OperationCanceledException(cancellationToken);
+                if (!_handleReleaseInProgress)
+                {
+                    _activeHandleResponses++;
+                    return new HandleActivityLease(this, _handleSessionGeneration);
+                }
+                releaseCompleted = _handleReleaseCompleted?.Task;
+            }
+            if (releaseCompleted is not null)
+                await releaseCompleted.WaitAsync(cancellationToken);
+            else
+                await Task.Yield();
+        }
+    }
+
+    private void DrainCanceledHandleResponse(Task<ProtocolFrame> requestTask, HandleActivityLease activity) =>
+        _ = DrainCanceledHandleResponseAsync(requestTask, activity);
+
+    private async Task DrainCanceledHandleResponseAsync(Task<ProtocolFrame> requestTask, HandleActivityLease activity)
+    {
+        try
+        {
+            var frame = await requestTask.ConfigureAwait(false);
+            TrackObjectHandles(frame, activity.Generation);
+        }
+        catch
+        {
+            // Transport/session error handling owns the user-visible state. This continuation
+            // exists only to collect handles from a response the canceled UI no longer needs.
+        }
+        finally
+        {
+            activity.Dispose();
+        }
+    }
+
+    private void TrackObjectHandles(ProtocolFrame frame, int generation)
+    {
+        var handles = EnumerateObjectHandles(frame.Header["result"]).ToArray();
+        if (handles.Length == 0)
+            return;
+        lock (_handleLifetimeSync)
+        {
+            if (generation != _handleSessionGeneration)
+                return;
+            _knownObjectHandles.UnionWith(handles);
+            _handleReleaseRequested = true;
+        }
+    }
+
+    private void EndHandleActivity()
+    {
+        int? releaseGeneration = null;
+        lock (_handleLifetimeSync)
+        {
+            if (_activeHandleResponses > 0)
+                _activeHandleResponses--;
+            if (TryBeginHandleReleaseLocked(out var generation))
+                releaseGeneration = generation;
+        }
+        if (releaseGeneration is int value)
+            _ = ReleaseObsoleteHandlesBatchAsync(value);
+    }
+
+    private void RefreshObjectHandleReferences()
+    {
+        var referenced = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var row in Variables.Where(row => !row.IsRemoved))
+            AddHandle(referenced, row.HandleId);
+        if (SelectedVariable is { IsRemoved: false } selected)
+            AddHandle(referenced, selected.HandleId);
+        AddContextHandles(referenced, _currentObject);
+        foreach (var context in _navigationHistory)
+            AddContextHandles(referenced, context);
+        foreach (var context in _pinnedContexts.Values)
+            AddContextHandles(referenced, context);
+        foreach (var root in ObjectRoots)
+            AddTreeHandles(referenced, root);
+        foreach (var child in ObjectChildren)
+            AddHandle(referenced, child.HandleId);
+        AddHandle(referenced, _arrayHandle);
+        AddHandle(referenced, _dataFrameHandle);
+
+        int? releaseGeneration = null;
+        lock (_handleLifetimeSync)
+        {
+            _referencedObjectHandles = referenced;
+            _handleReleaseRequested = true;
+            if (TryBeginHandleReleaseLocked(out var generation))
+                releaseGeneration = generation;
+        }
+        if (releaseGeneration is int value)
+            _ = ReleaseObsoleteHandlesBatchAsync(value);
+    }
+
+    private bool TryBeginHandleReleaseLocked(out int generation)
+    {
+        generation = _handleSessionGeneration;
+        if (_handleSessionClosing
+            || _handleReleaseInProgress
+            || _activeHandleResponses != 0
+            || !_handleReleaseRequested
+            || !_session.IsConnected
+            || !_knownObjectHandles.Any(handle => !_referencedObjectHandles.Contains(handle)))
+        {
+            return false;
+        }
+
+        _handleReleaseInProgress = true;
+        _handleReleaseRequested = false;
+        _handleReleaseCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        return true;
+    }
+
+    private async Task ReleaseObsoleteHandlesBatchAsync(int generation)
+    {
+        var failed = false;
+        try
+        {
+            string[] candidates;
+            lock (_handleLifetimeSync)
+            {
+                candidates = generation == _handleSessionGeneration
+                    ? _knownObjectHandles
+                        .Where(handle => !_referencedObjectHandles.Contains(handle))
+                        .Take(MaxHandleReleaseBatch)
+                        .ToArray()
+                    : [];
+            }
+
+            foreach (var handle in candidates)
+            {
+                lock (_handleLifetimeSync)
+                {
+                    if (generation != _handleSessionGeneration
+                        || _handleSessionClosing
+                        || !_knownObjectHandles.Contains(handle)
+                        || _referencedObjectHandles.Contains(handle))
+                    {
+                        continue;
+                    }
+                }
+                if (!_session.IsConnected)
+                    break;
+                try
+                {
+                    await _session.RequestAsync(
+                        "objects.release",
+                        new JsonObject { ["handleId"] = handle },
+                        CancellationToken.None).ConfigureAwait(false);
+                    lock (_handleLifetimeSync)
+                    {
+                        if (generation == _handleSessionGeneration)
+                            _knownObjectHandles.Remove(handle);
+                    }
+                }
+                catch
+                {
+                    failed = true;
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            FinishHandleRelease(generation, retryRemaining: !failed);
+        }
+    }
+
+    private void FinishHandleRelease(int generation, bool retryRemaining)
+    {
+        TaskCompletionSource? completed;
+        var retry = false;
+        lock (_handleLifetimeSync)
+        {
+            _handleReleaseInProgress = false;
+            completed = _handleReleaseCompleted;
+            _handleReleaseCompleted = null;
+            if (retryRemaining
+                && generation == _handleSessionGeneration
+                && !_handleSessionClosing
+                && _activeHandleResponses == 0
+                && _session.IsConnected
+                && _knownObjectHandles.Any(handle => !_referencedObjectHandles.Contains(handle)))
+            {
+                _handleReleaseRequested = true;
+                retry = true;
+            }
+        }
+        completed?.TrySetResult();
+        if (retry)
+            _ = QueueNextHandleReleaseBatchAsync();
+    }
+
+    private async Task QueueNextHandleReleaseBatchAsync()
+    {
+        await Task.Delay(1).ConfigureAwait(false);
+        int? releaseGeneration = null;
+        lock (_handleLifetimeSync)
+        {
+            if (TryBeginHandleReleaseLocked(out var generation))
+                releaseGeneration = generation;
+        }
+        if (releaseGeneration is int value)
+            await ReleaseObsoleteHandlesBatchAsync(value).ConfigureAwait(false);
+    }
+
+    private async Task DetachInspectorSessionAsync()
+    {
+        _selectionCts?.Cancel();
+        _detailCts?.Cancel();
+        _refreshCts?.Cancel();
+        await ReleaseKnownHandlesBeforeDetachAsync();
+        await _session.DetachAsync();
+    }
+
+    private async Task ReleaseKnownHandlesBeforeDetachAsync()
+    {
+        if (!_session.IsConnected)
+            return;
+
+        lock (_handleLifetimeSync)
+        {
+            _handleSessionClosing = true;
+            _handleReleaseRequested = false;
+        }
+        using var budget = new CancellationTokenSource(DetachHandleReleaseBudget);
+        var acquired = false;
+        var generation = 0;
+        try
+        {
+            while (!budget.IsCancellationRequested)
+            {
+                Task? currentRelease;
+                lock (_handleLifetimeSync)
+                {
+                    if (_activeHandleResponses == 0 && !_handleReleaseInProgress)
+                    {
+                        _handleReleaseInProgress = true;
+                        _handleReleaseCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                        generation = _handleSessionGeneration;
+                        acquired = true;
+                        break;
+                    }
+                    currentRelease = _handleReleaseCompleted?.Task;
+                }
+                if (currentRelease is not null)
+                    await currentRelease.WaitAsync(budget.Token);
+                else
+                    await Task.Delay(10, budget.Token);
+            }
+
+            if (!acquired)
+                return;
+            string[] handles;
+            lock (_handleLifetimeSync)
+                handles = _knownObjectHandles.Take(MaxDetachHandleReleaseBatch).ToArray();
+            foreach (var handle in handles)
+            {
+                budget.Token.ThrowIfCancellationRequested();
+                await _session.RequestAsync(
+                    "objects.release",
+                    new JsonObject { ["handleId"] = handle },
+                    budget.Token);
+                lock (_handleLifetimeSync)
+                {
+                    if (generation == _handleSessionGeneration)
+                        _knownObjectHandles.Remove(handle);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch
+        {
+            // Detach still has to proceed if best-effort handle cleanup fails.
+        }
+        finally
+        {
+            if (acquired)
+                FinishHandleRelease(generation, retryRemaining: false);
+        }
+    }
+
+    private void BeginObjectHandleSession()
+    {
+        lock (_handleLifetimeSync)
+        {
+            _handleSessionGeneration++;
+            _knownObjectHandles.Clear();
+            _referencedObjectHandles.Clear();
+            _handleReleaseRequested = false;
+            _handleSessionClosing = false;
+        }
+    }
+
+    private static IEnumerable<string> EnumerateObjectHandles(JsonNode? node)
+    {
+        if (node is JsonObject value)
+        {
+            foreach (var property in value)
+            {
+                if (property.Key == "handleId"
+                    && property.Value is JsonValue handleValue
+                    && handleValue.TryGetValue<string>(out var handle)
+                    && !string.IsNullOrWhiteSpace(handle))
+                {
+                    yield return handle;
+                }
+                foreach (var nested in EnumerateObjectHandles(property.Value))
+                    yield return nested;
+            }
+        }
+        else if (node is JsonArray items)
+        {
+            foreach (var item in items)
+            foreach (var nested in EnumerateObjectHandles(item))
+                yield return nested;
+        }
+    }
+
+    private static void AddHandle(ISet<string> handles, string? handle)
+    {
+        if (!string.IsNullOrWhiteSpace(handle))
+            handles.Add(handle);
+    }
+
+    private static void AddContextHandles(ISet<string> handles, NavigationContext? context)
+    {
+        while (context is not null)
+        {
+            AddHandle(handles, context.Row.HandleId);
+            context = context.Parent;
+        }
+    }
+
+    private static void AddTreeHandles(ISet<string> handles, ObjectTreeNode node)
+    {
+        AddHandle(handles, node.Value?.HandleId);
+        foreach (var child in node.Children)
+            AddTreeHandles(handles, child);
     }
 
     private async Task<ProtocolFrame> RequestAsync(string method, JsonObject? parameters = null, CancellationToken cancellationToken = default)
@@ -1736,15 +3371,193 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private void ApplyFilter()
     {
         var query = SearchText.Trim();
-        var filtered = string.IsNullOrEmpty(query)
-            ? Variables
-            : Variables.Where(row => row.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
+        foreach (var row in Variables)
+            row.IsPinned = _pinnedKeys.Contains(row.StableKey);
+
+        IEnumerable<VariableRow> filtered = Variables;
+        if (!string.IsNullOrEmpty(query))
+        {
+            filtered = filtered.Where(row => row.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
                 || row.TypeName.Contains(query, StringComparison.OrdinalIgnoreCase)
                 || row.ModuleName.Contains(query, StringComparison.OrdinalIgnoreCase)
                 || row.QualifiedTypeName.Contains(query, StringComparison.OrdinalIgnoreCase)
                 || row.Address.Contains(query, StringComparison.OrdinalIgnoreCase)
                 || row.SafePreview.Contains(query, StringComparison.OrdinalIgnoreCase));
-        Replace(FilteredVariables, filtered);
+        }
+        if (!string.Equals(ScopeFilter, "All scopes", StringComparison.OrdinalIgnoreCase))
+        {
+            filtered = ScopeFilter == "module"
+                ? filtered.Where(row => row.Scope.StartsWith("module:", StringComparison.OrdinalIgnoreCase))
+                : filtered.Where(row => string.Equals(row.Scope, ScopeFilter, StringComparison.OrdinalIgnoreCase));
+        }
+        filtered = ChangeFilter switch
+        {
+            "Changed only" => filtered.Where(row => row.Changed),
+            "Added" => filtered.Where(row => row.ChangeKind == VariableChangeKind.Added),
+            "Removed" => filtered.Where(row => row.ChangeKind == VariableChangeKind.Removed),
+            "Rebound" => filtered.Where(row => row.ChangeKind == VariableChangeKind.Rebound),
+            "Updated" => filtered.Where(row => row.ChangeKind == VariableChangeKind.MetadataChanged),
+            _ => filtered,
+        };
+        if (!string.Equals(TypeFilter, "All types", StringComparison.OrdinalIgnoreCase))
+            filtered = filtered.Where(row => string.Equals(row.TypeName, TypeFilter, StringComparison.OrdinalIgnoreCase));
+        if (ArraysOnly)
+            filtered = filtered.Where(row => row.AdapterKind == "numpy.ndarray");
+        if (ExpandableOnly)
+            filtered = filtered.Where(row => row.Expandable);
+        if (PinnedOnly)
+            filtered = filtered.Where(row => row.IsPinned);
+
+        var visible = filtered.ToList();
+        var preferredSelectionKey = SelectedVariable?.StableKey
+            ?? (_currentObject is { Parent: null } context ? context.Row.StableKey : null);
+        _suppressVariableNavigation = true;
+        try
+        {
+            ReconcileVariableCollection(FilteredVariables, visible);
+            SelectedVariable = preferredSelectionKey is null
+                ? null
+                : visible.FirstOrDefault(row => row.StableKey == preferredSelectionKey);
+        }
+        finally
+        {
+            _suppressVariableNavigation = false;
+        }
+        var changed = visible.Count(row => row.Changed);
+        FilterResultLabel = $"{visible.Count:N0} of {Variables.Count:N0} visible" + (changed > 0 ? $" · {changed:N0} changed" : "");
+        OnPropertyChanged(nameof(ShowVariableListEmpty));
+        OnPropertyChanged(nameof(VariableListStatusMessage));
+    }
+
+    private void ScheduleSearchFilter()
+    {
+        _searchDebounceCts?.Cancel();
+        _searchDebounceCts?.Dispose();
+        _searchDebounceCts = new CancellationTokenSource();
+        IsSearchPending = true;
+        _ = ApplySearchFilterAfterDelayAsync(_searchDebounceCts.Token);
+    }
+
+    private async Task ApplySearchFilterAfterDelayAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(175), cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        void Apply(object? _)
+        {
+            if (cancellationToken.IsCancellationRequested)
+                return;
+            ApplyFilter();
+            IsSearchPending = false;
+        }
+        if (_uiContext is null)
+            Apply(null);
+        else
+            _uiContext.Post(Apply, null);
+    }
+
+    private void CancelSearchDebounce()
+    {
+        _searchDebounceCts?.Cancel();
+        _searchDebounceCts?.Dispose();
+        _searchDebounceCts = null;
+        IsSearchPending = false;
+    }
+
+    private void ClearSearch()
+    {
+        SearchText = "";
+        if (_currentScope?.Kind == RuntimeNodeKind.GcObjects)
+            _ = LoadScopeAsync(_currentScope, resetPage: true);
+    }
+
+    private void ClearFilters()
+    {
+        ScopeFilter = "All scopes";
+        ChangeFilter = "All changes";
+        TypeFilter = "All types";
+        ArraysOnly = false;
+        ExpandableOnly = false;
+        PinnedOnly = false;
+        ApplyFilter();
+    }
+
+    private void ResetCurrentBaseline()
+    {
+        if (_currentScope is null)
+            return;
+        var scopeKey = GetScopeKey(_currentScope);
+        foreach (var key in _scopeSnapshots.Keys.Where(key => key.StartsWith(scopeKey + "|", StringComparison.Ordinal)).ToArray())
+            _scopeSnapshots.Remove(key);
+        foreach (var key in _activeChanges.Keys.Where(key => key.StartsWith(scopeKey + ":", StringComparison.Ordinal)).ToArray())
+            _activeChanges.Remove(key);
+        Status = "Change baseline reset for the current scope";
+        _ = LoadScopeAsync(_currentScope);
+    }
+
+    private void ToggleSelectedPin()
+    {
+        if (_currentObject is null || _currentObject.Row.IsRemoved)
+            return;
+        var context = _currentObject;
+        if (_pinnedKeys.Remove(context.PinKey))
+        {
+            _pinnedContexts.Remove(context.PinKey);
+            var existing = PinnedObjects.FirstOrDefault(item => item.StableKey == context.PinKey);
+            if (existing is not null)
+                PinnedObjects.Remove(existing);
+            Status = $"Unpinned {context.Row.Name}";
+        }
+        else
+        {
+            _pinnedKeys.Add(context.PinKey);
+            _pinnedContexts[context.PinKey] = context;
+            PinnedObjects.Add(new PinnedObjectRow(
+                context.PinKey,
+                context.Row.Name,
+                context.Path,
+                context.Row.TypeName,
+                context.Row.SafePreview,
+                context.Row.Address));
+            Status = $"Pinned {context.Row.Name}";
+        }
+        ApplyFilter();
+        OnPropertyChanged(nameof(IsSelectedObjectPinned));
+        RefreshObjectHandleReferences();
+        UpdateCommandStates();
+    }
+
+    private void CopySelectedObjectPath()
+    {
+        if (_currentObject is null)
+            return;
+        _clipboardService.SetText(_currentObject.Path);
+        Status = "Object path copied";
+    }
+
+    private void CopySelectedObjectType()
+    {
+        if (_currentObject is null)
+            return;
+        var typeName = string.IsNullOrWhiteSpace(_currentObject.Row.QualifiedTypeName)
+            ? _currentObject.Row.TypeName
+            : _currentObject.Row.QualifiedTypeName;
+        _clipboardService.SetText(typeName);
+        Status = "Object type copied";
+    }
+
+    private void CopySelectedObjectAddress()
+    {
+        if (_currentObject is null)
+            return;
+        _clipboardService.SetText(_currentObject.Row.Address);
+        Status = "Object address copied";
     }
 
     private void CopyEnvironment()
@@ -1870,9 +3683,11 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
     private void ResetConnection(string status)
     {
+        BeginObjectHandleSession();
         _selectionCts?.Cancel();
         _detailCts?.Cancel();
         _refreshCts?.Cancel();
+        CancelSearchDebounce();
         IsConnected = false;
         IsBusy = false;
         Status = status;
@@ -1880,7 +3695,12 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         Variables.Clear();
         FilteredVariables.Clear();
         ObjectChildren.Clear();
+        ObjectRoots.Clear();
         ClassMembers.Clear();
+        ClassTree.Clear();
+        PinnedObjects.Clear();
+        TypeFilters.Clear();
+        TypeFilters.Add("All types");
         MemorySnapshots.Clear();
         MemoryStatistics.Clear();
         MemoryTimeline.Clear();
@@ -1898,21 +3718,38 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         ExecutionStatus = "Unavailable until connected";
         _lastExecutionSequence = 0;
         TargetPid = null;
+        ConnectionMode = "Not connected";
         PythonVersion = Architecture = Executable = "—";
         PrivateBytes = WorkingSet = VirtualSize = PeakWorkingSet = "—";
         _lastProcessMemory = null;
-        SelectedType = SelectedModule = SelectedQualifiedName = SelectedAddress = "—";
-        SelectedShallowSize = SelectedPayloadSize = "—";
-        SelectedVariable = null;
+        _scopeSnapshots.Clear();
+        _activeChanges.Clear();
+        _pinnedKeys.Clear();
+        _pinnedContexts.Clear();
+        _navigationHistory.Clear();
+        _navigationIndex = -1;
+        _suppressVariableNavigation = true;
+        try { SelectedVariable = null; }
+        finally { _suppressVariableNavigation = false; }
+        ClearSelectedObject();
+        LastSnapshotAt = null;
+        PageLabel = "0 items";
+        FilterResultLabel = "0 visible";
         _currentScope = null;
+        IsScopeLoading = false;
+        OnPropertyChanged(nameof(ShowVariableListEmpty));
+        OnPropertyChanged(nameof(VariableListStatusMessage));
         _arrayHandle = null;
+        _dataFrameHandle = null;
         UpdateCommandStates();
         ClearArrayDetails();
+        ClearDataFrameDetails(resetOffsets: true);
         ApplySelectedProcessPreview();
     }
 
     private void ClearArrayDetails()
     {
+        _arrayPreviewSupported = false;
         ArrayShape = ArrayDType = ArrayStrides = ArrayDataAddress = ArrayOwner = "—";
         ArrayPreview = null;
         PreviewWidth = PreviewHeight = 0;
@@ -1924,6 +3761,35 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         HistogramBins.Clear();
         HistogramSummary = "Not loaded";
         _arrayDimensions = [];
+    }
+
+    private void ClearDataFrameDetails(bool resetOffsets)
+    {
+        _dataFrameTable?.Dispose();
+        _dataFrameTable = null;
+        DataFrameRows = null;
+        DataFrameColumns.Clear();
+        if (resetOffsets)
+        {
+            _dataFrameRowOffset = 0;
+            _dataFrameColumnOffset = 0;
+        }
+        _dataFrameRowCount = 0;
+        _dataFrameColumnCount = 0;
+        _dataFrameTotalRows = 0;
+        _dataFrameTotalColumns = 0;
+        _dataFrameHasMoreRows = false;
+        _dataFrameHasMoreColumns = false;
+        DataFrameShape = "—";
+        DataFrameRowPageLabel = "Rows 0 of 0";
+        DataFrameColumnPageLabel = "Columns 0 of 0";
+        DataFrameErrorMessage = "";
+        DataFrameState = HasDataFrameSelection
+            ? DataFramePaneState.Loading
+            : DataFramePaneState.NoSelection;
+        DataFrameStatus = HasDataFrameSelection
+            ? "Loading bounded DataFrame preview…"
+            : "Select a pandas DataFrame to preview it.";
     }
 
     private void UpdateSliceMaximum()
@@ -1989,6 +3855,349 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         return displayed.ToString();
     }
 
+    private static VariableRow CreateVariableRow(
+        string name,
+        string scope,
+        JsonObject value,
+        VariableChangeKind changeKind,
+        DateTime? changedAt,
+        bool isPinned,
+        string? stableScopeKey = null)
+    {
+        var identityToken = value["identityToken"]?.GetValue<string>()
+            ?? value["changeToken"]?.GetValue<string>()
+            ?? value["addressHex"]?.GetValue<string>()
+            ?? "";
+        var metadataToken = value["metadataToken"]?.GetValue<string>() ?? BuildMetadataToken(value);
+        var shape = value["shape"] is JsonArray dimensions
+            ? "(" + string.Join(", ", dimensions.Select(dimension => dimension?.ToString() ?? "?")) + ")"
+            : "";
+        long? payloadSize = null;
+        if (value["payloadSizeBytes"] is JsonValue payloadValue && payloadValue.TryGetValue<long>(out var payload))
+            payloadSize = payload;
+        return new VariableRow
+        {
+            Name = name,
+            Scope = scope,
+            StableScopeKey = stableScopeKey ?? scope,
+            HandleId = value["handleId"]?.GetValue<string>() ?? "",
+            TypeName = value["typeName"]?.GetValue<string>() ?? "unknown",
+            ModuleName = value["moduleName"]?.GetValue<string>() ?? "",
+            QualifiedTypeName = value["qualifiedTypeName"]?.GetValue<string>() ?? "unknown",
+            SafePreview = value["safePreview"]?.GetValue<string>() ?? "",
+            Address = value["addressHex"]?.GetValue<string>() ?? "—",
+            ShallowSize = value["shallowSizeBytes"]?.GetValue<long>() ?? 0,
+            PayloadSize = payloadSize,
+            Shape = shape,
+            DType = value["dtype"]?.GetValue<string>() ?? "",
+            Expandable = value["expandable"]?.GetValue<bool>() ?? false,
+            AdapterKind = value["adapterKind"]?.GetValue<string>(),
+            ChangeToken = identityToken,
+            IdentityToken = identityToken,
+            MetadataToken = metadataToken,
+            ChangeKind = changeKind,
+            ChangedAt = changedAt,
+            IsRemoved = false,
+            IsPinned = isPinned,
+        };
+    }
+
+    private static string BuildMetadataToken(JsonObject value)
+    {
+        var shape = value["shape"]?.ToJsonString() ?? "";
+        return string.Join("|",
+            value["qualifiedTypeName"]?.ToString() ?? "",
+            value["safePreview"]?.ToString() ?? "",
+            value["shallowSizeBytes"]?.ToString() ?? "",
+            value["payloadSizeBytes"]?.ToString() ?? "",
+            shape,
+            value["dtype"]?.ToString() ?? "");
+    }
+
+    private static VariableRow CloneRemovedRow(VariableRow row, DateTime changedAt) => new()
+    {
+        Name = row.Name,
+        Scope = row.Scope,
+        StableScopeKey = row.StableScopeKey,
+        HandleId = row.HandleId,
+        TypeName = row.TypeName,
+        ModuleName = row.ModuleName,
+        QualifiedTypeName = row.QualifiedTypeName,
+        SafePreview = row.SafePreview,
+        Address = row.Address,
+        ShallowSize = row.ShallowSize,
+        PayloadSize = row.PayloadSize,
+        Shape = row.Shape,
+        DType = row.DType,
+        Expandable = false,
+        AdapterKind = row.AdapterKind,
+        ChangeToken = row.ChangeToken,
+        IdentityToken = row.IdentityToken,
+        MetadataToken = row.MetadataToken,
+        ChangeKind = VariableChangeKind.Removed,
+        ChangedAt = changedAt,
+        IsRemoved = true,
+        IsPinned = row.IsPinned,
+    };
+
+    private static DateTime? ParseTimestamp(JsonNode? node)
+    {
+        if (node is not JsonValue value || !value.TryGetValue<string>(out var text)
+            || !DateTimeOffset.TryParse(text, out var timestamp))
+            return null;
+        return timestamp.LocalDateTime;
+    }
+
+    private void NotifySnapshotState()
+    {
+        OnPropertyChanged(nameof(IsSnapshotStale));
+        OnPropertyChanged(nameof(SnapshotStatus));
+        OnPropertyChanged(nameof(SnapshotStatusBar));
+    }
+
+    private NavigationContext CreateNavigationContext(VariableRow row, string path, int depth, NavigationContext? parent)
+    {
+        var addresses = parent is null
+            ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(parent.AncestorAddresses, StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(row.Address))
+            addresses.Add(row.Address);
+        var identities = parent is null
+            ? new List<string>()
+            : new List<string>(parent.AncestorIdentityTokens);
+        if (!string.IsNullOrWhiteSpace(row.IdentityToken))
+            identities.Add(row.IdentityToken);
+        return new NavigationContext(row, path, depth, parent, addresses, identities);
+    }
+
+    private NavigationContext? BuildNavigationParent(ObjectTreeNode node)
+    {
+        if (node.Parent is null)
+            return _currentObject?.Parent;
+        return ContextForNode(node.Parent);
+    }
+
+    private NavigationContext ContextForNode(ObjectTreeNode node)
+    {
+        if (node.Parent is null && _currentObject is not null
+            && string.Equals(node.Value?.HandleId, _currentObject.Row.HandleId, StringComparison.Ordinal))
+            return _currentObject;
+        var parent = node.Parent is null ? null : ContextForNode(node.Parent);
+        if (node.Value is null)
+            return parent ?? _currentObject ?? throw new InvalidOperationException("Object navigation context is unavailable.");
+        return CreateNavigationContext(node.Value, node.Path, node.Depth, parent);
+    }
+
+    private IReadOnlySet<string> BuildAncestorAddresses(ObjectTreeNode node) =>
+        new HashSet<string>(ContextForNode(node).AncestorAddresses, StringComparer.OrdinalIgnoreCase);
+
+    private IReadOnlyList<string> BuildAncestorIdentityTokens(ObjectTreeNode node) =>
+        new List<string>(ContextForNode(node).AncestorIdentityTokens);
+
+    private static ObjectTreeNode StatusNode(string label, ObjectTreeNode parent) => new()
+    {
+        Label = label,
+        Kind = ObjectNodeKind.Status,
+        Path = parent.Path,
+        Depth = parent.Depth,
+        Parent = parent,
+        IsLoaded = true,
+    };
+
+    private static string AppendObjectPath(string root, string segment)
+    {
+        if (string.IsNullOrWhiteSpace(root))
+            return segment;
+        return segment.StartsWith("[", StringComparison.Ordinal) ? root + segment : root + "." + segment;
+    }
+
+    private static string ObjectGroupLabel(string origin) => origin switch
+    {
+        "instance" => "Instance fields",
+        "instance-dict" => "Instance dictionary",
+        "mapping" => "Mapping values",
+        "item" => "Collection items",
+        _ => "Other values",
+    };
+
+    private static string? ReadClassReference(JsonNode? node)
+    {
+        if (node is JsonValue value && value.TryGetValue<string>(out var text))
+            return text;
+        if (node is not JsonObject reference)
+            return null;
+        if (reference["displayName"] is JsonValue display && display.TryGetValue<string>(out var displayName))
+            return displayName;
+        var module = reference["module"]?.GetValue<string>();
+        var qualifiedName = reference["qualifiedName"]?.GetValue<string>() ?? reference["name"]?.GetValue<string>();
+        return string.IsNullOrWhiteSpace(module) ? qualifiedName : $"{module}.{qualifiedName}";
+    }
+
+    private static void AddClassReferenceGroup(ClassTreeNode parent, string label, JsonNode? node)
+    {
+        if (node is not JsonArray values || values.Count == 0)
+            return;
+        var group = new ClassTreeNode { Label = label, Kind = "metadata-group" };
+        foreach (var value in values)
+        {
+            var reference = ReadClassReference(value);
+            if (!string.IsNullOrWhiteSpace(reference))
+                group.Children.Add(new ClassTreeNode { Label = reference, Kind = "class-reference" });
+        }
+        if (group.Children.Count > 0)
+            parent.Children.Add(group);
+    }
+
+    private static string ClassGroupKey(string kind) => kind switch
+    {
+        "instance method" or "function" or "method descriptor" => "instance method",
+        "staticmethod" => "staticmethod",
+        "classmethod" => "classmethod",
+        "property" or "data descriptor" or "unknown descriptor" => "property",
+        _ => "attribute",
+    };
+
+    private static string ReadSignatureDisplay(JsonNode? node)
+    {
+        if (node is JsonValue value && value.TryGetValue<string>(out var text))
+            return text;
+        return node is JsonObject signature
+            ? signature["display"]?.GetValue<string>() ?? "—"
+            : "—";
+    }
+
+    private static string ReadSource(JsonNode? node)
+    {
+        if (node is JsonValue value && value.TryGetValue<string>(out var text))
+            return text;
+        if (node is not JsonObject source)
+            return "";
+        var file = source["file"]?.GetValue<string>() ?? "";
+        var line = source["line"]?.GetValue<int>() ?? 0;
+        return line > 0 ? $"{file}:{line}" : file;
+    }
+
+    private void UpdateSelectedObjectSummary(NavigationContext context, bool markDetailsPending = true)
+    {
+        _currentObject = context;
+        var row = context.Row;
+        SelectedObjectPreview = row.SafePreview;
+        SelectedAddress = row.Address;
+        SelectedShallowSize = FormatBytes(row.ShallowSize);
+        SelectedPayloadSize = row.PayloadSize is long payload ? FormatBytes(payload) : "—";
+        if (markDetailsPending)
+            SelectedObjectStatus = "Values changed · press F5 to refresh details";
+        if (_pinnedKeys.Contains(context.PinKey))
+            _pinnedContexts[context.PinKey] = context;
+        OnPropertyChanged(nameof(IsSelectedObjectPinned));
+        RefreshObjectHandleReferences();
+    }
+
+    private void ClearSelectedObject(string? message = null, InspectorPaneState state = InspectorPaneState.NoSelection)
+    {
+        _detailCts?.Cancel();
+        Interlocked.Increment(ref _detailGeneration);
+        _currentObject = null;
+        SelectedObjectNode = null;
+        ObjectRoots.Clear();
+        ObjectBreadcrumbs.Clear();
+        ObjectChildren.Clear();
+        ClassTree.Clear();
+        ClassMembers.Clear();
+        ClearArrayDetails();
+        HasSelectedObject = false;
+        HasArraySelection = false;
+        HasDataFrameSelection = false;
+        ClearDataFrameDetails(resetOffsets: true);
+        InspectorState = state;
+        SelectedObjectName = state == InspectorPaneState.Expired ? "Selection expired" : "No object selected";
+        SelectedObjectPath = "Select a variable to inspect";
+        var previous = _navigationIndex > 0 ? _navigationHistory[_navigationIndex - 1] : null;
+        var next = _navigationIndex >= 0 && _navigationIndex < _navigationHistory.Count - 1
+            ? _navigationHistory[_navigationIndex + 1]
+            : null;
+        BackNavigationLabel = previous is null ? "Back" : $"Back · {CompactNavigationName(previous.Row.Name)}";
+        ForwardNavigationLabel = next is null ? "Forward" : $"Forward · {CompactNavigationName(next.Row.Name)}";
+        ParentNavigationLabel = "Parent";
+        BackNavigationToolTip = previous is null
+            ? "No earlier object in navigation history"
+            : $"Back to {previous.Path} (Alt+Left)";
+        ForwardNavigationToolTip = next is null
+            ? "No later object in navigation history"
+            : $"Forward to {next.Path} (Alt+Right)";
+        ParentNavigationToolTip = "The selected object is already at the root";
+        ObjectDepthLabel = "No level";
+        NavigationHistoryLabel = _navigationHistory.Count == 0
+            ? "History 0 / 0"
+            : $"History {Math.Max(0, _navigationIndex + 1)} / {_navigationHistory.Count}";
+        NavigationLocationDescription = "No object selected";
+        SelectedObjectPreview = message ?? "Choose a variable from the table to inspect its structure.";
+        SelectedObjectStatus = message ?? "No selection";
+        ClassSummary = "Select an object to inspect its class.";
+        SelectedType = SelectedModule = SelectedQualifiedName = SelectedAddress = "—";
+        SelectedShallowSize = SelectedPayloadSize = "—";
+        _arrayHandle = null;
+        _dataFrameHandle = null;
+        OnPropertyChanged(nameof(IsSelectedObjectPinned));
+        RefreshObjectHandleReferences();
+        UpdateCommandStates();
+    }
+
+    private static string GetScopeKey(RuntimeTreeNode node)
+    {
+        if (node.Kind == RuntimeNodeKind.GcObjects)
+            return "gc-tracked";
+        if (node.ModuleName is not null)
+            return $"module:{node.ModuleName}";
+        return $"{node.FrameHandle}:{node.ScopeType}";
+    }
+
+    private static JsonArray ToJsonArray(IEnumerable<string> values)
+    {
+        var result = new JsonArray();
+        foreach (var value in values)
+            result.Add(value);
+        return result;
+    }
+
+    private sealed record VariableSnapshot(string IdentityToken, string MetadataToken, VariableRow Row);
+    private sealed record ScopeSnapshot(Dictionary<string, VariableSnapshot> Items, bool IsComplete);
+    private sealed record ChangeMarker(VariableChangeKind Kind, DateTime ChangedAt);
+    private sealed class HandleActivityLease(MainViewModel owner, int generation) : IDisposable
+    {
+        private int _disposed;
+
+        public int Generation { get; } = generation;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+                owner.EndHandleActivity();
+        }
+    }
+
+    private sealed class HandleResponseLease(ProtocolFrame frame, HandleActivityLease activity) : IDisposable
+    {
+        private HandleActivityLease? _activity = activity;
+
+        public ProtocolFrame Frame { get; } = frame;
+
+        public void Dispose() => Interlocked.Exchange(ref _activity, null)?.Dispose();
+    }
+
+    private sealed record NavigationContext(
+        VariableRow Row,
+        string Path,
+        int Depth,
+        NavigationContext? Parent,
+        IReadOnlySet<string> AncestorAddresses,
+        IReadOnlyList<string> AncestorIdentityTokens)
+    {
+        public string RootScopeKey => Parent?.RootScopeKey ?? Row.EffectiveScopeKey;
+        public string RootStableKey => Parent?.RootStableKey ?? Row.StableKey;
+        public string PinKey => Parent is null ? Row.StableKey : $"{RootStableKey}|{Path}";
+    }
+
     private void SetError(Exception exception)
     {
         ErrorMessage = exception switch
@@ -2009,9 +4218,23 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         PreviousPageCommand?.RaiseCanExecuteChanged();
         NextPageCommand?.RaiseCanExecuteChanged();
         SearchCurrentCommand?.RaiseCanExecuteChanged();
+        NavigateBackCommand?.RaiseCanExecuteChanged();
+        NavigateForwardCommand?.RaiseCanExecuteChanged();
+        NavigateParentCommand?.RaiseCanExecuteChanged();
+        NavigatePinnedCommand?.RaiseCanExecuteChanged();
+        ResetBaselineCommand?.RaiseCanExecuteChanged();
+        TogglePinCommand?.RaiseCanExecuteChanged();
+        CopyObjectPathCommand?.RaiseCanExecuteChanged();
+        CopyObjectTypeCommand?.RaiseCanExecuteChanged();
+        CopyObjectAddressCommand?.RaiseCanExecuteChanged();
         ReloadPreviewCommand?.RaiseCanExecuteChanged();
         LoadTileCommand?.RaiseCanExecuteChanged();
         LoadHistogramCommand?.RaiseCanExecuteChanged();
+        RefreshDataFrameCommand?.RaiseCanExecuteChanged();
+        PreviousDataFrameRowsCommand?.RaiseCanExecuteChanged();
+        NextDataFrameRowsCommand?.RaiseCanExecuteChanged();
+        PreviousDataFrameColumnsCommand?.RaiseCanExecuteChanged();
+        NextDataFrameColumnsCommand?.RaiseCanExecuteChanged();
         StartTracingCommand?.RaiseCanExecuteChanged();
         StopTracingCommand?.RaiseCanExecuteChanged();
         TakeMemorySnapshotCommand?.RaiseCanExecuteChanged();
@@ -2078,6 +4301,73 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             target.Add(item);
     }
 
+    private IReadOnlyList<VariableRow> ReconcileVariableRows(IReadOnlyList<VariableRow> incoming)
+    {
+        var existingByKey = Variables.ToDictionary(row => row.StableKey, StringComparer.Ordinal);
+        var desired = new List<VariableRow>(incoming.Count);
+        foreach (var next in incoming)
+        {
+            if (existingByKey.TryGetValue(next.StableKey, out var existing)
+                && CanUpdateVariableRowInPlace(existing, next))
+            {
+                existing.UpdateFrom(next);
+                desired.Add(existing);
+            }
+            else
+            {
+                desired.Add(next);
+            }
+        }
+
+        ReconcileVariableCollection(Variables, desired);
+        return desired;
+    }
+
+    private static bool CanUpdateVariableRowInPlace(VariableRow current, VariableRow next) =>
+        !current.IsRemoved
+        && !next.IsRemoved
+        && !string.IsNullOrEmpty(current.IdentityToken)
+        && string.Equals(current.IdentityToken, next.IdentityToken, StringComparison.Ordinal);
+
+    private static void ReconcileVariableCollection(
+        ObservableCollection<VariableRow> target,
+        IReadOnlyList<VariableRow> desired)
+    {
+        for (var index = 0; index < desired.Count; index++)
+        {
+            var next = desired[index];
+            if (index < target.Count && ReferenceEquals(target[index], next))
+                continue;
+            if (index < target.Count && string.Equals(target[index].StableKey, next.StableKey, StringComparison.Ordinal))
+            {
+                target[index] = next;
+                continue;
+            }
+
+            var existingIndex = -1;
+            for (var candidate = index + 1; candidate < target.Count; candidate++)
+            {
+                if (string.Equals(target[candidate].StableKey, next.StableKey, StringComparison.Ordinal))
+                {
+                    existingIndex = candidate;
+                    break;
+                }
+            }
+            if (existingIndex >= 0)
+            {
+                target.Move(existingIndex, index);
+                if (!ReferenceEquals(target[index], next))
+                    target[index] = next;
+            }
+            else
+            {
+                target.Insert(index, next);
+            }
+        }
+        while (target.Count > desired.Count)
+            target.RemoveAt(target.Count - 1);
+    }
+
     public async ValueTask DisposeAsync()
     {
         _session.Disconnected -= OnSessionDisconnected;
@@ -2087,6 +4377,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _refreshCts?.Cancel();
         _selectionCts?.Cancel();
         _detailCts?.Cancel();
+        CancelSearchDebounce();
+        await ReleaseKnownHandlesBeforeDetachAsync();
         await _session.DisposeAsync();
         await _launcher.DisposeAsync();
     }

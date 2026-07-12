@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json.Nodes;
 using PyRuntimeInspector.App.Services;
 using PyRuntimeInspector.App.ViewModels;
@@ -21,6 +22,7 @@ public sealed class MainViewModelTests
         session.CompleteAttach();
         await EventuallyAsync(() => viewModel.IsConnected);
         Assert.Equal("Connected", viewModel.Status);
+        Assert.Equal("Cooperative listener", viewModel.ConnectionMode);
     }
 
     [Fact]
@@ -42,6 +44,8 @@ public sealed class MainViewModelTests
         Assert.Single(viewModel.Variables);
         Assert.Equal("new_value", viewModel.Variables[0].Name);
         Assert.Contains("second", viewModel.Breadcrumb);
+        await EventuallyAsync(() => session.ReleasedHandles.Contains("stale_value-handle"));
+        Assert.DoesNotContain("new_value-handle", session.ReleasedHandles);
     }
 
     [Fact]
@@ -56,6 +60,7 @@ public sealed class MainViewModelTests
         await EventuallyAsync(() => !viewModel.IsConnected);
         Assert.False(viewModel.IsConnected);
         Assert.Equal("Target exited", viewModel.Status);
+        Assert.Equal("Not connected", viewModel.ConnectionMode);
         Assert.Empty(viewModel.RuntimeRoots);
     }
 
@@ -74,6 +79,7 @@ public sealed class MainViewModelTests
 
         Assert.True(viewModel.IsConnected);
         Assert.True(viewModel.IsManagedRunning);
+        Assert.Equal("Managed launch", viewModel.ConnectionMode);
         Assert.Equal(new[] { "one", "two words" }, launcher.Options!.Arguments);
         Assert.Equal("demo-value", launcher.Options.Environment["DEMO_ENV"]);
         launcher.EmitOutput(ProcessOutputKind.StandardError, "sample-error");
@@ -104,6 +110,7 @@ public sealed class MainViewModelTests
 
         Assert.True(viewModel.IsConnected);
         Assert.Equal("Connected (live attach)", viewModel.Status);
+        Assert.Equal("Live Attach", viewModel.ConnectionMode);
         Assert.Equal(1234, liveAttach.Options!.ProcessId);
         Assert.Equal(Environment.ProcessPath, liveAttach.Options.PythonExecutable);
         Assert.Equal(64, liveAttach.Options.InspectorToken.Length);
@@ -141,6 +148,7 @@ public sealed class MainViewModelTests
         await quickAttach;
 
         Assert.True(viewModel.IsConnected);
+        Assert.Equal("Quick Attach · REPL bootstrap", viewModel.ConnectionMode);
         Assert.Equal("Modules / __main__", viewModel.Breadcrumb);
         Assert.Equal(0, viewModel.SelectedWorkspaceTabIndex);
         Assert.Contains(viewModel.Variables, row => row.Name == "example_value" && row.SafePreview == "1235");
@@ -167,6 +175,7 @@ public sealed class MainViewModelTests
         await viewModel.QuickAttachCommand.ExecuteAsync();
 
         Assert.True(viewModel.IsConnected);
+        Assert.Equal("Live Attach", viewModel.ConnectionMode);
         Assert.NotNull(liveAttach.Options);
         Assert.Null(clipboard.Text);
         Assert.Equal("Modules / __main__", viewModel.Breadcrumb);
@@ -346,7 +355,7 @@ public sealed class MainViewModelTests
     private sealed class FakeSession : IInspectorSession
     {
         private readonly TaskCompletionSource<JsonObject> _attach = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private readonly Dictionary<string, TaskCompletionSource<ProtocolFrame>> _scopes = [];
+        private readonly ConcurrentDictionary<string, TaskCompletionSource<ProtocolFrame>> _scopes = [];
         private bool _tracing;
         private int _snapshotNumber;
         private bool _monitoring;
@@ -357,6 +366,7 @@ public sealed class MainViewModelTests
         public int GcRequestCount { get; private set; }
         public int GcDetailRequestCount { get; private set; }
         public string? GcQuery { get; private set; }
+        public ConcurrentQueue<string> ReleasedHandles { get; } = [];
 
         public Task<JsonObject> AttachAsync(int port, string token, int? expectedPid, CancellationToken cancellationToken)
         {
@@ -576,6 +586,11 @@ public sealed class MainViewModelTests
                 _scopes[handle] = source;
                 return await source.Task;
             }
+            if (method == "objects.release")
+            {
+                ReleasedHandles.Enqueue(parameters!["handleId"]!.GetValue<string>());
+                return Frame(new JsonObject { ["released"] = true });
+            }
             return Frame(new JsonObject());
         }
 
@@ -593,7 +608,7 @@ public sealed class MainViewModelTests
         {
             var summary = new JsonObject
             {
-                ["handleId"] = Guid.NewGuid().ToString(),
+                ["handleId"] = $"{variableName}-handle",
                 ["typeName"] = "int",
                 ["moduleName"] = "builtins",
                 ["qualifiedTypeName"] = "builtins.int",

@@ -52,7 +52,7 @@ public sealed class LiveAttachServiceTests
             var mainScope = await session.RequestAsync("modules.listNamespace", new JsonObject
             {
                 ["moduleName"] = "__main__",
-                ["pageSize"] = 1000,
+                ["pageSize"] = 200,
             }, timeout.Token);
             var items = mainScope.Header["result"]!["items"]!.AsArray();
             var example = items.Single(item => item!["name"]!.GetValue<string>() == "example_value")!;

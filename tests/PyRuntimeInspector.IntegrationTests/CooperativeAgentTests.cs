@@ -174,7 +174,7 @@ public sealed class CooperativeAgentTests
         {
             ["frameHandle"] = frameHandle,
             ["scopeType"] = scopeType,
-            ["pageSize"] = 1000,
+            ["pageSize"] = 200,
         });
         return Result(response)["items"]!.AsArray();
     }
