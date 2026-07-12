@@ -19,6 +19,8 @@
         <CommandBinding Command="{x:Static local:MainWindow.CopyDisplayedValueCommand}"
                         CanExecute="CopyDisplayedValue_CanExecute"
                         Executed="CopyDisplayedValue_Executed" />
+        <CommandBinding Command="{x:Static local:MainWindow.OpenHelpCommand}"
+                        Executed="OpenHelp_Executed" />
     </Window.CommandBindings>
     <Grid Background="{DynamicResource WindowBackground}">
         <Grid.RowDefinitions>
@@ -111,6 +113,10 @@
                             AutomationProperties.Name="Quick attach to selected Python process" />
                     <Button Content="Refresh" Command="{Binding RefreshCommand}" ToolTip="Refresh the current snapshot (F5)" />
                     <Button Content="Detach" Command="{Binding DetachCommand}" ToolTip="Detach the Agent or cancel a pending Quick Attach" />
+                    <Button Content="Help"
+                            Command="{x:Static local:MainWindow.OpenHelpCommand}"
+                            ToolTip="Open searchable help (F1)"
+                            AutomationProperties.Name="Open PyMonitor help" />
                     <Button Content="About" Click="About_Click" AutomationProperties.Name="About PyMonitor" />
                 </StackPanel>
 

@@ -1,0 +1,403 @@
+<Window x:Class="PyRuntimeInspector.App.HelpWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:PyRuntimeInspector.App"
+        Title="PyMonitor Help"
+        Width="1180"
+        Height="760"
+        MinWidth="860"
+        MinHeight="560"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        PreviewKeyDown="Window_PreviewKeyDown"
+        AutomationProperties.Name="PyMonitor searchable help">
+    <Window.CommandBindings>
+        <CommandBinding Command="{x:Static local:HelpWindow.FocusSearchCommand}"
+                        Executed="FocusSearch_Executed" />
+    </Window.CommandBindings>
+    <Window.Resources>
+        <Style x:Key="HelpTopicItem" TargetType="ListBoxItem">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="AutomationProperties.Name" Value="{Binding Title}" />
+            <Setter Property="AutomationProperties.HelpText" Value="{Binding Summary}" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="5,3" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Chrome"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6"
+                                Padding="11,9">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource HoverBrush}" />
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource SelectionBrush}" />
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Grid Background="{DynamicResource WindowBackground}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0">
+            <Border Background="{DynamicResource AccentBrush}" Padding="22,17">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Border Width="52"
+                            Height="52"
+                            Margin="0,0,14,0"
+                            CornerRadius="11"
+                            Background="#F8FAFC"
+                            BorderBrush="#66FFFFFF"
+                            BorderThickness="1">
+                        <Image Source="Assets/app-icon.png"
+                               Width="40"
+                               Height="40"
+                               Stretch="Uniform"
+                               RenderOptions.BitmapScalingMode="HighQuality" />
+                    </Border>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Text="PyMonitor Help"
+                                   Foreground="White"
+                                   FontSize="24"
+                                   FontWeight="SemiBold" />
+                        <TextBlock Text="작동 방법, 예제와 문제 해결을 오프라인에서 검색합니다."
+                                   Foreground="#E2ECFF"
+                                   FontSize="13"
+                                   Margin="0,3,0,0" />
+                    </StackPanel>
+                    <Border Grid.Column="2"
+                            VerticalAlignment="Center"
+                            Background="#26FFFFFF"
+                            BorderBrush="#55FFFFFF"
+                            BorderThickness="1"
+                            CornerRadius="13"
+                            Padding="11,5">
+                        <TextBlock Text="F1"
+                                   Foreground="White"
+                                   FontWeight="SemiBold" />
+                    </Border>
+                </Grid>
+            </Border>
+
+            <Border Background="{DynamicResource PanelBackground}"
+                    BorderBrush="{DynamicResource BorderBrush}"
+                    BorderThickness="0,0,0,1"
+                    Padding="17,12">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="찾기"
+                               FontWeight="SemiBold"
+                               VerticalAlignment="Center"
+                               Margin="0,0,8,0" />
+                    <TextBox x:Name="SearchTextBox"
+                             Grid.Column="1"
+                             Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                             MinWidth="260"
+                             ToolTip="예: Quick Attach, DataFrame, OpenCV, 변경 강조, 설치"
+                             AutomationProperties.Name="Search help" />
+                    <Button Grid.Column="2"
+                            Content="Search"
+                            Click="Search_Click"
+                            Style="{StaticResource PrimaryButton}"
+                            IsDefault="True"
+                            AutomationProperties.Name="Search help topics" />
+                    <Button Grid.Column="3"
+                            Content="Clear"
+                            Click="Clear_Click"
+                            AutomationProperties.Name="Clear help search" />
+                </Grid>
+            </Border>
+        </StackPanel>
+
+        <Grid Grid.Row="1" Margin="12,10,12,9">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="350" MinWidth="270" />
+                <ColumnDefinition Width="6" />
+                <ColumnDefinition Width="*" MinWidth="430" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Style="{StaticResource CardBorder}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Border Grid.Row="0"
+                            Background="{DynamicResource RaisedBackground}"
+                            CornerRadius="7,7,0,0"
+                            Padding="12,9">
+                        <StackPanel>
+                            <TextBlock Text="HELP TOPICS" Style="{StaticResource SectionLabel}" />
+                            <TextBlock x:Name="ResultSummaryText"
+                                       Text="{Binding ResultSummary}"
+                                       Style="{StaticResource MutedText}"
+                                       Margin="0,2,0,0"
+                                       AutomationProperties.Name="{Binding ResultSummary}"
+                                       AutomationProperties.LiveSetting="Polite" />
+                        </StackPanel>
+                    </Border>
+                    <Grid Grid.Row="1">
+                        <ListBox x:Name="HelpResultsList"
+                                 ItemsSource="{Binding FilteredTopics}"
+                                 SelectedItem="{Binding SelectedTopic, Mode=TwoWay}"
+                                 ItemContainerStyle="{StaticResource HelpTopicItem}"
+                                 BorderThickness="0"
+                                 Background="Transparent"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 AutomationProperties.Name="Help search results">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Category}"
+                                                   Style="{StaticResource SectionLabel}" />
+                                        <TextBlock Text="{Binding Title}"
+                                                   FontSize="14"
+                                                   FontWeight="SemiBold"
+                                                   Margin="0,2,0,0"
+                                                   TextWrapping="Wrap" />
+                                        <TextBlock Text="{Binding Summary}"
+                                                   Style="{StaticResource MutedText}"
+                                                   FontSize="11"
+                                                   LineHeight="16"
+                                                   Margin="0,4,0,0"
+                                                   TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <Border Padding="22"
+                                Background="{DynamicResource PanelBackground}"
+                                AutomationProperties.Name="No help search results"
+                                AutomationProperties.LiveSetting="Polite">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding HasResults}" Value="False">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <TextBlock Text="검색 결과가 없습니다"
+                                           FontSize="16"
+                                           FontWeight="SemiBold"
+                                           HorizontalAlignment="Center" />
+                                <TextBlock Text="Quick Attach, 변수, DataFrame, OpenCV, 설치 같은 키워드를 사용해 보세요."
+                                           Style="{StaticResource MutedText}"
+                                           TextAlignment="Center"
+                                           TextWrapping="Wrap"
+                                           Margin="0,7,0,0" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </Border>
+
+            <GridSplitter Grid.Column="1"
+                          Width="6"
+                          HorizontalAlignment="Stretch"
+                          Background="Transparent"
+                          ShowsPreview="True" />
+
+            <Border Grid.Column="2"
+                    AutomationProperties.Name="Selected help article">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardBorder}">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasResults}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Border Grid.Row="0"
+                            Background="{DynamicResource RaisedBackground}"
+                            CornerRadius="7,7,0,0"
+                            Padding="17,10">
+                        <TextBlock Text="{Binding SelectedTopic.Breadcrumb}"
+                                   Foreground="{DynamicResource SecondaryText}"
+                                   FontSize="11"
+                                   TextTrimming="CharacterEllipsis"
+                                   ToolTip="{Binding SelectedTopic.Breadcrumb}" />
+                    </Border>
+                    <ScrollViewer Grid.Row="1"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  Padding="22,18">
+                        <StackPanel>
+                            <TextBlock Text="{Binding SelectedTopic.Category}"
+                                       Foreground="{DynamicResource AccentBrush}"
+                                       FontSize="12"
+                                       FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding SelectedTopic.Title}"
+                                       FontSize="25"
+                                       FontWeight="SemiBold"
+                                       Margin="0,4,0,0"
+                                       TextWrapping="Wrap"
+                                       AutomationProperties.Name="Selected help title" />
+                            <TextBlock Text="{Binding SelectedTopic.Summary}"
+                                       Style="{StaticResource MutedText}"
+                                       FontSize="14"
+                                       LineHeight="21"
+                                       Margin="0,6,0,18"
+                                       TextWrapping="Wrap" />
+
+                            <TextBlock Text="무엇을 하는 기능인가요?"
+                                       FontSize="16"
+                                       FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding SelectedTopic.Overview}"
+                                       LineHeight="21"
+                                       Margin="0,7,0,18"
+                                       TextWrapping="Wrap"
+                                       AutomationProperties.Name="Selected help overview" />
+
+                            <StackPanel Margin="0,0,0,18"
+                                        Visibility="{Binding SelectedTopic.HasSteps, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <TextBlock Text="따라 하기"
+                                           FontSize="16"
+                                           FontWeight="SemiBold"
+                                           Margin="0,0,0,6" />
+                                <ItemsControl ItemsSource="{Binding SelectedTopic.Steps}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,3">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="22" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="•"
+                                                           Foreground="{DynamicResource AccentBrush}"
+                                                           FontSize="16"
+                                                           FontWeight="Bold" />
+                                                <TextBlock Grid.Column="1"
+                                                           Text="{Binding}"
+                                                           LineHeight="20"
+                                                           TextWrapping="Wrap" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+
+                            <StackPanel Margin="0,0,0,18"
+                                        Visibility="{Binding SelectedTopic.HasExample, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <TextBlock Text="예제"
+                                           FontSize="16"
+                                           FontWeight="SemiBold"
+                                           Margin="0,0,0,7" />
+                                <Border Background="{DynamicResource TerminalBackground}"
+                                        BorderBrush="{DynamicResource BorderBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="6"
+                                        Padding="14,11">
+                                    <TextBlock Text="{Binding SelectedTopic.Example}"
+                                               Foreground="{DynamicResource TerminalText}"
+                                               FontFamily="Cascadia Mono, Consolas"
+                                               FontSize="12"
+                                               LineHeight="18"
+                                               TextWrapping="Wrap"
+                                               AutomationProperties.Name="Selected help example" />
+                                </Border>
+                            </StackPanel>
+
+                            <StackPanel Visibility="{Binding SelectedTopic.HasNotes, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <TextBlock Text="알아두기"
+                                           FontSize="16"
+                                           FontWeight="SemiBold"
+                                           Margin="0,0,0,7" />
+                                <Border Background="{DynamicResource SubtleBackground}"
+                                        BorderBrush="{DynamicResource BorderBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="6"
+                                        Padding="13,9">
+                                    <ItemsControl ItemsSource="{Binding SelectedTopic.Notes}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Margin="0,3">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="22" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="•"
+                                                               Foreground="{DynamicResource SecondaryText}" />
+                                                    <TextBlock Grid.Column="1"
+                                                               Text="{Binding}"
+                                                               LineHeight="19"
+                                                               TextWrapping="Wrap" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </Border>
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Border Grid.Row="2"
+                Background="{DynamicResource PanelBackground}"
+                BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="0,1,0,0"
+                Padding="14,9">
+            <Grid>
+                <TextBlock Text="F1은 도움말 열기 · Ctrl+F는 현재 창의 검색 · 메인 창 F5는 snapshot 새로 고침"
+                           Style="{StaticResource MutedText}"
+                           VerticalAlignment="Center" />
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="About PyMonitor"
+                            Click="About_Click"
+                            AutomationProperties.Name="About PyMonitor from help" />
+                    <Button Content="Close"
+                            Click="Close_Click"
+                            IsCancel="True"
+                            Style="{StaticResource PrimaryButton}"
+                            AutomationProperties.Name="Close PyMonitor help" />
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

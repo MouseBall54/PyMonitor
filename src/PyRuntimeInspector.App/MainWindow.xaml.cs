@@ -17,8 +17,15 @@ public partial class MainWindow : Window
         nameof(CopyDisplayedValueCommand),
         typeof(MainWindow));
 
+    public static RoutedUICommand OpenHelpCommand { get; } = new(
+        "Open PyMonitor help",
+        nameof(OpenHelpCommand),
+        typeof(MainWindow),
+        new InputGestureCollection { new KeyGesture(Key.F1) });
+
     private readonly IAppSettingsService _settingsService;
     private readonly AppSettings _settings;
+    private HelpWindow? _helpWindow;
     private bool _panning;
     private bool _applyingTheme;
     private string _theme = AppSettings.DefaultTheme;
@@ -181,6 +188,32 @@ public partial class MainWindow : Window
     {
         if (command.CanExecute(null))
             command.Execute(null);
+    }
+
+    private void OpenHelp_Executed(object sender, ExecutedRoutedEventArgs e)
+    {
+        if (_helpWindow is null)
+        {
+            _helpWindow = new HelpWindow { Owner = this };
+            _helpWindow.Closed += HelpWindow_Closed;
+            _helpWindow.Show();
+        }
+        else
+        {
+            if (_helpWindow.WindowState == WindowState.Minimized)
+                _helpWindow.WindowState = WindowState.Normal;
+            _helpWindow.Activate();
+            _helpWindow.FocusSearch();
+        }
+
+        e.Handled = true;
+    }
+
+    private void HelpWindow_Closed(object? sender, EventArgs e)
+    {
+        if (_helpWindow is not null)
+            _helpWindow.Closed -= HelpWindow_Closed;
+        _helpWindow = null;
     }
 
     private void About_Click(object sender, RoutedEventArgs e)

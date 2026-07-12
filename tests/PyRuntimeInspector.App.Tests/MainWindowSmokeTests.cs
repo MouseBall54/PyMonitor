@@ -61,19 +61,81 @@ public sealed class MainWindowSmokeTests
                 Assert.InRange(window.ActualHeight, 530, 550);
                 var primaryActions = Descendants<Button>(window)
                     .Where(button => button.Content is string text
-                        && text is "Quick Attach" or "Refresh" or "Detach" or "About")
+                        && text is "Quick Attach" or "Refresh" or "Detach" or "Help" or "About")
                     .ToDictionary(button => (string)button.Content);
-                Assert.Equal(4, primaryActions.Count);
+                Assert.Equal(5, primaryActions.Count);
                 foreach (var (name, button) in primaryActions)
                 {
-                    Assert.True(button.IsVisible, $"{name} is not visible at the minimum supported viewport.");
-                    var bounds = button.TransformToAncestor(window).TransformBounds(
-                        new Rect(0, 0, button.ActualWidth, button.ActualHeight));
-                    Assert.True(bounds.Left >= 0 && bounds.Top >= 0
-                        && bounds.Right <= window.ActualWidth
-                        && bounds.Bottom <= window.ActualHeight,
-                        $"{name} is clipped at the minimum supported viewport: {bounds}.");
+                    AssertElementIsVisibleAndInside(button, window, name, "minimum supported viewport");
                 }
+
+                var helpButton = primaryActions["Help"];
+                Assert.Equal("Open PyMonitor help", AutomationProperties.GetName(helpButton));
+                Assert.Contains("F1", helpButton.ToolTip?.ToString(), StringComparison.OrdinalIgnoreCase);
+                Assert.Same(MainWindow.OpenHelpCommand, helpButton.Command);
+                Assert.Contains(MainWindow.OpenHelpCommand.InputGestures.OfType<KeyGesture>(), gesture =>
+                    gesture.Key == Key.F1 && gesture.Modifiers == ModifierKeys.None);
+                Assert.Contains(window.CommandBindings.Cast<CommandBinding>(), binding =>
+                    binding.Command == MainWindow.OpenHelpCommand);
+
+                MainWindow.OpenHelpCommand.Execute(null, window);
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                var helpWindow = Assert.Single(window.OwnedWindows.OfType<HelpWindow>());
+                helpWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                helpWindow.UpdateLayout();
+                Assert.True(helpWindow.IsVisible);
+                Assert.True(window.IsEnabled, "The Help window must be modeless so the main window remains usable.");
+                Assert.Same(window, helpWindow.Owner);
+
+                MainWindow.OpenHelpCommand.Execute(null, window);
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                Assert.Same(helpWindow, Assert.Single(window.OwnedWindows.OfType<HelpWindow>()));
+
+                helpWindow.Width = Math.Max(helpWindow.MinWidth, 720);
+                helpWindow.Height = Math.Max(helpWindow.MinHeight, 500);
+                helpWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                helpWindow.UpdateLayout();
+
+                var helpSearch = LogicalDescendants<TextBox>(helpWindow)
+                    .Single(textBox => AutomationProperties.GetName(textBox) == "Search help");
+                var helpResults = LogicalDescendants<ListBox>(helpWindow)
+                    .Single(listBox => AutomationProperties.GetName(listBox) == "Help search results");
+                var helpArticle = LogicalDescendants<FrameworkElement>(helpWindow)
+                    .Single(element => AutomationProperties.GetName(element) == "Selected help article");
+                var helpResultSummary = Assert.IsType<TextBlock>(helpWindow.FindName("ResultSummaryText"));
+                var noHelpResults = LogicalDescendants<Border>(helpWindow)
+                    .Single(border => AutomationProperties.GetName(border) == "No help search results");
+                Assert.Equal(AutomationLiveSetting.Polite, AutomationProperties.GetLiveSetting(helpResultSummary));
+                Assert.Equal(AutomationLiveSetting.Polite, AutomationProperties.GetLiveSetting(noHelpResults));
+                Assert.Equal(helpResultSummary.Text, AutomationProperties.GetName(helpResultSummary));
+                Assert.Contains(HelpWindow.FocusSearchCommand.InputGestures.OfType<KeyGesture>(), gesture =>
+                    gesture.Key == Key.F1 && gesture.Modifiers == ModifierKeys.None);
+                Assert.Contains(HelpWindow.FocusSearchCommand.InputGestures.OfType<KeyGesture>(), gesture =>
+                    gesture.Key == Key.F && gesture.Modifiers == ModifierKeys.Control);
+                Assert.Contains(helpWindow.CommandBindings.Cast<CommandBinding>(), binding =>
+                    binding.Command == HelpWindow.FocusSearchCommand);
+                AssertElementIsVisibleAndInside(helpSearch, helpWindow, "Help search", "minimum Help window");
+                AssertElementIsVisibleAndInside(helpResults, helpWindow, "Help results", "minimum Help window");
+                AssertElementIsVisibleAndInside(helpArticle, helpWindow, "Help article", "minimum Help window");
+
+                helpSearch.Text = "DataFrame";
+                helpSearch.GetBindingExpression(TextBox.TextProperty)?.UpdateSource();
+                helpWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                helpWindow.UpdateLayout();
+                var helpViewModel = Assert.IsType<HelpViewModel>(helpWindow.DataContext);
+                var dataFrameTopic = Assert.Single(helpViewModel.FilteredTopics,
+                    topic => topic.Id == "dataframes");
+                Assert.Equal(helpViewModel.ResultSummary, AutomationProperties.GetName(helpResultSummary));
+                helpResults.SelectedItem = dataFrameTopic;
+                helpWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                helpWindow.UpdateLayout();
+                Assert.Same(dataFrameTopic, helpViewModel.SelectedTopic);
+                var helpArticleText = string.Join(Environment.NewLine,
+                    LogicalDescendants<TextBlock>(helpArticle).Select(text => text.Text)
+                        .Concat(LogicalDescendants<TextBox>(helpArticle).Select(text => text.Text)));
+                Assert.Contains("DataFrame", helpArticleText, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains(dataFrameTopic.Example, helpArticleText, StringComparison.Ordinal);
+                helpWindow.Close();
 
                 var objectNavigationButtons = Descendants<Button>(window)
                     .Where(button => AutomationProperties.GetName(button) is
@@ -337,6 +399,24 @@ public sealed class MainWindowSmokeTests
         Assert.True(realizedRows > 0, $"The Variables grid did not realize any rows for the {phase}.");
         Assert.True(realizedRows * 20 < itemCount,
             $"Row virtualization was ineffective for the {phase}: {realizedRows} of {itemCount} rows were realized.");
+    }
+
+    private static void AssertElementIsVisibleAndInside(
+        FrameworkElement element,
+        Window window,
+        string elementName,
+        string viewportName)
+    {
+        Assert.True(element.IsVisible, $"{elementName} is not visible at the {viewportName}.");
+        Assert.True(element.ActualWidth > 0 && element.ActualHeight > 0,
+            $"{elementName} was not measured at the {viewportName}.");
+        var bounds = element.TransformToAncestor(window).TransformBounds(
+            new Rect(0, 0, element.ActualWidth, element.ActualHeight));
+        const double layoutTolerance = 1;
+        Assert.True(bounds.Left >= -layoutTolerance && bounds.Top >= -layoutTolerance
+            && bounds.Right <= window.ActualWidth + layoutTolerance
+            && bounds.Bottom <= window.ActualHeight + layoutTolerance,
+            $"{elementName} is clipped at the {viewportName}: {bounds}.");
     }
 
     private static IEnumerable<T> Descendants<T>(DependencyObject root) where T : DependencyObject
