@@ -728,6 +728,9 @@ scripts/
 
 ## 빌드와 테스트
 
+Windows Portable ZIP과 MSI 설치파일을 만드는 전체 절차는
+[설치파일 빌드 가이드](docs/build-guide.md)를 참고합니다.
+
 전체 .NET 테스트:
 
 ```powershell
