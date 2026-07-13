@@ -201,7 +201,7 @@ Light is the default theme; Dark remains optional. PyMonitor persists the
 theme, refresh interval, window dimensions and maximized state, and left/right
 pane widths in `%LOCALAPPDATA%\PyMonitor\settings.json`. Missing, malformed, or
 out-of-range settings fall back to bounded defaults. About identifies
-PyMonitor `26.7.12`, developer 박영문, the Windows x64 target, and the read-only
+PyMonitor `26.7.13`, developer 박영문, the Windows x64 target, and the read-only
 inspection model.
 
 - `Ctrl+F` switches to Inspect and focuses Variables search.

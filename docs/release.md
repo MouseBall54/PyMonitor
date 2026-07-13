@@ -1,7 +1,7 @@
 # PyMonitor release hardening
 
 Phase 7 turns the Phase 0-6 implementation into reproducible Windows release
-artifacts. PyMonitor is developed by 박영문. The product version is `26.7.12`
+artifacts. PyMonitor is developed by 박영문. The product version is `26.7.13`
 and is shared by the .NET assemblies, the Python package, and the runtime
 handshake. The independent integer bootstrap ABI is also shared by the Python
 Agent and WPF attach client.
@@ -29,8 +29,8 @@ loaded from its sibling `agent` directory and is not installed globally.
 Quick Attach, Live Attach, and Managed Launch do not write bytecode caches into
 that bundled directory; the target program's original bytecode setting is
 restored before normal execution continues.
-The public artifacts are named `PyMonitor-26.7.12-win-x64.zip` and
-`PyMonitor-26.7.12-win-x64.zip.sha256`; the application executable is
+The public artifacts are named `PyMonitor-26.7.13-win-x64.zip` and
+`PyMonitor-26.7.13-win-x64.zip.sha256`; the application executable is
 `PyMonitor.exe`.
 
 ## Icon pipeline
@@ -96,14 +96,14 @@ Build the portable directory first, then run:
 WiX Toolset SDK 5.0.2 creates a per-machine x64 MSI with an embedded cabinet,
 Add/Remove Programs icon, major-upgrade protection, and Start Menu shortcut.
 The MSI and its SHA-256 sidecar are written below `artifacts/installer/`.
-Their public names are `PyMonitor-26.7.12-win-x64.msi` and
-`PyMonitor-26.7.12-win-x64.msi.sha256`. `Build-Installer.ps1` also verifies the
+Their public names are `PyMonitor-26.7.13-win-x64.msi` and
+`PyMonitor-26.7.13-win-x64.msi.sha256`. `Build-Installer.ps1` also verifies the
 sidecar, MSI product metadata, and an administrative extraction. The verifier
 can be run directly when troubleshooting packaging:
 
 ```powershell
 .\scripts\Test-InstallerRelease.ps1 `
-  -InstallerPath .\artifacts\installer\PyMonitor-26.7.12-win-x64.msi
+  -InstallerPath .\artifacts\installer\PyMonitor-26.7.13-win-x64.msi
 ```
 
 Run the destructive lifecycle check only in an elevated PowerShell session on
@@ -116,7 +116,7 @@ installer-owned registry value are gone:
 ```powershell
 .\scripts\Test-InstallerLifecycle.ps1 `
   -PreviousInstallerPath .\artifacts\phase8\installer\PyRuntimeInspector-0.1.0-win-x64.msi `
-  -InstallerPath .\artifacts\installer\PyMonitor-26.7.12-win-x64.msi
+  -InstallerPath .\artifacts\installer\PyMonitor-26.7.13-win-x64.msi
 ```
 
 The approved elevated install → upgrade → uninstall lifecycle completed
@@ -248,7 +248,7 @@ Commit the complete version change, push it, create the exact annotated
 `v<version>` tag on that commit, and push the tag:
 
 ```powershell
-$version = '26.7.12'
+$version = '26.7.13'
 git add --all
 git commit -m "release: PyMonitor $version"
 git push origin HEAD

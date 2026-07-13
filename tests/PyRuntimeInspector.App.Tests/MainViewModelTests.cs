@@ -98,6 +98,114 @@ public sealed class MainViewModelTests
     }
 
     [Fact]
+    public async Task GlobalSearchTreatsHexInputAsExactAddressAndPreservesReferencePaths()
+    {
+        var session = new FakeSession();
+        await using var viewModel = new MainViewModel(session, new FakeProcessDiscovery());
+        await viewModel.AttachCommand.ExecuteAsync();
+        viewModel.GlobalSearchQuery = "0x1234";
+
+        await viewModel.SearchRuntimeCommand.ExecuteAsync();
+
+        Assert.Equal("runtime.findAddress", session.LastSearchMethod);
+        Assert.Equal("0x1234", session.LastAddressSearch);
+        Assert.Equal(4, viewModel.GlobalSearchResults.Count);
+        Assert.All(viewModel.GlobalSearchResults, row => Assert.Equal("0x1234", row.Address));
+        Assert.Contains(viewModel.GlobalSearchResults, row =>
+            row.Relation == "Module variable"
+            && row.Location == "Modules / __main__ / shared_target");
+        Assert.Contains(viewModel.GlobalSearchResults, row =>
+            row.Relation == "Instance field"
+            && row.Location == "Modules / __main__ / holder / target");
+        Assert.Contains(viewModel.GlobalSearchResults, row =>
+            row.Relation == "Class attribute"
+            && row.Location == "Modules / __main__ / Holder / shared_target");
+        Assert.Contains(viewModel.GlobalSearchResults, row =>
+            row.Relation == "Mapping value"
+            && row.Location == "Modules / __main__ / values / ['target']");
+        Assert.Contains("4 reference locations for 0x1234", viewModel.GlobalSearchStatus);
+
+        viewModel.SelectedGlobalSearchResult = viewModel.GlobalSearchResults.Single(row =>
+            row.Relation == "Instance field");
+        await viewModel.OpenGlobalSearchResultCommand.ExecuteAsync();
+
+        Assert.Equal(0, viewModel.SelectedWorkspaceTabIndex);
+        Assert.Equal("Modules / __main__ / holder / target", viewModel.SelectedObjectPath);
+        Assert.Equal("0x1234", viewModel.SelectedAddress);
+    }
+
+    [Fact]
+    public async Task ClearingAddressSearchKeepsTheClearedPromptAfterCancellation()
+    {
+        var session = new FakeSession { DelayAddressSearch = true };
+        await using var viewModel = new MainViewModel(session, new FakeProcessDiscovery());
+        await viewModel.AttachCommand.ExecuteAsync();
+        viewModel.GlobalSearchQuery = "0x1234";
+
+        var search = viewModel.SearchRuntimeCommand.ExecuteAsync();
+        await session.AddressSearchStarted.WaitAsync(TimeSpan.FromSeconds(5));
+        viewModel.ClearGlobalSearchCommand.Execute(null);
+        await search;
+
+        Assert.False(viewModel.IsGlobalSearchRunning);
+        Assert.Empty(viewModel.GlobalSearchResults);
+        Assert.StartsWith("Enter a name", viewModel.GlobalSearchStatus, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AddressSearchDoesNotReportGcTargetDiscoveryAsAReference()
+    {
+        var session = new FakeSession { ReturnGcOnlyAddressSearch = true };
+        await using var viewModel = new MainViewModel(session, new FakeProcessDiscovery());
+        await viewModel.AttachCommand.ExecuteAsync();
+        viewModel.GlobalSearchQuery = "0x1234";
+
+        await viewModel.SearchRuntimeCommand.ExecuteAsync();
+
+        var result = Assert.Single(viewModel.GlobalSearchResults);
+        Assert.Equal("GC-tracked object", result.Relation);
+        Assert.Contains("Object 0x1234 found; no structural references located", viewModel.GlobalSearchStatus);
+    }
+
+    [Fact]
+    public async Task AddressSearchExplainsRootAndNamespaceBounds()
+    {
+        var session = new FakeSession { ReturnBoundedAddressSearch = true };
+        await using var viewModel = new MainViewModel(session, new FakeProcessDiscovery());
+        await viewModel.AttachCommand.ExecuteAsync();
+        viewModel.GlobalSearchQuery = "0x1234";
+
+        await viewModel.SearchRuntimeCommand.ExecuteAsync();
+
+        Assert.Contains("bounded scan", viewModel.GlobalSearchStatus);
+        Assert.Contains("root scan budget", viewModel.GlobalSearchStatus);
+        Assert.Contains("module root limit (2 included)", viewModel.GlobalSearchStatus);
+        Assert.Contains("module registry mutation", viewModel.GlobalSearchStatus);
+        Assert.Contains("namespace raw-entry limit", viewModel.GlobalSearchStatus);
+        Assert.DoesNotContain("class scan safety", viewModel.GlobalSearchStatus);
+    }
+
+    [Fact]
+    public async Task SuccessfulAddressSearchClearsAnEarlierInvalidAddressError()
+    {
+        var session = new FakeSession();
+        await using var viewModel = new MainViewModel(session, new FakeProcessDiscovery());
+        await viewModel.AttachCommand.ExecuteAsync();
+        viewModel.GlobalSearchQuery = "0xZZ";
+
+        await viewModel.SearchRuntimeCommand.ExecuteAsync();
+
+        Assert.NotEmpty(viewModel.ErrorMessage);
+        Assert.Contains("failed", viewModel.GlobalSearchStatus, StringComparison.OrdinalIgnoreCase);
+
+        viewModel.GlobalSearchQuery = "0x1234";
+        await viewModel.SearchRuntimeCommand.ExecuteAsync();
+
+        Assert.Empty(viewModel.ErrorMessage);
+        Assert.Contains("reference locations for 0x1234", viewModel.GlobalSearchStatus);
+    }
+
+    [Fact]
     public async Task TargetExitTransitionsToDisconnectedWithoutThrowing()
     {
         var session = new FakeSession();
@@ -626,6 +734,13 @@ public sealed class MainViewModelTests
         public ConcurrentQueue<string> ReleasedHandles { get; } = [];
         public bool DelayFirstArrayPreview { get; init; }
         public bool ReturnConsoleSearchRoot { get; init; }
+        public bool DelayAddressSearch { get; init; }
+        public bool ReturnGcOnlyAddressSearch { get; init; }
+        public bool ReturnBoundedAddressSearch { get; init; }
+        public string? LastSearchMethod { get; private set; }
+        public string? LastAddressSearch { get; private set; }
+        private readonly TaskCompletionSource _addressSearchStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task AddressSearchStarted => _addressSearchStarted.Task;
         public Task FirstArrayPreviewStarted => _firstArrayPreviewStarted.Task;
 
         public void ReleaseFirstArrayPreview() => _releaseFirstArrayPreview.TrySetResult();
@@ -736,6 +851,7 @@ public sealed class MainViewModelTests
             }
             if (method == "runtime.search")
             {
+                LastSearchMethod = method;
                 if (ReturnConsoleSearchRoot)
                     return Frame(new JsonObject
                     {
@@ -785,6 +901,70 @@ public sealed class MainViewModelTests
                     ["scanComplete"] = true,
                     ["durationMilliseconds"] = 3.5,
                 });
+            }
+            if (method == "runtime.findAddress")
+            {
+                LastSearchMethod = method;
+                LastAddressSearch = parameters?["address"]?.GetValue<string>();
+                if (LastAddressSearch == "0xZZ")
+                    throw new InvalidOperationException("address must use hexadecimal digits");
+                if (DelayAddressSearch)
+                {
+                    _addressSearchStarted.TrySetResult();
+                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                }
+                var target = ModuleVariable("shared_target", "<demo.Target object>")["value"]!.DeepClone().AsObject();
+                target["handleId"] = "address-target";
+                target["typeName"] = "Target";
+                target["moduleName"] = "demo";
+                target["qualifiedTypeName"] = "demo.Target";
+                target["addressHex"] = "0x1234";
+                target["expandable"] = true;
+
+                JsonObject Item(string kind, string name, string relation, string location) => new()
+                {
+                    ["kind"] = kind,
+                    ["name"] = name,
+                    ["relation"] = relation,
+                    ["location"] = location,
+                    ["objectPath"] = location,
+                    ["matchFields"] = new JsonArray("address"),
+                    ["depth"] = 0,
+                    ["sourceKind"] = "module",
+                    ["moduleName"] = "__main__",
+                    ["scopeType"] = "module",
+                    ["rootName"] = name,
+                    ["value"] = target.DeepClone(),
+                };
+
+                var items = ReturnGcOnlyAddressSearch
+                    ? new JsonArray(Item("object", "demo.Target @0x1234", "gcObject", "GC objects / demo.Target @0x1234"))
+                    : new JsonArray(
+                        Item("variable", "shared_target", "moduleVariable", "Modules / __main__ / shared_target"),
+                        Item("object", "target", "instanceField", "Modules / __main__ / holder / target"),
+                        Item("object", "shared_target", "classAttribute", "Modules / __main__ / Holder / shared_target"),
+                        Item("object", "['target']", "dictValue", "Modules / __main__ / values / ['target']"));
+                var result = new JsonObject
+                {
+                    ["mode"] = "address",
+                    ["addressHex"] = "0x1234",
+                    ["targetFound"] = true,
+                    ["items"] = items,
+                    ["objectsScanned"] = 24,
+                    ["rootsScanned"] = 2,
+                    ["scanComplete"] = true,
+                    ["durationMilliseconds"] = 2.5,
+                };
+                if (ReturnBoundedAddressSearch)
+                {
+                    result["scanComplete"] = false;
+                    result["rootBudgetReached"] = true;
+                    result["moduleRootsIncluded"] = 2;
+                    result["moduleRootLimitReached"] = true;
+                    result["moduleRegistryMutationDetected"] = true;
+                    result["namespaceRawLimitReached"] = true;
+                }
+                return Frame(result);
             }
             if (method == "runtime.getInfo")
                 return Frame(Runtime());

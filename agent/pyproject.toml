@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pymonitor-agent"
-version = "26.7.12"
+version = "26.7.13"
 authors = [{ name = "박영문" }]
 description = "Bundled read-only CPython inspection agent for PyMonitor."
 requires-python = ">=3.10"

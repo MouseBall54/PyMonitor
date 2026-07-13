@@ -31,12 +31,32 @@ class Detector:
 
 
 detector = Detector()
+
+
+class AddressTarget:
+    pass
+
+
+ADDRESS_TARGET = AddressTarget()
+
+
+class AddressHolder:
+    class_target = ADDRESS_TARGET
+
+    def __init__(self):
+        self.instance_target = ADDRESS_TARGET
+
+
+ADDRESS_HOLDER = AddressHolder()
+ADDRESS_LIST = [ADDRESS_TARGET]
+ADDRESS_DICT = {"target": ADDRESS_TARGET}
 start_inspector()
 
 
 def worker():
     local_value = "frame-local"
     local_array = np.arange(100, dtype=np.uint8).reshape(10, 10)
+    local_address_target = ADDRESS_TARGET
     while True:
         time.sleep(0.1)
 

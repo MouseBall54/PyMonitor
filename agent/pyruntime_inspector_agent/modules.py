@@ -53,8 +53,8 @@ def _module_entries(registry):
         yield "__main__", main
     for name, module in dict.items(registry):
         if (
-            name == "__main__"
-            or type(name) is not str
+            type(name) is not str
+            or name == "__main__"
             or len(name) > 500
             or type(module) is not types.ModuleType
         ):

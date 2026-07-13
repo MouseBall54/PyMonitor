@@ -3,7 +3,7 @@ import os
 import socket
 import threading
 
-from . import arrays, classes, console_namespaces, dataframes, gc_objects, matplotlib_figures, memory, modules, monitoring, runtime_search
+from . import address_search, arrays, classes, console_namespaces, dataframes, gc_objects, matplotlib_figures, memory, modules, monitoring, runtime_search
 from .frames import list_frames, list_scope, list_threads
 from .handles import HandleStore, ObjectExpiredError
 from .monitoring import MonitoringError
@@ -11,7 +11,7 @@ from .protocol import PROTOCOL_VERSION, ProtocolError, read_frame, write_frame
 from .runtime_info import get_runtime_info
 from .safe_objects import SafeObjectInspector
 
-AGENT_VERSION = "26.7.12"
+AGENT_VERSION = "26.7.13"
 BOOTSTRAP_ABI = 2
 _MAX_REQUEST_ID_LENGTH = 128
 _MAX_METHOD_LENGTH = 128
@@ -181,6 +181,18 @@ class InspectorAgent:
                 params.get("maxResults", runtime_search.DEFAULT_MAX_RESULTS),
                 params.get("maxObjects", runtime_search.DEFAULT_MAX_OBJECTS),
                 params.get("maxDepth", runtime_search.DEFAULT_MAX_DEPTH),
+            ), b"", False
+        if method == "runtime.findAddress":
+            return address_search.find_address(
+                self._objects,
+                self._handles,
+                self._thread.ident,
+                params["address"],
+                params.get("maxResults", runtime_search.DEFAULT_MAX_RESULTS),
+                params.get("maxObjects", runtime_search.DEFAULT_MAX_OBJECTS),
+                params.get("maxDepth", runtime_search.DEFAULT_MAX_DEPTH),
+                params.get("maxEdges", address_search.DEFAULT_MAX_EDGES),
+                params.get("maxDurationMilliseconds", address_search.DEFAULT_MAX_DURATION_MS),
             ), b"", False
         if method == "objects.describe":
             return self._objects.describe(params["handleId"]), b"", False

@@ -4,7 +4,7 @@
         xmlns:controls="clr-namespace:PyRuntimeInspector.App.Controls"
         xmlns:local="clr-namespace:PyRuntimeInspector.App"
         xmlns:vm="clr-namespace:PyRuntimeInspector.App.ViewModels"
-        Title="PyMonitor 26.7.12"
+        Title="PyMonitor 26.7.13"
         Width="1500"
         Height="920"
         MinWidth="960"
@@ -1785,7 +1785,7 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.ColumnSpan="4" Margin="0,0,0,9">
                                 <TextBlock Text="GLOBAL RUNTIME SEARCH" Style="{StaticResource SectionLabel}" />
-                                <TextBlock Text="Recursively searches runtime modules, frame scopes, variables, instance fields, containers, classes, methods, properties, types, safe values, and paths."
+                                <TextBlock Text="Search names and safe values, or enter an exact CPython object address such as 0x7ff1234 to find variables, containers, instances, and classes that reference it."
                                            Style="{StaticResource MutedText}"
                                            TextWrapping="Wrap"
                                            Margin="0,3,0,0" />
@@ -1795,8 +1795,8 @@
                                      Grid.Column="0"
                                      Text="{Binding GlobalSearchQuery, UpdateSourceTrigger=PropertyChanged}"
                                      KeyDown="GlobalSearchBox_KeyDown"
-                                     ToolTip="All whitespace-separated words must match somewhere in a result"
-                                     AutomationProperties.Name="Global runtime search query" />
+                                     ToolTip="Enter search words, or an exact object address beginning with 0x"
+                                     AutomationProperties.Name="Global runtime search query or exact object address" />
                             <Button Grid.Row="1" Grid.Column="1" Content="Search runtime" Command="{Binding SearchRuntimeCommand}" Style="{StaticResource PrimaryButton}" />
                             <Button Grid.Row="1" Grid.Column="2" Content="Cancel" Command="{Binding CancelGlobalSearchCommand}" />
                             <Button Grid.Row="1" Grid.Column="3" Content="Clear" Command="{Binding ClearGlobalSearchCommand}" Style="{StaticResource QuietButton}" />
@@ -1857,6 +1857,16 @@
                                         <Setter Property="Margin" Value="5,0,2,0" />
                                         <Setter Property="TextTrimming" Value="CharacterEllipsis" />
                                         <Setter Property="ToolTip" Value="{Binding Name}" />
+                                    </Style>
+                                </DataGridTextColumn.ElementStyle>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn Header="Relation" Binding="{Binding Relation}" Width="135" />
+                            <DataGridTextColumn Header="Address" Binding="{Binding Address}" Width="125">
+                                <DataGridTextColumn.ElementStyle>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                        <Setter Property="FontFamily" Value="Cascadia Mono" />
+                                        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                                        <Setter Property="ToolTip" Value="{Binding Address}" />
                                     </Style>
                                 </DataGridTextColumn.ElementStyle>
                             </DataGridTextColumn>

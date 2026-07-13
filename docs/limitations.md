@@ -32,6 +32,22 @@
   module/frame traversal receives a protected share of that budget and unused
   capacity flows to GC-tracked objects. The UI labels any limit-hit response as
   a bounded scan.
+- Exact address search accepts only the current connected CPython object's
+  hexadecimal `id()` value. It does not dereference arbitrary pointers and
+  does not search native or NumPy buffer address ranges. It compares identity
+  across runtime roots and a bounded scan of safe static owner
+  edges; unsupported descriptors, slots and arbitrary container subclasses can
+  therefore hide a reference. A repeated search of the same numeric address is
+  a new snapshot and is not automatically rebound to an expired handle.
+- Address search never calls `gc.get_referrers()` or forces collection. Its
+  fallback uses genuine `gc.get_objects()`, whose initial tracked-object list
+  allocation is heap-sized even though subsequent owner, edge, depth, result
+  and time limits are reported as a bounded scan.
+- CPython emits interpreter-wide audit events for `gc.get_objects()` and
+  `sys._current_frames()`. A target-installed audit hook can therefore observe,
+  delay, or reject address and global-search snapshot operations even though
+  PyMonitor does not invoke target-owned properties, descriptors, formatting
+  hooks, or callables while traversing objects.
 - Embedded-console discovery is same-process and scans at most 100,000
   GC-tracked owners on connection or explicit Runtime refresh. A console beyond
   that bound can be absent while the tree reports an incomplete scan. Periodic

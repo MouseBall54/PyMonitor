@@ -2,7 +2,7 @@
 
 PyMonitor는 Windows에서 실행되는 사용자의 CPython 프로그램을 **읽기 전용으로 관찰**하는 데스크톱 도구입니다. 실행 중인 Python 런타임, 스레드와 프레임, locals/globals, 내부 콘솔 namespace, 객체, 클래스와 메서드, NumPy 배열의 메타데이터·이미지 preview, pandas DataFrame 표와 Matplotlib Figure/Axes render를 안전하고 제한적으로 탐색하는 것이 목적입니다.
 
-- 버전: `26.7.12`
+- 버전: `26.7.13`
 - 개발자: 박영문
 
 이 프로젝트는 외부 프로세스가 CPython 메모리 레이아웃을 직접 해석하지 않습니다. 대신 대상 Python 프로세스 안에서 경량 agent가 Python API로 객체를 해석하고, WPF controller와 인증된 loopback TCP로 통신합니다. 따라서 Python 버전별 비공개 객체 레이아웃에 덜 의존하며 property나 임의 사용자 코드를 실행하지 않는 안전한 Inspector를 만들 수 있습니다.
@@ -29,8 +29,8 @@ property 또는 임의 사용자 코드를 실행하는 debugger가 아닙니다
 
 | 배포 파일 | 권장 용도 | 설치 결과 |
 | --- | --- | --- |
-| `PyMonitor-26.7.12-win-x64.msi` | 일반 사용자에게 권장 | 관리자 승인을 받아 64비트 Program Files에 설치하고 시작 메뉴에 PyMonitor 바로가기를 등록 |
-| `PyMonitor-26.7.12-win-x64.zip` | 설치 권한이 없거나 여러 버전을 나란히 시험할 때 | 원하는 폴더에 압축을 풀고 `PyMonitor.exe`를 직접 실행하며 Windows 설치 목록에는 등록하지 않음 |
+| `PyMonitor-26.7.13-win-x64.msi` | 일반 사용자에게 권장 | 관리자 승인을 받아 64비트 Program Files에 설치하고 시작 메뉴에 PyMonitor 바로가기를 등록 |
+| `PyMonitor-26.7.13-win-x64.zip` | 설치 권한이 없거나 여러 버전을 나란히 시험할 때 | 원하는 폴더에 압축을 풀고 `PyMonitor.exe`를 직접 실행하며 Windows 설치 목록에는 등록하지 않음 |
 
 두 방식 모두 Windows 10/11 x64용이며 .NET runtime을 포함한 self-contained
 배포입니다. 따라서 실행 PC에 별도 .NET 10 runtime을 설치할 필요가 없고 Python
@@ -49,7 +49,7 @@ MSI 또는 ZIP과 같은 이름의 `.sha256` 파일을 함께 받은 뒤 PowerSh
 배포처에서 받은 파일인지 별도로 확인해야 합니다.
 
 ```powershell
-$file = '.\PyMonitor-26.7.12-win-x64.msi' # ZIP이면 .zip으로 변경
+$file = '.\PyMonitor-26.7.13-win-x64.msi' # ZIP이면 .zip으로 변경
 $actual = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
 $expected = (Get-Content -LiteralPath "$file.sha256" -Raw).Split()[0]
 $actual -eq $expected
@@ -164,6 +164,14 @@ locals, globals, built-ins 및 GC-tracked objects를 시작점으로 변수·객
 - list, tuple, set, dict와 정적으로 읽을 수 있는 instance field의 재귀 하위 값
 - 발견한 instance와 class의 class 이름, method, static/class method, property,
   descriptor와 class attribute
+- `0x...` 형식의 정확한 CPython 객체 주소로 그 객체를 참조하는 module/frame/console
+  변수, list·tuple·set item, dict key/value, instance field와 class attribute의 구조 경로
+
+주소 검색은 Variables나 Object Tree에 표시된 **Address** 값을 그대로 입력합니다. 일반
+검색과 달리 주소는 부분 문자열로 비교하지 않으며, 결과의 **Relation**, **Address**와
+**Exact runtime location**에서 참조 종류와 구조 위치를 함께 확인할 수 있습니다.
+주소는 현재 연결된 CPython 객체의 `id()`이며 NumPy data buffer 주소나 임의 native
+pointer 주소가 아닙니다.
 
 검색 결과의 **Exact runtime location**에는 `Modules / __main__ / application /
 state...`, `Console namespaces / ... / value` 또는 `Threads / <id> / <frame> /
@@ -171,11 +179,14 @@ Locals / value...` 형식의 전체 위치가 표시됩니다. 결과를 두 번
 location**을 누르면 해당 객체를 Inspect에 열며 class/member 결과는 **Class and
 Methods**의 해당 이름까지 이동합니다.
 
-탐색은 property getter, 사용자 `repr`, `getattr`, `dir` 또는 callable을 실행하지
-않습니다. 순환·공유 객체 그래프 때문에 target을 과도하게 점유하지 않도록 너비 우선
+탐색은 property getter, 사용자 `repr`, `getattr`, `dir` 또는 target 객체의 callable을 실행하지
+않습니다. 주소를 pointer로 역참조하거나 `gc.get_referrers()`를 호출하지 않고, 안전하게
+읽을 수 있는 정적 참조의 객체 identity만 비교합니다. 순환·공유 객체 그래프 때문에 target을 과도하게 점유하지 않도록 너비 우선
 탐색, 동일 객체 하위 그래프의 중복 확장 방지, 결과·객체·자식·깊이 한도를 적용합니다.
 한도에 도달하면 상태 줄에 **bounded scan**과 도달한 한도를 명시하므로, 이 경우
 결과가 전체 runtime의 완전한 목록이라고 해석하지 않아야 합니다.
+단, CPython의 interpreter-wide audit hook은 `gc.get_objects`와
+`sys._current_frames` snapshot 이벤트를 관찰하거나 거부할 수 있습니다.
 
 ## 프로그램 내부 콘솔 변수
 
@@ -611,7 +622,7 @@ Figure가 아직 render되지 않았거나 stale이면 대상 코드에서
 수 있습니다. 테마, 자동 새로 고침 간격, 창 크기·최대화 상태와 주요 pane
 너비는 `%LOCALAPPDATA%\PyMonitor\settings.json`에 저장되고 다음 실행에
 복원됩니다. 손상되거나 읽을 수 없는 설정은 안전한 기본값으로 대체됩니다.
-**About**에는 제품명 `PyMonitor`, 버전 `26.7.12`, 개발자 박영문, 대상 플랫폼과
+**About**에는 제품명 `PyMonitor`, 버전 `26.7.13`, 개발자 박영문, 대상 플랫폼과
 read-only 원칙을 표시합니다.
 
 - `Ctrl+F`: 메인 창은 Variables 검색, PyMonitor Help 창은 도움말 검색에 focus
@@ -759,7 +770,7 @@ uv run --with pillow -- python .\scripts\build_app_icon.py
 ```
 
 생성되는 최종 배포 파일은 `PyMonitor.exe`,
-`PyMonitor-26.7.12-win-x64.zip`, `PyMonitor-26.7.12-win-x64.msi`이며 ZIP과
+`PyMonitor-26.7.13-win-x64.zip`, `PyMonitor-26.7.13-win-x64.msi`이며 ZIP과
 MSI에는 각각 SHA-256 sidecar가 함께 생성됩니다.
 
 CPython 3.10~3.14 matrix와 60초 안정성 gate:

@@ -65,16 +65,16 @@ public static class HelpCatalog
             "설치 install MSI portable ZIP 압축 update upgrade uninstall 제거 UAC 관리자 .NET runtime Python package SHA-256",
             "PyMonitor MSI는 Windows 10/11 x64에 시스템 범위로 설치되므로 UAC 승인이 필요합니다. 포터블 ZIP은 원하는 폴더에 모두 압축 해제해 사용할 수 있습니다. 앱은 .NET Runtime과 Python Agent를 포함하지만, 검사할 CPython과 사용자 코드가 import하는 NumPy, pandas, Matplotlib, OpenCV 등의 패키지는 대상 PC의 Python 환경에 있어야 합니다.",
             [
-                "MSI: PyMonitor-26.7.12-win-x64.msi를 실행하고 Windows 관리자 승인을 완료합니다.",
+                "MSI: PyMonitor-26.7.13-win-x64.msi를 실행하고 Windows 관리자 승인을 완료합니다.",
                 "설치 후 시작 메뉴에서 PyMonitor를 실행합니다. 기본 설치 위치는 C:\\Program Files\\PyMonitor입니다.",
-                "포터블: PyMonitor-26.7.12-win-x64.zip 전체를 새 폴더에 압축 해제하고 PyMonitor.exe를 실행합니다.",
+                "포터블: PyMonitor-26.7.13-win-x64.zip 전체를 새 폴더에 압축 해제하고 PyMonitor.exe를 실행합니다.",
                 "업데이트: 새 MSI를 실행하면 설치된 이전 PyMonitor를 업그레이드합니다.",
                 "제거: 설정 > 앱 > 설치된 앱 > PyMonitor > 제거를 사용합니다. 포터블은 앱 종료 후 압축 해제 폴더를 삭제합니다.",
             ],
             """
             # PowerShell에서 배포 파일 해시 확인
-            Get-FileHash .\PyMonitor-26.7.12-win-x64.msi -Algorithm SHA256
-            Get-Content .\PyMonitor-26.7.12-win-x64.msi.sha256
+            Get-FileHash .\PyMonitor-26.7.13-win-x64.msi -Algorithm SHA256
+            Get-Content .\PyMonitor-26.7.13-win-x64.msi.sha256
             """,
             [
                 "설치 과정에서 별도 파일을 인터넷에서 내려받지 않습니다.",
@@ -281,15 +281,16 @@ public static class HelpCatalog
             "검사",
             "전체 런타임 통합검색",
             "콘솔, 모듈과 frame에서 시작해 변수, 재귀 객체 경로, instance, class, method와 property를 한 번에 찾습니다.",
-            "global runtime search 통합검색 전체 검색 console namespace recursive 재귀 variable 변수 instance class method property path location 위치",
-            "Global Search는 현재 Variables 표만 거르는 검색이 아닙니다. 연결된 Python의 console namespace, module namespace, frame scope와 GC-tracked objects를 시작점으로 exact built-in container와 정적으로 읽을 수 있는 instance field를 재귀 탐색합니다. 각 객체의 이름, type, module, qualified type, 안전한 preview, 주소와 전체 경로뿐 아니라 class와 정적 method/property/member 정보도 함께 검색합니다.",
+            "global runtime search 통합검색 전체 검색 memory address 메모리 주소 object id 참조 relation console namespace recursive 재귀 variable 변수 instance class method property path location 위치",
+            "Global Search는 현재 Variables 표만 거르는 검색이 아닙니다. 연결된 Python의 console namespace, module namespace, frame scope와 GC-tracked objects를 시작점으로 exact built-in container와 정적으로 읽을 수 있는 instance field를 재귀 탐색합니다. 각 객체의 이름, type, module, qualified type, 안전한 preview, 주소와 전체 경로뿐 아니라 class와 정적 method/property/member 정보도 함께 검색합니다. 0x로 시작하는 정확한 CPython 객체 주소를 입력하면 그 객체를 참조하는 변수, container item, instance field와 class attribute의 구조 경로를 찾습니다.",
             [
                 "Python 대상에 연결한 뒤 Global Search 탭을 엽니다.",
                 "찾을 이름, type, class, method, property, 값 일부 또는 경로를 입력합니다. 공백으로 나눈 모든 단어가 결과 정보 어딘가에 포함되어야 합니다.",
-                "Search runtime을 누르고 Kind, Name, Exact runtime location, Matched in과 Safe value를 확인합니다.",
+                "주소로 찾으려면 Variables 또는 Object Tree의 Address 값을 0x... 형식 그대로 입력합니다. 주소는 부분 일치하지 않으며 NumPy data buffer나 임의 native pointer 주소는 지원하지 않습니다.",
+                "Search runtime을 누르고 Kind, Name, Relation, Address, Exact runtime location, Matched in과 Safe value를 확인합니다.",
                 "결과를 두 번 클릭하거나 Open location을 눌러 해당 객체를 Inspect에서 엽니다.",
                 "class/method/property 결과는 소유 객체를 연 뒤 Class and Methods의 해당 이름까지 자동으로 검색합니다.",
-                "상태가 bounded scan이면 표시된 object, depth, result 또는 child 한도 때문에 전체 그래프를 끝까지 검사하지 못한 것이므로 더 구체적인 검색어로 다시 검색합니다.",
+                "상태가 bounded scan이면 표시된 object, result, depth, child, edge, root/module/namespace 또는 time 한도 때문에 전체 그래프를 끝까지 검사하지 못한 것이므로 결과를 완전한 참조 목록으로 해석하지 않습니다.",
             ],
             """
             예: detector predict
@@ -297,6 +298,10 @@ public static class HelpCatalog
 
             예: ultimate_needle
             - Modules / __main__ / application / state[0] 'branch'[0] 'ultimate_needle'
+
+            예: 0x7ff1234
+            - Relation: Instance field
+            - Modules / __main__ / holder / target
             """,
             [
                 "property getter, arbitrary repr/getattr/dir 또는 사용자 callable은 실행하지 않습니다.",

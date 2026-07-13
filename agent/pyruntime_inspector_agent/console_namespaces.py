@@ -23,6 +23,7 @@ DEFAULT_MAX_OBJECTS = 100_000
 MAX_OBJECTS = 1_000_000
 MAX_NAMESPACES = 100
 MAX_REGISTERED_NAMESPACES = 100
+_RAW_ENTRY_CHECK_INTERVAL = 64
 _OWNER_MARKERS = ("console", "interactive", "repl", "shell", "terminal")
 _NAMESPACE_FIELDS = (
     "locals",
@@ -78,15 +79,38 @@ def unregister_namespace(registration_id):
         return True
 
 
-def list_namespaces(handles, max_objects=DEFAULT_MAX_OBJECTS):
+def list_namespaces(
+    handles,
+    max_objects=DEFAULT_MAX_OBJECTS,
+    _objects_snapshot=None,
+    _raw_entry_limit=None,
+    _deadline=None,
+):
     if type(max_objects) is not int or not 1 <= max_objects <= MAX_OBJECTS:
         raise ValueError(f"maxObjects must be between 1 and {MAX_OBJECTS}.")
 
     started = time.perf_counter()
-    objects = _gc_objects_snapshot()
+    if _objects_snapshot is None:
+        objects = _gc_objects_snapshot()
+    elif type(_objects_snapshot) is list:
+        objects = _objects_snapshot
+    else:
+        raise ValueError("The CPython GC snapshot is invalid.")
     tracked_total = len(objects)
-    scanned_count = min(tracked_total, max_objects)
-    known_types = _known_console_types()
+    bounded = _raw_entry_limit is not None
+    if bounded and (type(_raw_entry_limit) is not int or _raw_entry_limit < 1):
+        raise ValueError("The raw console entry limit must be a positive integer.")
+    scan_target = min(tracked_total, max_objects)
+    status = {
+        "rawEntryLimitReached": False,
+        "deadlineReached": False,
+        "mutationDetected": False,
+    }
+    known_types = _known_console_types(
+        _raw_entry_limit,
+        _deadline,
+        status if bounded else None,
+    )
     class_cache = {}
     candidates = {}
     namespace_limit_reached = False
@@ -104,9 +128,18 @@ def list_namespaces(handles, max_objects=DEFAULT_MAX_OBJECTS):
             namespace,
         )
 
+    scanned_count = 0
     for index, owner in enumerate(objects):
-        if index >= scanned_count:
+        if index >= scan_target:
             break
+        if (
+            bounded
+            and index % _RAW_ENTRY_CHECK_INTERVAL == 0
+            and time.perf_counter() >= _deadline
+        ):
+            status["deadlineReached"] = True
+            break
+        scanned_count += 1
         if type(owner) is _RegisteredConsoleNamespace:
             continue
         cls = type(owner)
@@ -126,7 +159,16 @@ def list_namespaces(handles, max_objects=DEFAULT_MAX_OBJECTS):
         if type(state) is not dict:
             continue
         owner_type = f"{type_module(cls)}.{type_qualified_name(cls)}"
-        field_values = exact_dict_string_values(state, fields)
+        if bounded:
+            field_values = _bounded_exact_dict_string_values(
+                state,
+                fields,
+                _raw_entry_limit,
+                _deadline,
+                status,
+            )
+        else:
+            field_values = exact_dict_string_values(state, fields)
         for attribute_name in fields:
             namespace = field_values.get(attribute_name)
             if type(namespace) is not dict:
@@ -184,15 +226,24 @@ def list_namespaces(handles, max_objects=DEFAULT_MAX_OBJECTS):
         row["attributeName"],
         row["ownerAddressHex"],
     ))
-    scan_complete = scanned_count == tracked_total and not namespace_limit_reached
+    scan_complete = (
+        scanned_count == tracked_total
+        and not namespace_limit_reached
+        and not status["rawEntryLimitReached"]
+        and not status["deadlineReached"]
+        and not status["mutationDetected"]
+    )
     return {
         "items": rows,
         "total": len(rows),
         "trackedTotal": tracked_total,
         "scannedCount": scanned_count,
         "maxObjects": max_objects,
-        "truncated": scanned_count < tracked_total,
+        "truncated": not scan_complete if bounded else scanned_count < tracked_total,
         "namespaceLimitReached": namespace_limit_reached,
+        "rawEntryLimitReached": status["rawEntryLimitReached"],
+        "deadlineReached": status["deadlineReached"],
+        "mutationDetected": status["mutationDetected"],
         "scanComplete": scan_complete,
         "durationMilliseconds": round((time.perf_counter() - started) * 1000.0, 3),
         "snapshotTimestamp": timestamp(),
@@ -239,13 +290,27 @@ def list_namespace(
     }
 
 
-def _known_console_types():
+def _known_console_types(raw_entry_limit=None, deadline=None, status=None):
     registry = modules._module_registry()
     if registry is None:
         return {"python": (), "ipython": ()}
     return {
-        "python": _module_types(registry, "code", ("InteractiveInterpreter", "InteractiveConsole")),
-        "ipython": _module_types(registry, "IPython.core.interactiveshell", ("InteractiveShell",)),
+        "python": _module_types(
+            registry,
+            "code",
+            ("InteractiveInterpreter", "InteractiveConsole"),
+            raw_entry_limit,
+            deadline,
+            status,
+        ),
+        "ipython": _module_types(
+            registry,
+            "IPython.core.interactiveshell",
+            ("InteractiveShell",),
+            raw_entry_limit,
+            deadline,
+            status,
+        ),
     }
 
 
@@ -266,13 +331,62 @@ def _registered_snapshot():
         return [owner for owner in _registered.values() if owner.active]
 
 
-def _module_types(registry, module_name, names):
-    module = exact_dict_value(registry, module_name)
+def _module_types(
+    registry,
+    module_name,
+    names,
+    raw_entry_limit=None,
+    deadline=None,
+    status=None,
+):
+    if raw_entry_limit is None:
+        module = exact_dict_value(registry, module_name)
+    else:
+        values = _bounded_exact_dict_string_values(
+            registry,
+            (module_name,),
+            raw_entry_limit,
+            deadline,
+            status,
+        )
+        module = values.get(module_name)
     if type(module) is not types.ModuleType:
         return ()
     namespace = types.ModuleType.__getattribute__(module, "__dict__")
-    values = exact_dict_string_values(namespace, names)
+    if raw_entry_limit is None:
+        values = exact_dict_string_values(namespace, names)
+    else:
+        values = _bounded_exact_dict_string_values(
+            namespace,
+            names,
+            raw_entry_limit,
+            deadline,
+            status,
+        )
     return tuple(candidate for name in names if is_class_object(candidate := values.get(name)))
+
+
+def _bounded_exact_dict_string_values(mapping, names, raw_limit, deadline, status):
+    wanted = frozenset(names)
+    values = {}
+    raw_scanned = 0
+    try:
+        for key, value in dict.items(mapping):
+            if raw_scanned >= raw_limit:
+                status["rawEntryLimitReached"] = True
+                return values
+            if (
+                raw_scanned % _RAW_ENTRY_CHECK_INTERVAL == 0
+                and time.perf_counter() >= deadline
+            ):
+                status["deadlineReached"] = True
+                return values
+            raw_scanned += 1
+            if type(key) is str and key in wanted:
+                values[key] = value
+    except RuntimeError:
+        status["mutationDetected"] = True
+    return values
 
 
 def _classify_owner(cls, known_types):

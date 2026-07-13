@@ -84,6 +84,39 @@ public sealed class CooperativeAgentTests
         Assert.Equal("Detector", propertyResult["value"]!["typeName"]!.GetValue<string>());
         Assert.InRange(runtimeSearch["objectsScanned"]!.GetValue<int>(), 1, 10000);
 
+        var addressTarget = FindValue(globals, "ADDRESS_TARGET");
+        var targetAddress = addressTarget["addressHex"]!.GetValue<string>();
+        var addressSearch = Result(await client.RequestAsync("runtime.findAddress", new JsonObject
+        {
+            ["address"] = targetAddress,
+            ["maxResults"] = 100,
+            ["maxObjects"] = 100000,
+            ["maxDepth"] = 8,
+        }));
+        Assert.True(addressSearch["targetFound"]!.GetValue<bool>(), addressSearch.ToJsonString());
+        Assert.Equal(targetAddress, addressSearch["addressHex"]!.GetValue<string>());
+        var addressItems = addressSearch["items"]!.AsArray();
+        Assert.True(addressItems.Any(item =>
+            item!["relation"]!.GetValue<string>() == "moduleVariable"
+            && item["location"]!.GetValue<string>() == "Modules / __main__ / ADDRESS_TARGET"), addressSearch.ToJsonString());
+        Assert.True(addressItems.Any(item =>
+            item!["relation"]!.GetValue<string>() == "frameVariable"
+            && item["name"]!.GetValue<string>() == "local_address_target"), addressSearch.ToJsonString());
+        Assert.True(addressItems.Any(item =>
+            item!["relation"]!.GetValue<string>() == "instanceField"
+            && item["location"]!.GetValue<string>().EndsWith("/ ADDRESS_HOLDER / instance_target", StringComparison.Ordinal)), addressSearch.ToJsonString());
+        Assert.True(addressItems.Any(item =>
+            item!["relation"]!.GetValue<string>() == "classAttribute"
+            && item["location"]!.GetValue<string>().EndsWith("/ AddressHolder / class_target", StringComparison.Ordinal)), addressSearch.ToJsonString());
+        Assert.True(addressItems.Any(item =>
+            item!["relation"]!.GetValue<string>() == "listItem"
+            && item["location"]!.GetValue<string>().EndsWith("/ ADDRESS_LIST / [0]", StringComparison.Ordinal)), addressSearch.ToJsonString());
+        Assert.True(addressItems.Any(item =>
+            item!["relation"]!.GetValue<string>() == "dictValue"
+            && item["location"]!.GetValue<string>().Contains("/ ADDRESS_DICT /", StringComparison.Ordinal)), addressSearch.ToJsonString());
+        Assert.All(addressItems, item =>
+            Assert.Equal(targetAddress, item!["value"]!["addressHex"]!.GetValue<string>()));
+
         var gcObjects = Result(await client.RequestAsync("gc.listObjects", new JsonObject
         {
             ["query"] = "__main__.Detector",

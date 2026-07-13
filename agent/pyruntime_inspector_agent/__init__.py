@@ -9,5 +9,5 @@ __all__ = [
     "start_inspector",
     "unregister_namespace",
 ]
-__version__ = "26.7.12"
+__version__ = "26.7.13"
 __bootstrap_abi__ = BOOTSTRAP_ABI

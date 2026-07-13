@@ -3,8 +3,8 @@
 - The agent connects only to numeric loopback host `127.0.0.1`.
 - A cryptographically random 256-bit token is compared in constant time before
   any inspection method runs. Tokens are never logged.
-- Pickle, eval, exec, callable execution, arbitrary repr/str/getattr/dir,
-  descriptor invocation, and property reads are not used.
+- Pickle, eval, exec, target-owned callable execution, arbitrary
+  repr/str/getattr/dir, descriptor invocation, and property reads are not used.
 - User-defined objects expose type identity, address, base object size, their
   direct CPython instance dictionary when available, and static class members.
 - NumPy is never imported by the agent. Its adapter activates only for an exact
@@ -102,6 +102,37 @@
 - The production Agent's 2,048-entry TTL/LRU handle store leaves room for a
   maximum 500-result search while the bounded frame, console and current UI
   source handles remain navigable.
+
+## Exact CPython address lookup
+
+- Address lookup accepts only a non-zero, pointer-width hexadecimal CPython
+  object identity in `0x...` form, such as the Address shown by Variables or
+  Object Tree for a live object. Matching is exact. A stale identity may no
+  longer exist or may have been reused after the original object was destroyed.
+- The supplied number is never dereferenced or converted into a Python object.
+  The Agent does not use `ctypes.cast`, read arbitrary process memory, or treat
+  a NumPy data-buffer address or another native pointer as an object identity.
+- Structural locations are discovered by identity comparisons while following
+  bounded forward edges from console, module, and frame roots and from a
+  genuine `gc.get_objects()` snapshot. The Agent never calls `gc.collect()` or
+  `gc.get_referrers()` for address lookup.
+- Forward edges are limited to exact built-in containers, direct CPython
+  instance dictionaries, exact module dictionaries, and static class
+  dictionaries. Properties, descriptors, arbitrary `repr`/`str`, `getattr`,
+  `dir`, and target-owned user callables are not executed.
+- CPython itself raises `gc.get_objects` and `sys._current_frames` audit events
+  while the required snapshots are captured. Interpreter-wide audit hooks
+  installed by the target can observe, delay, or reject those operations; this
+  is distinct from traversing or invoking a target object's callbacks.
+- Object, result, depth, child, edge, console, frame, and cooperative duration
+  bounds are reported in every response. Capturing the initial full
+  `gc.get_objects()` list is an unavoidable allocation outside those scan
+  bounds, which is disclosed as `snapshotAllocationBounded: false`; it does not
+  force a collection and the subsequent traversal remains bounded.
+- Address lookup also caps raw module roots and raw keys scanned per console,
+  module, and frame namespace. Root and GC phases receive separate time and
+  edge shares; limit, deadline, and concurrent-mutation flags identify each
+  incomplete source instead of presenting it as a complete reference list.
 
 ## Quick Attach bootstrap
 

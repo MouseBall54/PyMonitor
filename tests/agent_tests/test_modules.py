@@ -49,6 +49,19 @@ class ModuleTests(unittest.TestCase):
         self.assertIn(self.module_name, {item["name"] for item in listed["items"]})
         self.assertIn("example_value", {item["name"] for item in namespace["items"]})
 
+    def test_module_entries_ignore_non_string_keys_without_equality(self):
+        hostile_name = HostileModuleName()
+        registry = {
+            "__main__": sys.modules["__main__"],
+            hostile_name: self.module,
+            self.module_name: self.module,
+        }
+
+        entries = list(modules._module_entries(registry))
+
+        self.assertEqual(["__main__", self.module_name], [name for name, _ in entries])
+        self.assertEqual(0, hostile_name.equality_calls)
+
     def test_non_dict_module_registry_returns_structured_argument_error(self):
         original_registry = sys.modules
         sys.modules = object()
@@ -221,6 +234,17 @@ class HostileModuleRegistry(dict):
     def items(self):
         self.override_calls.append("items")
         raise AssertionError("sys.modules.items must not be called")
+
+
+class HostileModuleName:
+    def __init__(self):
+        self.equality_calls = 0
+
+    __hash__ = object.__hash__
+
+    def __eq__(self, other):
+        self.equality_calls += 1
+        raise AssertionError("non-string module keys must not be compared")
 
 
 def _trace_local(mapping, name):

@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory)]
     [string]$InstallerPath,
-    [string]$ExpectedVersion = "26.7.12",
+    [string]$ExpectedVersion = "26.7.13",
     [string]$ExpectedProductName = "PyMonitor",
     [string]$ExpectedManufacturer = "박영문",
     [string]$ExpectedUpgradeCode = "{2D73C23D-A566-4D8A-889C-F89FCE4A1377}",

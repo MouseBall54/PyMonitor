@@ -1784,23 +1784,31 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         var query = GlobalSearchQuery.Trim();
         if (!IsConnected || string.IsNullOrEmpty(query))
             return;
+        var isAddressSearch = query.StartsWith("0x", StringComparison.OrdinalIgnoreCase);
+        ErrorMessage = "";
 
         _runtimeSearchCts?.Cancel();
-        _runtimeSearchCts?.Dispose();
-        _runtimeSearchCts = CancellationTokenSource.CreateLinkedTokenSource(
+        var searchCts = CancellationTokenSource.CreateLinkedTokenSource(
             _connectionCts?.Token ?? CancellationToken.None);
-        var token = _runtimeSearchCts.Token;
+        _runtimeSearchCts = searchCts;
+        var token = searchCts.Token;
         IsGlobalSearchRunning = true;
-        GlobalSearchStatus = $"Searching the connected runtime recursively for “{query}”…";
+        GlobalSearchStatus = isAddressSearch
+            ? $"Finding variables, containers, instances, and classes that reference {query}…"
+            : $"Searching the connected runtime recursively for “{query}”…";
         SelectedGlobalSearchResult = null;
         GlobalSearchResults.Clear();
         RefreshObjectHandleReferences();
         try
         {
-            using var response = await RequestHandleResponseAsync("runtime.search", new JsonObject
+            var method = isAddressSearch ? "runtime.findAddress" : "runtime.search";
+            var parameters = new JsonObject
             {
-                ["query"] = query,
-            }, token);
+                [isAddressSearch ? "address" : "query"] = query,
+            };
+            using var response = await RequestHandleResponseAsync(method, parameters, token);
+            if (!ReferenceEquals(_runtimeSearchCts, searchCts) || token.IsCancellationRequested)
+                return;
             var result = response.Frame.Header["result"]!.AsObject();
             var rows = result["items"]!.AsArray()
                 .Select(item => CreateGlobalSearchResult(item!.AsObject()))
@@ -1812,24 +1820,51 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             var scanned = result["objectsScanned"]?.GetValue<int>() ?? 0;
             var roots = result["rootsScanned"]?.GetValue<int>() ?? 0;
             var duration = result["durationMilliseconds"]?.GetValue<double>() ?? 0;
-            GlobalSearchStatus = complete
-                ? $"{rows.Length:N0} results · {scanned:N0} objects in {roots:N0} runtime roots · {duration:N0} ms"
-                : $"{rows.Length:N0} results (bounded scan) · {scanned:N0} objects in {roots:N0} runtime roots · "
-                    + BuildGlobalSearchLimitSummary(result);
+            if (isAddressSearch)
+            {
+                var address = result["addressHex"]?.GetValue<string>() ?? query;
+                var targetFound = result["targetFound"]?.GetValue<bool>() == true;
+                var referenceCount = rows.Count(row => row.Relation != "GC-tracked object");
+                var noun = referenceCount == 1 ? "reference location" : "reference locations";
+                GlobalSearchStatus = complete
+                    ? targetFound
+                        ? referenceCount > 0
+                            ? $"{referenceCount:N0} {noun} for {address} · {scanned:N0} objects in {roots:N0} runtime roots · {duration:N0} ms"
+                            : $"Object {address} found; no structural references located · {scanned:N0} objects scanned · {duration:N0} ms"
+                        : $"No live object or references found for {address} · {scanned:N0} objects scanned · {duration:N0} ms"
+                    : $"{referenceCount:N0} {noun} for {address} (bounded scan) · {scanned:N0} objects in {roots:N0} runtime roots · "
+                        + BuildGlobalSearchLimitSummary(result);
+            }
+            else
+            {
+                GlobalSearchStatus = complete
+                    ? $"{rows.Length:N0} results · {scanned:N0} objects in {roots:N0} runtime roots · {duration:N0} ms"
+                    : $"{rows.Length:N0} results (bounded scan) · {scanned:N0} objects in {roots:N0} runtime roots · "
+                        + BuildGlobalSearchLimitSummary(result);
+            }
         }
         catch (OperationCanceledException)
         {
-            GlobalSearchStatus = "Runtime search canceled. No partial results were applied.";
+            if (ReferenceEquals(_runtimeSearchCts, searchCts))
+                GlobalSearchStatus = "Runtime search canceled. No partial results were applied.";
         }
         catch (Exception exception)
         {
-            GlobalSearchStatus = $"Runtime search failed: {exception.Message}";
-            SetError(exception);
+            if (ReferenceEquals(_runtimeSearchCts, searchCts))
+            {
+                GlobalSearchStatus = $"Runtime search failed: {exception.Message}";
+                SetError(exception);
+            }
         }
         finally
         {
-            IsGlobalSearchRunning = false;
-            RefreshObjectHandleReferences();
+            if (ReferenceEquals(_runtimeSearchCts, searchCts))
+            {
+                _runtimeSearchCts = null;
+                IsGlobalSearchRunning = false;
+                RefreshObjectHandleReferences();
+            }
+            searchCts.Dispose();
         }
     }
 
@@ -1896,12 +1931,15 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
     private void ClearGlobalSearch()
     {
-        CancelGlobalSearch();
+        var searchCts = _runtimeSearchCts;
+        _runtimeSearchCts = null;
+        searchCts?.Cancel();
+        IsGlobalSearchRunning = false;
         GlobalSearchQuery = "";
         GlobalSearchResults.Clear();
         SelectedGlobalSearchResult = null;
         GlobalSearchStatus = IsConnected
-            ? "Enter a name, value, type, class, method, property, or path to search the complete runtime."
+            ? "Enter a name, value, type, class, method, property, path, or exact object address such as 0x7ff1234."
             : "Connect to a Python runtime to search it.";
         RefreshObjectHandleReferences();
     }
@@ -2024,7 +2062,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         PythonVersion = runtime["version"]!.GetValue<string>().Split('\n')[0];
         Architecture = runtime["processArchitecture"]?.GetValue<string>() ?? "—";
         Executable = runtime["executable"]?.GetValue<string>() ?? "—";
-        GlobalSearchStatus = "Enter a name, value, type, class, method, property, or path to search the complete runtime.";
+        GlobalSearchStatus = "Enter a name, value, type, class, method, property, path, or exact object address such as 0x7ff1234.";
         RefreshProcessMemory();
     }
 
@@ -4743,7 +4781,9 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _selectionCts?.Cancel();
         _detailCts?.Cancel();
         _refreshCts?.Cancel();
-        _runtimeSearchCts?.Cancel();
+        var searchCts = _runtimeSearchCts;
+        _runtimeSearchCts = null;
+        searchCts?.Cancel();
         CancelSearchDebounce();
         IsConnected = false;
         IsBusy = false;
@@ -5270,6 +5310,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         {
             Kind = item["kind"]?.GetValue<string>() ?? "object",
             Name = name,
+            Relation = FormatGlobalSearchRelation(item["relation"]?.GetValue<string>()),
             Location = location,
             ObjectPath = item["objectPath"]?.GetValue<string>() ?? location,
             MatchFields = item["matchFields"] is JsonArray fields
@@ -5296,6 +5337,29 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         };
     }
 
+    private static string FormatGlobalSearchRelation(string? relation) => relation switch
+    {
+        "moduleVariable" or "moduleGlobal" => "Module variable",
+        "frameVariable" => "Frame variable",
+        "frameLocal" => "Frame local",
+        "frameGlobal" => "Frame global",
+        "frameBuiltin" => "Frame builtin",
+        "consoleVariable" => "Console variable",
+        "listItem" => "List item",
+        "tupleItem" => "Tuple item",
+        "setItem" => "Set item",
+        "frozensetItem" => "Frozen set item",
+        "collectionItem" => "Collection item",
+        "dictKey" or "mappingKey" => "Mapping key",
+        "dictValue" or "mappingValue" => "Mapping value",
+        "instanceField" => "Instance field",
+        "instanceDictionaryEntry" => "Instance dictionary entry",
+        "classAttribute" => "Class attribute",
+        "gcObject" => "GC-tracked object",
+        null or "" => "—",
+        _ => relation,
+    };
+
     private static string BuildGlobalSearchLimitSummary(JsonObject result)
     {
         var limits = new List<string>();
@@ -5307,6 +5371,12 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             limits.Add($"depth limit {result["maxDepth"]?.GetValue<int>() ?? 0:N0}");
         if (result["childrenTruncated"]?.GetValue<bool>() == true)
             limits.Add("large child collection limit");
+        if (result["edgeLimitReached"]?.GetValue<bool>() == true)
+            limits.Add($"edge limit {result["maxEdges"]?.GetValue<int>() ?? 0:N0}");
+        if (result["rootBudgetReached"]?.GetValue<bool>() == true)
+            limits.Add("root scan budget");
+        if (result["deadlineReached"]?.GetValue<bool>() == true)
+            limits.Add("time limit");
         if (result["consoleDiscoveryTruncated"]?.GetValue<bool>() == true)
         {
             var scanned = result["consoleDiscoveryScannedCount"]?.GetValue<int>() ?? 0;
@@ -5318,14 +5388,35 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             var returned = result["consoleNamespacesReturned"]?.GetValue<int>() ?? 0;
             limits.Add($"console namespace limit ({returned:N0} returned)");
         }
+        if (result["consoleRawEntryLimitReached"]?.GetValue<bool>() == true)
+            limits.Add("console raw-entry limit");
+        if (result["consoleMutationDetected"]?.GetValue<bool>() == true)
+            limits.Add("console namespace mutation");
+        if (result["consoleDeadlineReached"]?.GetValue<bool>() == true)
+            limits.Add("console discovery time limit");
         if (result["frameRootLimitReached"]?.GetValue<bool>() == true)
         {
             var included = result["frameRootsIncluded"]?.GetValue<int>() ?? 0;
             limits.Add($"frame root limit ({included:N0} frames)");
         }
+        if (result["moduleRootLimitReached"]?.GetValue<bool>() == true)
+        {
+            var included = result["moduleRootsIncluded"]?.GetValue<int>() ?? 0;
+            limits.Add($"module root limit ({included:N0} included)");
+        }
+        if (result["moduleRootDeadlineReached"]?.GetValue<bool>() == true)
+            limits.Add("module root time limit");
+        if (result["moduleRegistryMutationDetected"]?.GetValue<bool>() == true)
+            limits.Add("module registry mutation");
+        if (result["namespaceRawLimitReached"]?.GetValue<bool>() == true)
+            limits.Add("namespace raw-entry limit");
+        if (result["namespaceMutationDetected"]?.GetValue<bool>() == true)
+            limits.Add("namespace mutation");
+        if (result["namespaceDeadlineReached"]?.GetValue<bool>() == true)
+            limits.Add("namespace time limit");
         if (result["responseTruncated"]?.GetValue<bool>() == true)
             limits.Add("response size limit");
-        return limits.Count == 0 ? "class scan safety limit reached" : string.Join(", ", limits) + " reached";
+        return limits.Count == 0 ? "bounded scan safety limit reached" : string.Join(", ", limits) + " reached";
     }
 
     private static JsonArray ToJsonArray(IEnumerable<string> values)
@@ -5576,7 +5667,9 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _refreshCts?.Cancel();
         _selectionCts?.Cancel();
         _detailCts?.Cancel();
-        _runtimeSearchCts?.Cancel();
+        var searchCts = _runtimeSearchCts;
+        _runtimeSearchCts = null;
+        searchCts?.Cancel();
         CancelSearchDebounce();
         CancelClassTreeSearchDebounce();
         await ReleaseKnownHandlesBeforeDetachAsync();

@@ -25,6 +25,7 @@ MAX_DEPTH = 32
 MAX_QUERY_LENGTH = 200
 MAX_CHILDREN_PER_OBJECT = 5_000
 MAX_CLASSES = 5_000
+_ADDRESS_RAW_ENTRY_CHECK_INTERVAL = 64
 
 
 def search_runtime(
@@ -293,23 +294,42 @@ def _validate(query, max_results, max_objects, max_depth):
     return tuple(part.casefold() for part in query.split() if part)
 
 
-def _runtime_roots(handles, agent_thread_id, console_discovery=None):
+def _runtime_roots(
+    handles,
+    agent_thread_id,
+    console_discovery=None,
+    *,
+    module_root_limit=None,
+    deadline=None,
+    namespace_raw_limit=None,
+):
     if console_discovery is None:
         console_discovery = console_namespaces.list_namespaces(handles)
-    roots = _console_roots(handles, console_discovery)
+    address_bounded = module_root_limit is not None
+    metadata = {
+        "consoleDiscovery": console_discovery,
+        "frameRootsIncluded": 0,
+        "frameRootLimitReached": False,
+        "moduleRootLimitReached": False,
+        "moduleRootDeadlineReached": False,
+        "moduleRegistryMutationDetected": False,
+        "moduleRootsIncluded": 0,
+        "namespaceRawLimitReached": False,
+        "namespaceMutationDetected": False,
+        "namespaceDeadlineReached": False,
+    }
+    bounded_metadata = metadata if address_bounded else None
+    roots = _console_roots(
+        handles,
+        console_discovery,
+        namespace_raw_limit=namespace_raw_limit,
+        deadline=deadline,
+        metadata=bounded_metadata,
+    )
     registry = modules._module_registry()
-    if registry is not None:
+    if registry is not None and not address_bounded:
         for module_name, module in modules._module_entries(registry):
-            namespace = types.ModuleType.__getattribute__(module, "__dict__")
-            roots.append({
-                "sourceKind": "module",
-                "name": module_name,
-                "location": f"Modules / {module_name}",
-                "moduleName": module_name,
-                "scopeType": "module",
-                "value": module,
-                "entries": lambda namespace=namespace: _namespace_entries(namespace),
-            })
+            roots.append(_module_root(module_name, module))
 
     snapshot = frames._current_frames_snapshot()
     thread_entries = list(dict.items(snapshot))
@@ -344,7 +364,12 @@ def _runtime_roots(handles, agent_thread_id, console_discovery=None):
                     "frameHandle": frame_handle,
                     "scopeType": scope_type,
                     "value": None,
-                    "entries": lambda mapping=mapping: _namespace_entries(mapping),
+                    "entries": lambda mapping=mapping: _namespace_entries(
+                        mapping,
+                        raw_limit=namespace_raw_limit,
+                        deadline=deadline,
+                        metadata=bounded_metadata,
+                    ),
                 })
             frame = frame.f_back
         if frame is not None:
@@ -353,14 +378,46 @@ def _runtime_roots(handles, agent_thread_id, console_discovery=None):
             if thread_index + 1 < len(thread_entries):
                 frame_limit_reached = True
             break
-    return roots, {
-        "consoleDiscovery": console_discovery,
-        "frameRootsIncluded": frame_rows,
-        "frameRootLimitReached": frame_limit_reached,
-    }
+    metadata["frameRootsIncluded"] = frame_rows
+    metadata["frameRootLimitReached"] = frame_limit_reached
+    if not address_bounded or registry is None:
+        return roots, metadata
+
+    main = _bounded_module_value(
+        registry,
+        "__main__",
+        module_root_limit,
+        deadline,
+        metadata,
+    )
+    main_root = None
+    if type(main) is types.ModuleType:
+        main_root = _module_root(
+            "__main__",
+            main,
+            namespace_raw_limit,
+            deadline,
+            metadata,
+        )
+        metadata["moduleRootsIncluded"] = 1
+    normal_roots = _bounded_module_roots(
+        registry,
+        module_root_limit,
+        deadline,
+        namespace_raw_limit,
+        metadata,
+    )
+    return _address_root_sequence(main_root, normal_roots, roots), metadata
 
 
-def _console_roots(handles, discovered=None):
+def _console_roots(
+    handles,
+    discovered=None,
+    *,
+    namespace_raw_limit=None,
+    deadline=None,
+    metadata=None,
+):
     if discovered is None:
         discovered = console_namespaces.list_namespaces(handles)
     roots = []
@@ -381,9 +438,125 @@ def _console_roots(handles, discovered=None):
             "consoleHandle": row["consoleHandle"],
             "consoleAttributeName": row["attributeName"],
             "value": None,
-            "entries": lambda namespace=namespace: _namespace_entries(namespace),
+            "entries": lambda namespace=namespace: _namespace_entries(
+                namespace,
+                raw_limit=namespace_raw_limit,
+                deadline=deadline,
+                metadata=metadata,
+            ),
         })
     return roots
+
+
+def _module_root(
+    module_name,
+    module,
+    namespace_raw_limit=None,
+    deadline=None,
+    metadata=None,
+):
+    namespace = types.ModuleType.__getattribute__(module, "__dict__")
+    return {
+        "sourceKind": "module",
+        "name": module_name,
+        "location": f"Modules / {module_name}",
+        "moduleName": module_name,
+        "scopeType": "module",
+        "value": module,
+        "entries": lambda namespace=namespace: _namespace_entries(
+            namespace,
+            raw_limit=namespace_raw_limit,
+            deadline=deadline,
+            metadata=metadata,
+        ),
+    }
+
+
+def _bounded_module_roots(
+    registry,
+    raw_limit,
+    deadline,
+    namespace_raw_limit,
+    metadata,
+):
+    seen_names = {"__main__"}
+    raw_scanned = 0
+    attempts = 0
+    while attempts < modules._MAX_SCAN_ATTEMPTS:
+        try:
+            for name, module in dict.items(registry):
+                if raw_scanned >= raw_limit:
+                    metadata["moduleRootLimitReached"] = True
+                    return
+                if (
+                    raw_scanned % _ADDRESS_RAW_ENTRY_CHECK_INTERVAL == 0
+                    and time.perf_counter() >= deadline
+                ):
+                    metadata["moduleRootDeadlineReached"] = True
+                    return
+                raw_scanned += 1
+                if raw_scanned >= raw_limit and dict.__len__(registry) > raw_scanned:
+                    metadata["moduleRootLimitReached"] = True
+                if (
+                    type(name) is not str
+                    or name in seen_names
+                    or len(name) > 500
+                    or type(module) is not types.ModuleType
+                ):
+                    continue
+                seen_names.add(name)
+                metadata["moduleRootsIncluded"] += 1
+                yield _module_root(
+                    name,
+                    module,
+                    namespace_raw_limit,
+                    deadline,
+                    metadata,
+                )
+            return
+        except RuntimeError:
+            metadata["moduleRegistryMutationDetected"] = True
+            attempts += 1
+    metadata["moduleRootLimitReached"] = True
+
+
+def _bounded_module_value(registry, wanted_name, raw_limit, deadline, metadata):
+    raw_scanned = 0
+    attempts = 0
+    while attempts < modules._MAX_SCAN_ATTEMPTS:
+        try:
+            for name, module in dict.items(registry):
+                if raw_scanned >= raw_limit:
+                    metadata["moduleRootLimitReached"] = True
+                    return None
+                if (
+                    raw_scanned % _ADDRESS_RAW_ENTRY_CHECK_INTERVAL == 0
+                    and time.perf_counter() >= deadline
+                ):
+                    metadata["moduleRootDeadlineReached"] = True
+                    return None
+                raw_scanned += 1
+                if type(name) is str and str.__eq__(name, wanted_name):
+                    return module
+            return None
+        except RuntimeError:
+            metadata["moduleRegistryMutationDetected"] = True
+            attempts += 1
+    metadata["moduleRootLimitReached"] = True
+    return None
+
+
+def _address_root_sequence(main_root, normal_roots, priority_roots):
+    if main_root is not None:
+        yield main_root
+    try:
+        first_normal = next(normal_roots)
+    except StopIteration:
+        first_normal = None
+    if first_normal is not None:
+        yield first_normal
+    yield from priority_roots
+    yield from normal_roots
 
 
 def _gc_root(limit=DEFAULT_MAX_OBJECTS):
@@ -452,16 +625,35 @@ def _finalize_runtime_result(result, root_metadata, started):
     return result
 
 
-def _namespace_entries(mapping):
+def _namespace_entries(mapping, raw_limit=None, deadline=None, metadata=None):
     if is_dict_object(mapping):
         entries = dict.items(mapping)
     else:
         entries = frames._frame_locals_proxy_items(mapping)
     if entries is None:
         return
-    for name, value in entries:
-        if type(name) is str:
-            yield bounded_text(name, "<unnamed>", 512), value
+    raw_scanned = 0
+    try:
+        for name, value in entries:
+            if raw_limit is not None and raw_scanned >= raw_limit:
+                if metadata is not None:
+                    metadata["namespaceRawLimitReached"] = True
+                return
+            if (
+                deadline is not None
+                and raw_scanned % _ADDRESS_RAW_ENTRY_CHECK_INTERVAL == 0
+                and time.perf_counter() >= deadline
+            ):
+                if metadata is not None:
+                    metadata["namespaceDeadlineReached"] = True
+                return
+            raw_scanned += 1
+            if type(name) is str:
+                yield bounded_text(name, "<unnamed>", 512), value
+    except RuntimeError:
+        if metadata is None:
+            raise
+        metadata["namespaceMutationDetected"] = True
 
 
 def _static_children(inspector, value):

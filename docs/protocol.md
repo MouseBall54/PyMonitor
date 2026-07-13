@@ -17,7 +17,8 @@ Phase 0 methods are `session.detach`, `runtime.getInfo`, `threads.list`,
 `frames.list`, `scopes.list`, `objects.describe`, `objects.listChildren`,
 `modules.list`, `modules.listNamespace`, `consoles.list`,
 `consoles.listNamespace`, `gc.listObjects`, `runtime.search`,
-`objects.release`, `classes.describe`, `arrays.describe`, `arrays.preview`,
+`runtime.findAddress`, `objects.release`, `classes.describe`, `arrays.describe`,
+`arrays.preview`,
 `arrays.tile`, `arrays.histogram`, `arrays.pixel`, `dataframes.describe`,
 `dataframes.preview`, `figures.describe`, `figures.preview`, `memory.status`,
 `memory.start`, `memory.stop`,
@@ -117,6 +118,56 @@ metadata and an optional safe value handle so the WPF client can open the exact
 object. The default bounds are 200 results, 100,000 visited objects and depth 16;
 hard limits are 500, 200,000 and 32. `scanComplete` and the individual limit flags
 make a bounded/incomplete result explicit.
+
+`runtime.findAddress` performs an exact CPython object-identity lookup. Its
+required `address` parameter is a non-zero, pointer-width hexadecimal string in
+`0x...` form; surrounding whitespace is ignored, but partial addresses and
+decimal values are rejected. The optional bounds are `maxResults` (default 200,
+hard limit 500), `maxObjects` (default 100,000, hard limit 200,000), `maxDepth`
+(default 16, hard limit 32), `maxEdges` (default 250,000, hard limit 2,000,000),
+and `maxDurationMilliseconds` (default 1,500, hard limit 10,000). The address
+must be the live object's CPython identity address, such as an `id(obj)` value
+shown by the Variables or Object Tree Address field. NumPy data-buffer
+addresses and arbitrary native pointers are not object identities and are not
+supported.
+
+The response reports `mode: address`, the normalized `addressHex`,
+`targetFound`, `total`, and result `items`. Each item retains the
+integrated-search `kind`, `name`, `location`, `objectPath`, `matchFields`,
+`depth`, and source metadata and adds `relation`, `targetKind`, `ownerTypeName`,
+and `ownerAddressHex`; `value` is the matched target object's
+safe summary and optional handle. Relations distinguish direct
+`moduleVariable`, `frameVariable`, and `consoleVariable` locations from
+`listItem`, `tupleItem`, `setItem`, `frozensetItem`, `dictKey`, `dictValue`,
+`instanceField`, `instanceDictionaryEntry`, and `classAttribute` owner edges.
+A `gcObject` row means the target itself was found in the GC snapshot; it is a
+discovery result, not proof of a structural reference from another object.
+
+Address lookup scans only forward, statically readable edges from runtime roots
+and a genuine `gc.get_objects()` snapshot. It never dereferences the supplied
+number, fabricates an object from it, or calls `gc.get_referrers()`. The response
+exposes `objectsScanned`, `rootObjectsScanned`, `gcObjectsScanned`,
+`rootsScanned`, `edgesScanned`, `gcTrackedTotal`, the configured maxima,
+duration and snapshot time. `scanComplete`, `gcScanComplete`,
+`gcSnapshotTruncated`, `objectLimitReached`, `resultLimitReached`,
+`depthLimitReached`, `childrenTruncated`, `edgeLimitReached`, and
+`deadlineReached` make incomplete coverage explicit. `rootBudgetReached`
+reports that the root phase consumed its reserved time or edge share while
+leaving capacity for GC owners. Console-discovery and frame-root completion
+fields have the same meaning as in `runtime.search`.
+`consoleRawEntryLimitReached`, `consoleMutationDetected`, and
+`consoleDeadlineReached` describe bounded console discovery. The module-root
+fields are `moduleRootsIncluded`, `moduleRootLimitReached`,
+`moduleRootDeadlineReached`, and `moduleRegistryMutationDetected`; namespace
+entry iteration reports `namespaceRawLimitReached`,
+`namespaceMutationDetected`, and `namespaceDeadlineReached`. Any of these
+incomplete-source or mutation flags makes `scanComplete` false.
+Capturing CPython's full GC snapshot necessarily allocates a list before the
+bounded scan begins, so this response explicitly reports
+`snapshotAllocationBounded: false`; the duration bound is cooperative and does
+not strictly bound that initial snapshot allocation. CPython also emits audit
+events for `gc.get_objects()` and `sys._current_frames()`; a target-installed
+interpreter audit hook can observe, delay, or reject those snapshot operations.
 
 Array preview and tile requests accept `normalization` (`AUTO`, `NONE`,
 `MINMAX`, `PERCENTILE`, or `LABEL`) plus percentile bounds. Tiles require a

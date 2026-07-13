@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory)]
     [string]$ReleaseDirectory,
-    [string]$ExpectedVersion = "26.7.12",
+    [string]$ExpectedVersion = "26.7.13",
     [string]$ExpectedProductName = "PyMonitor",
     [string]$ExpectedCompanyName = "박영문",
     [string]$PythonExecutable = $(if ($env:PYTHON_EXECUTABLE) { $env:PYTHON_EXECUTABLE } else { "python" })
@@ -15,6 +15,7 @@ $requiredFiles = @(
     "$ExpectedProductName.exe",
     "$ExpectedProductName.dll",
     "agent\pyruntime_inspector_agent\__init__.py",
+    "agent\pyruntime_inspector_agent\address_search.py",
     "agent\pyruntime_inspector_agent\server.py",
     "agent\pyruntime_inspector_agent\modules.py",
     "agent\pyruntime_inspector_agent\console_namespaces.py",

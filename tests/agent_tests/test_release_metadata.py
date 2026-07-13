@@ -9,7 +9,7 @@ from pyruntime_inspector_agent import server
 
 EXPECTED_PRODUCT = "PyMonitor"
 EXPECTED_DEVELOPER = "박영문"
-EXPECTED_VERSION = "26.7.12"
+EXPECTED_VERSION = "26.7.13"
 EXPECTED_UPGRADE_CODE = "{2D73C23D-A566-4D8A-889C-F89FCE4A1377}"
 EXPECTED_ICON_SIZES = [16, 20, 24, 32, 40, 48, 64, 80, 96, 128, 256]
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
@@ -185,8 +185,9 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertIn('"PyMonitor-$version-win-x64.msi"', installer)
         self.assertIn('"$ExpectedProductName.exe"', portable_test)
         self.assertIn('"$ExpectedProductName.dll"', portable_test)
-        self.assertIn("PyMonitor-26.7.12-win-x64.zip", readme)
-        self.assertIn("PyMonitor-26.7.12-win-x64.msi", readme)
+        self.assertIn('"agent\\pyruntime_inspector_agent\\address_search.py"', portable_test)
+        self.assertIn("PyMonitor-26.7.13-win-x64.zip", readme)
+        self.assertIn("PyMonitor-26.7.13-win-x64.msi", readme)
         self.assertIn("name: PyMonitor-unsigned", ci)
         self.assertIn("name: PyMonitor-signed", release_workflow)
         self.assertIn('title "PyMonitor $env:GITHUB_REF_NAME"', release_workflow)
@@ -208,8 +209,8 @@ class ReleaseMetadataTests(unittest.TestCase):
 
         install = markdown_section(readme, "설치 및 제거")
         for expected in (
-            "PyMonitor-26.7.12-win-x64.msi",
-            "PyMonitor-26.7.12-win-x64.zip",
+            "PyMonitor-26.7.13-win-x64.msi",
+            "PyMonitor-26.7.13-win-x64.zip",
             "Get-FileHash",
             '"$file.sha256"',
             "별도 .NET 10 runtime을 설치할 필요가 없",

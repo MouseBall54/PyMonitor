@@ -106,7 +106,7 @@
                     <TextBlock Text="PyMonitor" Foreground="White" FontSize="32" FontWeight="SemiBold" />
                     <TextBlock Text="Python Runtime Inspector" Foreground="#DCEAFE" FontSize="15" Margin="0,3,0,10" />
                     <Border HorizontalAlignment="Left" Background="#26FFFFFF" CornerRadius="12" Padding="10,4">
-                        <TextBlock Text="Version 26.7.12" Foreground="White" FontSize="12" FontWeight="SemiBold" />
+                        <TextBlock Text="Version 26.7.13" Foreground="White" FontSize="12" FontWeight="SemiBold" />
                     </Border>
                 </StackPanel>
             </Grid>
@@ -218,7 +218,7 @@
 
         <Border Grid.Row="2" Background="White" BorderBrush="{StaticResource AboutBorder}" BorderThickness="0,1,0,0" Padding="24,14">
             <Grid>
-                <TextBlock Text="PyMonitor 26.7.12"
+                <TextBlock Text="PyMonitor 26.7.13"
                            Foreground="{StaticResource AboutMutedText}"
                            FontSize="12"
                            VerticalAlignment="Center" />
