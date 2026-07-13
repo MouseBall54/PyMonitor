@@ -44,7 +44,7 @@ public static class HelpCatalog
                 "PyMonitor를 실행하고 상단 상태가 아직 연결되지 않음인지 확인합니다.",
                 "이미 실행 중인 Python은 Process에서 정확한 PID를 고른 뒤 Quick Attach를 누릅니다.",
                 "새 스크립트는 Launch 탭에서 Python과 .py 파일을 선택한 뒤 Launch를 누릅니다.",
-                "Connected가 표시되면 Inspect의 Runtime Tree에서 frame, module 또는 GC source를 선택합니다.",
+                "Connected가 표시되면 Inspect의 Runtime Tree에서 frame, module, console namespace 또는 GC source를 선택합니다.",
                 "Variables에서 변수를 선택하면 오른쪽의 Overview, Object Tree, Class, 데이터 전용 보기가 같은 선택을 자세히 보여줍니다.",
             ],
             """
@@ -65,16 +65,16 @@ public static class HelpCatalog
             "설치 install MSI portable ZIP 압축 update upgrade uninstall 제거 UAC 관리자 .NET runtime Python package SHA-256",
             "PyMonitor MSI는 Windows 10/11 x64에 시스템 범위로 설치되므로 UAC 승인이 필요합니다. 포터블 ZIP은 원하는 폴더에 모두 압축 해제해 사용할 수 있습니다. 앱은 .NET Runtime과 Python Agent를 포함하지만, 검사할 CPython과 사용자 코드가 import하는 NumPy, pandas, Matplotlib, OpenCV 등의 패키지는 대상 PC의 Python 환경에 있어야 합니다.",
             [
-                "MSI: PyMonitor-26.7.11-win-x64.msi를 실행하고 Windows 관리자 승인을 완료합니다.",
+                "MSI: PyMonitor-26.7.12-win-x64.msi를 실행하고 Windows 관리자 승인을 완료합니다.",
                 "설치 후 시작 메뉴에서 PyMonitor를 실행합니다. 기본 설치 위치는 C:\\Program Files\\PyMonitor입니다.",
-                "포터블: PyMonitor-26.7.11-win-x64.zip 전체를 새 폴더에 압축 해제하고 PyMonitor.exe를 실행합니다.",
+                "포터블: PyMonitor-26.7.12-win-x64.zip 전체를 새 폴더에 압축 해제하고 PyMonitor.exe를 실행합니다.",
                 "업데이트: 새 MSI를 실행하면 설치된 이전 PyMonitor를 업그레이드합니다.",
                 "제거: 설정 > 앱 > 설치된 앱 > PyMonitor > 제거를 사용합니다. 포터블은 앱 종료 후 압축 해제 폴더를 삭제합니다.",
             ],
             """
             # PowerShell에서 배포 파일 해시 확인
-            Get-FileHash .\PyMonitor-26.7.11-win-x64.msi -Algorithm SHA256
-            Get-Content .\PyMonitor-26.7.11-win-x64.msi.sha256
+            Get-FileHash .\PyMonitor-26.7.12-win-x64.msi -Algorithm SHA256
+            Get-Content .\PyMonitor-26.7.12-win-x64.msi.sha256
             """,
             [
                 "설치 과정에서 별도 파일을 인터넷에서 내려받지 않습니다.",
@@ -193,11 +193,11 @@ public static class HelpCatalog
             "inspect-variables",
             "검사",
             "Runtime Tree, Variables와 변경 강조",
-            "frame/module/GC source를 고르고 변수 검색·필터와 이전 snapshot 비교를 사용합니다.",
-            "inspect runtime tree variables 변수 locals globals builtins module __main__ scope search filter refresh F5 changed added removed rebound updated highlight 강조 12초",
-            "Inspect는 Runtime Tree → Variables → 선택 상세 보기 순서의 master-detail 화면입니다. frame의 Locals/Globals, 이미 로드된 module namespace 또는 GC-tracked object 검색 결과가 변수 목록의 source가 됩니다. 자동 새로 고침은 행과 선택 위치를 유지하면서 값만 갱신합니다.",
+            "frame/module/console/GC source를 고르고 변수 검색·필터와 이전 snapshot 비교를 사용합니다.",
+            "inspect runtime tree variables 변수 locals globals builtins module __main__ console namespace scope search filter refresh F5 changed added removed rebound updated highlight 강조 12초",
+            "Inspect는 Runtime Tree → Variables → 선택 상세 보기 순서의 master-detail 화면입니다. frame의 Locals/Globals, 이미 로드된 module namespace, 내부 console namespace 또는 GC-tracked object 검색 결과가 변수 목록의 source가 됩니다. 자동 새로 고침은 행과 선택 위치를 유지하면서 값만 갱신합니다.",
             [
-                "Runtime Tree에서 thread/frame의 Locals·Globals 또는 Modules의 namespace를 선택합니다.",
+                "Runtime Tree에서 thread/frame의 Locals·Globals, Modules 또는 Console namespaces의 namespace를 선택합니다.",
                 "Variables 검색 상자에 이름, type 또는 preview 일부를 입력하고 scope/change/type 필터를 조합합니다.",
                 "변수 행을 선택해 오른쪽의 상세 탭을 엽니다.",
                 "F5 또는 Refresh로 즉시 snapshot을 갱신합니다. Ctrl+F는 Variables 검색란으로 이동합니다.",
@@ -250,12 +250,39 @@ public static class HelpCatalog
                 "순환 참조, 최대 깊이, pagination과 handle 만료 상태를 명시적으로 표시합니다.",
             ]),
         new(
+            "console-namespaces",
+            "검사",
+            "프로그램 내부 콘솔 변수",
+            "InteractiveConsole, IPython과 등록한 exec namespace의 변수를 Runtime Tree에서 추적합니다.",
+            "console namespace 내부 터미널 embedded terminal InteractiveConsole InteractiveInterpreter IPython user_ns exec register_namespace unregister_namespace 변수 자동 새로 고침",
+            "일반 REPL 변수는 __main__에 있지만 프로그램 내부 콘솔은 별도 locals/user_ns dictionary를 사용할 수 있습니다. PyMonitor는 같은 프로세스의 표준·식별 가능한 custom console owner를 안전하게 자동 탐지하고 Console namespaces 아래에 표시합니다. 임의의 exec dictionary는 콘솔이라는 표지가 남지 않으므로 명시적으로 등록합니다.",
+            [
+                "대상에 연결한 뒤 Runtime Tree의 Console namespaces를 펼칩니다.",
+                "탐지된 namespace를 선택하고 Variables에서 현재 선언을 확인합니다.",
+                "내부 콘솔에서 새 변수를 선언한 뒤 자동 새로 고침 또는 F5로 Added/Rebound/Updated 상태를 확인합니다.",
+                "일반 exec dictionary는 register_namespace로 등록하고 콘솔 종료 시 unregister_namespace로 해제합니다.",
+            ],
+            """
+            from pyruntime_inspector_agent import register_namespace, unregister_namespace
+
+            terminal_ns = {}
+            token = register_namespace("내장 터미널", terminal_ns)
+            exec("threshold = 0.75", terminal_ns)
+            unregister_namespace(token)
+            """,
+            [
+                "자동 탐지는 gc.collect() 없이 최대 100,000개의 owner를 검사하며 한도 도달을 Runtime Tree에 표시합니다.",
+                "Agent는 property/getattr/descriptor/callable을 실행하지 않고 direct exact dict만 읽습니다.",
+                "등록은 namespace를 강하게 참조하므로 수명이 끝나면 반드시 unregister_namespace를 호출합니다.",
+                "별도 subprocess의 콘솔은 그 프로세스에 따로 attach해야 합니다.",
+            ]),
+        new(
             "global-runtime-search",
             "검사",
             "전체 런타임 통합검색",
-            "모듈과 frame에서 시작해 변수, 재귀 객체 경로, instance, class, method와 property를 한 번에 찾습니다.",
-            "global runtime search 통합검색 전체 검색 recursive 재귀 variable 변수 instance class method property path location 위치",
-            "Global Search는 현재 Variables 표만 거르는 검색이 아닙니다. 연결된 Python의 module namespace, frame scope와 GC-tracked objects를 시작점으로 exact built-in container와 정적으로 읽을 수 있는 instance field를 재귀 탐색합니다. 각 객체의 이름, type, module, qualified type, 안전한 preview, 주소와 전체 경로뿐 아니라 class와 정적 method/property/member 정보도 함께 검색합니다.",
+            "콘솔, 모듈과 frame에서 시작해 변수, 재귀 객체 경로, instance, class, method와 property를 한 번에 찾습니다.",
+            "global runtime search 통합검색 전체 검색 console namespace recursive 재귀 variable 변수 instance class method property path location 위치",
+            "Global Search는 현재 Variables 표만 거르는 검색이 아닙니다. 연결된 Python의 console namespace, module namespace, frame scope와 GC-tracked objects를 시작점으로 exact built-in container와 정적으로 읽을 수 있는 instance field를 재귀 탐색합니다. 각 객체의 이름, type, module, qualified type, 안전한 preview, 주소와 전체 경로뿐 아니라 class와 정적 method/property/member 정보도 함께 검색합니다.",
             [
                 "Python 대상에 연결한 뒤 Global Search 탭을 엽니다.",
                 "찾을 이름, type, class, method, property, 값 일부 또는 경로를 입력합니다. 공백으로 나눈 모든 단어가 결과 정보 어딘가에 포함되어야 합니다.",

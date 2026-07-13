@@ -54,7 +54,10 @@ public sealed class MainViewModelTests
     public async Task GlobalSearchShowsExactLocationAndOpensClassMemberOwner()
     {
         var session = new FakeSession();
-        await using var viewModel = new MainViewModel(session, new FakeProcessDiscovery());
+        await using var viewModel = new MainViewModel(session, new FakeProcessDiscovery())
+        {
+            RefreshIntervalSeconds = 1,
+        };
         await viewModel.AttachCommand.ExecuteAsync();
         viewModel.GlobalSearchQuery = "calculate needle";
 
@@ -72,6 +75,26 @@ public sealed class MainViewModelTests
         Assert.Equal(2, viewModel.SelectedObjectDetailTabIndex);
         Assert.Equal("calculate_needle_total", viewModel.ClassTreeSearchText);
         Assert.Equal("Modules / __main__ / engine", viewModel.SelectedObjectPath);
+    }
+
+    [Fact]
+    public async Task GlobalSearchCanOpenDetectedConsoleNamespaceSource()
+    {
+        var session = new FakeSession { ReturnConsoleSearchRoot = true };
+        await using var viewModel = new MainViewModel(session, new FakeProcessDiscovery());
+        await viewModel.AttachCommand.ExecuteAsync();
+        viewModel.GlobalSearchQuery = "EmbeddedTerminal";
+
+        await viewModel.SearchRuntimeCommand.ExecuteAsync();
+        var result = Assert.Single(viewModel.GlobalSearchResults);
+        Assert.Equal("console", result.Kind);
+        Assert.Equal("console-1", result.ConsoleHandle);
+        Assert.True(result.CanOpen);
+
+        await viewModel.OpenGlobalSearchResultCommand.ExecuteAsync();
+
+        Assert.Contains("EmbeddedTerminal.namespace", viewModel.Breadcrumb, StringComparison.Ordinal);
+        Assert.Contains(viewModel.Variables, row => row.Name == "terminal_value");
     }
 
     [Fact]
@@ -383,6 +406,39 @@ public sealed class MainViewModelTests
     }
 
     [Fact]
+    public async Task EmbeddedConsoleNamespaceLoadsAndTracksVariablesDeclaredLater()
+    {
+        var session = new FakeSession();
+        await using var viewModel = new MainViewModel(session, new FakeProcessDiscovery())
+        {
+            RefreshIntervalSeconds = 1,
+        };
+        await viewModel.AttachCommand.ExecuteAsync();
+        var root = Assert.Single(viewModel.RuntimeRoots, node => node.Label.StartsWith("Console namespaces", StringComparison.Ordinal));
+        var console = Assert.Single(root.Children, node => node.Kind == RuntimeNodeKind.ConsoleNamespace);
+
+        await viewModel.SelectTreeNodeAsync(console);
+
+        Assert.Contains("EmbeddedTerminal.namespace", viewModel.Breadcrumb, StringComparison.Ordinal);
+        Assert.Contains(viewModel.Variables, row =>
+            row.Name == "terminal_value"
+            && row.Scope == "console:namespace"
+            && row.SafePreview == "7");
+        Assert.Equal("console-1", session.LastConsoleHandle);
+        Assert.Equal("namespace", session.LastConsoleAttributeName);
+
+        session.IncludeLaterConsoleVariable = true;
+        await EventuallyAsync(() =>
+            session.ConsoleNamespaceRequestCount >= 2
+            && viewModel.Variables.Any(row => row.Name == "declared_later"),
+            TimeSpan.FromSeconds(5));
+
+        var added = Assert.Single(viewModel.Variables, row => row.Name == "declared_later");
+        Assert.Equal(VariableChangeKind.Added, added.ChangeKind);
+        Assert.True(session.ConsoleNamespaceRequestCount >= 2);
+    }
+
+    [Fact]
     public async Task GcTreeSearchIsServerSideAndSkippedByAutomaticRefresh()
     {
         var session = new FakeSession();
@@ -517,9 +573,9 @@ public sealed class MainViewModelTests
         Assert.Empty(viewModel.ExecutionEvents);
     }
 
-    private static async Task EventuallyAsync(Func<bool> predicate)
+    private static async Task EventuallyAsync(Func<bool> predicate, TimeSpan? wait = null)
     {
-        var timeout = DateTime.UtcNow.AddSeconds(2);
+        var timeout = DateTime.UtcNow + (wait ?? TimeSpan.FromSeconds(2));
         while (!predicate() && DateTime.UtcNow < timeout)
             await Task.Delay(10);
         Assert.True(predicate());
@@ -563,8 +619,13 @@ public sealed class MainViewModelTests
         public int GcRequestCount { get; private set; }
         public int GcDetailRequestCount { get; private set; }
         public string? GcQuery { get; private set; }
+        public bool IncludeLaterConsoleVariable { get; set; }
+        public int ConsoleNamespaceRequestCount { get; private set; }
+        public string? LastConsoleHandle { get; private set; }
+        public string? LastConsoleAttributeName { get; private set; }
         public ConcurrentQueue<string> ReleasedHandles { get; } = [];
         public bool DelayFirstArrayPreview { get; init; }
+        public bool ReturnConsoleSearchRoot { get; init; }
         public Task FirstArrayPreviewStarted => _firstArrayPreviewStarted.Task;
 
         public void ReleaseFirstArrayPreview() => _releaseFirstArrayPreview.TrySetResult();
@@ -606,6 +667,42 @@ public sealed class MainViewModelTests
                         ModuleVariable("edd", "121")),
                     ["total"] = 2,
                 });
+            if (method == "consoles.list")
+                return Frame(new JsonObject
+                {
+                    ["items"] = new JsonArray(new JsonObject
+                    {
+                        ["consoleHandle"] = "console-1",
+                        ["displayName"] = "demo.EmbeddedTerminal.namespace",
+                        ["ownerType"] = "demo.EmbeddedTerminal",
+                        ["ownerAddressHex"] = "0xabc",
+                        ["attributeName"] = "namespace",
+                        ["namespaceName"] = "namespace",
+                        ["kind"] = "custom",
+                        ["entryCount"] = IncludeLaterConsoleVariable ? 2 : 1,
+                    }),
+                    ["total"] = 1,
+                    ["trackedTotal"] = 20,
+                    ["scannedCount"] = 20,
+                    ["scanComplete"] = true,
+                });
+            if (method == "consoles.listNamespace")
+            {
+                ConsoleNamespaceRequestCount++;
+                LastConsoleHandle = parameters?["consoleHandle"]?.GetValue<string>();
+                LastConsoleAttributeName = parameters?["attributeName"]?.GetValue<string>();
+                var items = new JsonArray(ModuleVariable("terminal_value", "7"));
+                if (IncludeLaterConsoleVariable)
+                    items.Add(ModuleVariable("declared_later", "9"));
+                return Frame(new JsonObject
+                {
+                    ["consoleHandle"] = LastConsoleHandle,
+                    ["attributeName"] = LastConsoleAttributeName,
+                    ["scopeType"] = "console",
+                    ["items"] = items,
+                    ["total"] = items.Count,
+                });
+            }
             if (method == "gc.listObjects")
             {
                 GcRequestCount++;
@@ -639,6 +736,28 @@ public sealed class MainViewModelTests
             }
             if (method == "runtime.search")
             {
+                if (ReturnConsoleSearchRoot)
+                    return Frame(new JsonObject
+                    {
+                        ["items"] = new JsonArray(new JsonObject
+                        {
+                            ["kind"] = "console",
+                            ["name"] = "demo.EmbeddedTerminal.namespace",
+                            ["location"] = "Console namespaces / demo.EmbeddedTerminal.namespace @0xabc",
+                            ["objectPath"] = "Console namespaces / demo.EmbeddedTerminal.namespace @0xabc",
+                            ["matchFields"] = new JsonArray("name"),
+                            ["depth"] = 0,
+                            ["sourceKind"] = "console",
+                            ["scopeType"] = "console",
+                            ["consoleHandle"] = "console-1",
+                            ["consoleAttributeName"] = "namespace",
+                            ["value"] = null,
+                        }),
+                        ["objectsScanned"] = 0,
+                        ["rootsScanned"] = 1,
+                        ["scanComplete"] = true,
+                        ["durationMilliseconds"] = 1.0,
+                    });
                 var value = ModuleVariable("engine", "<demo.Engine object>")["value"]!.DeepClone().AsObject();
                 value["handleId"] = "global-search-engine";
                 value["typeName"] = "Engine";

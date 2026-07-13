@@ -3,7 +3,7 @@ import hashlib
 import sys
 import types
 
-from .safe_metadata import type_module, type_name
+from .safe_metadata import is_class_object, type_module, type_name
 
 
 MAX_PREVIEW_DIMENSION = 1024
@@ -12,7 +12,7 @@ _MAX_FINGERPRINT_PIXELS = 4096
 _PY_TPFLAGS_HEAPTYPE = 1 << 9
 
 _PYOBJECT_GENERIC_GET_DICT = ctypes.pythonapi.PyObject_GenericGetDict
-_PYOBJECT_GENERIC_GET_DICT.argtypes = (ctypes.py_object, ctypes.c_void_p)
+_PYOBJECT_GENERIC_GET_DICT.argtypes = (ctypes.c_void_p, ctypes.c_void_p)
 _PYOBJECT_GENERIC_GET_DICT.restype = ctypes.py_object
 
 _UNAVAILABLE = {
@@ -462,7 +462,7 @@ def _valid_python_type(value, module_name, class_name, function_name, source_suf
 
 
 def _valid_type_identity(value, module_name, class_name):
-    if not isinstance(value, type):
+    if not is_class_object(value):
         return False
     try:
         actual_module = type.__getattribute__(value, "__module__")
@@ -606,7 +606,7 @@ def _native_slot_owned_by(owner, namespace, name):
 
 
 def _type_identity_is(value, module_name, class_name):
-    if not isinstance(value, type):
+    if not is_class_object(value):
         return False
     try:
         actual_module = type.__getattribute__(value, "__module__")
@@ -638,7 +638,7 @@ def _exact_module(name):
 
 def _safe_instance_dict(value):
     try:
-        mapping = _PYOBJECT_GENERIC_GET_DICT(value, None)
+        mapping = _PYOBJECT_GENERIC_GET_DICT(id(value), None)
     except (AttributeError, TypeError):
         return None
     return mapping if type(mapping) is dict else None

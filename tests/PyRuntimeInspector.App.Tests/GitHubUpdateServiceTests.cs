@@ -37,13 +37,13 @@ public sealed class GitHubUpdateServiceTests
         Assert.Equal(
             "https://api.github.com/repos/example-owner/PyMonitor/releases/latest",
             request.Uri.AbsoluteUri);
-        Assert.Equal("PyMonitor/26.7.11", request.UserAgent);
+        Assert.Equal("PyMonitor/26.7.12", request.UserAgent);
         Assert.Contains("application/vnd.github+json", request.Accept, StringComparison.Ordinal);
         Assert.Equal("2022-11-28", request.ApiVersion);
     }
 
     [Theory]
-    [InlineData("v26.7.11")]
+    [InlineData("v26.7.12")]
     [InlineData("v26.7.10")]
     public async Task CheckReportsNoUpdateWhenLatestStableVersionIsNotNewer(string tag)
     {
@@ -55,9 +55,9 @@ public sealed class GitHubUpdateServiceTests
     }
 
     [Theory]
-    [InlineData("v26.7.12", true, false, "UNSTABLE_RELEASE")]
-    [InlineData("v26.7.12", false, true, "UNSTABLE_RELEASE")]
-    [InlineData("v26.7.12-rc.1", false, false, "INVALID_RELEASE_VERSION")]
+    [InlineData("v26.7.13", true, false, "UNSTABLE_RELEASE")]
+    [InlineData("v26.7.13", false, true, "UNSTABLE_RELEASE")]
+    [InlineData("v26.7.13-rc.1", false, false, "INVALID_RELEASE_VERSION")]
     public async Task CheckRejectsDraftPrereleaseAndSemanticallyUnstableReleases(
         string tag,
         bool draft,
@@ -228,7 +228,7 @@ public sealed class GitHubUpdateServiceTests
     public async Task AuthenticodeFailureDeletesPartialDownloadWithoutReplacingExistingInstaller()
     {
         using var directory = new TemporaryDirectory();
-        var existingPath = Path.Combine(directory.Path, "PyMonitor-26.7.12-win-x64.msi");
+        var existingPath = Path.Combine(directory.Path, "PyMonitor-26.7.13-win-x64.msi");
         var existingContents = Encoding.ASCII.GetBytes("existing verified installer");
         File.WriteAllBytes(existingPath, existingContents);
         var verifier = new RecordingAuthenticodeVerifier(fail: true);
@@ -347,8 +347,8 @@ public sealed class GitHubUpdateServiceTests
 
     private sealed class FixtureOptions
     {
-        public string Tag { get; init; } = "v26.7.12";
-        public string CurrentVersion { get; init; } = "26.7.11";
+        public string Tag { get; init; } = "v26.7.13";
+        public string CurrentVersion { get; init; } = "26.7.12";
         public bool Draft { get; init; }
         public bool Prerelease { get; init; }
         public byte[]? InstallerBytes { get; init; }

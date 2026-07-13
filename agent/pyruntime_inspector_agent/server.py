@@ -3,7 +3,7 @@ import os
 import socket
 import threading
 
-from . import arrays, classes, dataframes, gc_objects, matplotlib_figures, memory, modules, monitoring, runtime_search
+from . import arrays, classes, console_namespaces, dataframes, gc_objects, matplotlib_figures, memory, modules, monitoring, runtime_search
 from .frames import list_frames, list_scope, list_threads
 from .handles import HandleStore, ObjectExpiredError
 from .monitoring import MonitoringError
@@ -11,7 +11,7 @@ from .protocol import PROTOCOL_VERSION, ProtocolError, read_frame, write_frame
 from .runtime_info import get_runtime_info
 from .safe_objects import SafeObjectInspector
 
-AGENT_VERSION = "26.7.11"
+AGENT_VERSION = "26.7.12"
 BOOTSTRAP_ABI = 2
 _MAX_REQUEST_ID_LENGTH = 128
 _MAX_METHOD_LENGTH = 128
@@ -38,7 +38,9 @@ class InspectorAgent:
         self._port = port
         self._token = token
         self._attach_mode = attach_mode
-        self._handles = HandleStore()
+        # A max-sized runtime search can return 500 value handles while the
+        # current 200-frame and 100-console source sets remain navigable.
+        self._handles = HandleStore(max_entries=2_048)
         self._objects = SafeObjectInspector(self._handles)
         self._thread = threading.Thread(target=self._run, name="PyMonitorAgent", daemon=True)
         # debugpy/pydevd suspends ordinary application threads when a breakpoint
@@ -148,6 +150,20 @@ class InspectorAgent:
             return modules.list_modules(params.get("offset", 0), params.get("pageSize", 100)), b"", False
         if method == "modules.listNamespace":
             return modules.list_namespace(self._objects, params["moduleName"], params.get("offset", 0), params.get("pageSize", 100)), b"", False
+        if method == "consoles.list":
+            return console_namespaces.list_namespaces(
+                self._handles,
+                params.get("maxObjects", console_namespaces.DEFAULT_MAX_OBJECTS),
+            ), b"", False
+        if method == "consoles.listNamespace":
+            return console_namespaces.list_namespace(
+                self._handles,
+                self._objects,
+                params["consoleHandle"],
+                params["attributeName"],
+                params.get("offset", 0),
+                params.get("pageSize", 100),
+            ), b"", False
         if method == "gc.listObjects":
             return gc_objects.list_objects(
                 self._objects,

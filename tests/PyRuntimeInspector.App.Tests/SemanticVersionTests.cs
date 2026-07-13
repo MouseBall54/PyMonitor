@@ -28,7 +28,7 @@ public sealed class SemanticVersionTests
 
     [Theory]
     [InlineData("0.0.0")]
-    [InlineData("26.7.11")]
+    [InlineData("26.7.12")]
     [InlineData("1.2.3-rc.1+build.42")]
     public void ValidSemanticVersionsRoundTripWithoutBuildMetadata(string value)
     {

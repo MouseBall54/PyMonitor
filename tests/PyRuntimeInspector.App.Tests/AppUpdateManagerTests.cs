@@ -23,7 +23,7 @@ public sealed class AppUpdateManagerTests
     [Fact]
     public async Task CheckAndDownloadUseOneSharedServiceAndVersionDirectory()
     {
-        var release = CreateRelease("26.7.12");
+        var release = CreateRelease("26.7.13");
         var service = new RecordingUpdateService(release);
         using var manager = new AppUpdateManager(service);
 
@@ -36,7 +36,7 @@ public sealed class AppUpdateManagerTests
         Assert.Equal(1, service.CheckCount);
         Assert.Equal(1, service.DownloadCount);
         Assert.EndsWith(
-            Path.Combine("PyMonitor", "Updates", "26.7.12"),
+            Path.Combine("PyMonitor", "Updates", "26.7.13"),
             service.DestinationDirectory,
             StringComparison.OrdinalIgnoreCase);
         Assert.Equal("verified", installer.Sha256);
@@ -46,7 +46,7 @@ public sealed class AppUpdateManagerTests
     public void InstallerLauncherUsesElevationAndArgumentListForVerifiedMsi()
     {
         using var directory = new TemporaryDirectory();
-        var path = Path.Combine(directory.Path, "PyMonitor update 26.7.12.msi");
+        var path = Path.Combine(directory.Path, "PyMonitor update 26.7.13.msi");
         File.WriteAllBytes(path, [0]);
         ProcessStartInfo? captured = null;
         var launcher = new WindowsInstallerLauncher(
@@ -79,7 +79,7 @@ public sealed class AppUpdateManagerTests
     public void InstallerLauncherRejectsAFileChangedAfterDownloadVerification()
     {
         using var directory = new TemporaryDirectory();
-        var path = Path.Combine(directory.Path, "PyMonitor-26.7.12-win-x64.msi");
+        var path = Path.Combine(directory.Path, "PyMonitor-26.7.13-win-x64.msi");
         File.WriteAllText(path, "tampered");
         var launcher = new WindowsInstallerLauncher(_ => { }, new AcceptingAuthenticodeVerifier());
 
@@ -118,7 +118,7 @@ public sealed class AppUpdateManagerTests
         public Task<UpdateCheckResult> CheckForUpdateAsync(CancellationToken cancellationToken = default)
         {
             CheckCount++;
-            return Task.FromResult(new UpdateCheckResult(SemanticVersion.Parse("26.7.11"), release));
+            return Task.FromResult(new UpdateCheckResult(SemanticVersion.Parse("26.7.12"), release));
         }
 
         public Task<VerifiedUpdateInstaller> DownloadAndVerifyInstallerAsync(

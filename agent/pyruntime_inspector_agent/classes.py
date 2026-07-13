@@ -1,7 +1,7 @@
 import sys
 import types
 
-from .safe_metadata import type_module, type_name, type_qualified_name
+from .safe_metadata import is_class_object, type_module, type_name, type_qualified_name
 
 
 MAX_CLASS_MEMBERS = 200
@@ -149,7 +149,7 @@ def _parameter(name, kind, default, annotations, prefix=""):
 def _safe_annotation(annotation):
     if type(annotation) is str:
         return _clip(annotation, _MAX_ANNOTATION_LENGTH)
-    if isinstance(annotation, type):
+    if is_class_object(annotation):
         module = type_module(annotation)
         name = type_qualified_name(annotation)
         text = name if module == "builtins" else f"{module}.{name}"
@@ -198,7 +198,7 @@ def _classification(raw):
         descriptor_methods.update(name for name in ("__get__", "__set__", "__delete__") if name in namespace)
     if "__get__" in descriptor_methods and ("__set__" in descriptor_methods or "__delete__" in descriptor_methods):
         return "data descriptor", None
-    if isinstance(raw, type):
+    if is_class_object(raw):
         return "nested class", None
     if "__get__" in descriptor_methods:
         return "unknown descriptor", None
@@ -224,7 +224,7 @@ def _source(function):
 
 
 def describe(value):
-    cls = value if isinstance(value, type) else type(value)
+    cls = value if is_class_object(value) else type(value)
     complete_mro = type.__getattribute__(cls, "__mro__")
     mro = complete_mro[:_MAX_MRO_ENTRIES]
     members = []

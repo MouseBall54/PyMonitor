@@ -2,7 +2,7 @@ import sys
 import types
 
 from .runtime_info import timestamp
-from .safe_metadata import bounded_text
+from .safe_metadata import bounded_text, exact_dict_value, is_dict_object
 from .safe_objects import MAX_VALUE_PAGE_SIZE, _page
 
 _MAX_SCAN_ATTEMPTS = 2
@@ -44,11 +44,11 @@ def _module_registry():
         registry = types.ModuleType.__getattribute__(sys, "modules")
     except AttributeError:
         return None
-    return registry if isinstance(registry, dict) else None
+    return registry if is_dict_object(registry) else None
 
 
 def _module_entries(registry):
-    main = dict.get(registry, "__main__")
+    main = exact_dict_value(registry, "__main__")
     if type(main) is types.ModuleType:
         yield "__main__", main
     for name, module in dict.items(registry):
@@ -64,7 +64,7 @@ def _module_entries(registry):
 
 def _module_row(name, module):
     namespace = types.ModuleType.__getattribute__(module, "__dict__")
-    filename = dict.get(namespace, "__file__")
+    filename = exact_dict_value(namespace, "__file__")
     try:
         _, entry_count, scan_complete, mutation_detected = _bounded_scan(
             lambda: (key for key in dict.keys(namespace) if type(key) is str),
@@ -90,7 +90,7 @@ def list_namespace(inspector, module_name, offset=0, page_size=100):
     registry = _module_registry()
     if registry is None:
         raise ValueError("The module registry is unavailable or is not a dictionary.")
-    module = dict.get(registry, module_name)
+    module = exact_dict_value(registry, module_name)
     if type(module) is not types.ModuleType:
         raise ValueError("The selected module is no longer loaded or is not a standard module.")
 

@@ -2359,6 +2359,14 @@ public sealed class VariablesCenteredUxTests
             {
                 "threads.list" or "frames.list" => new JsonObject { ["items"] = new JsonArray() },
                 "modules.list" => new JsonObject { ["items"] = new JsonArray(), ["total"] = 0 },
+                "consoles.list" => new JsonObject
+                {
+                    ["items"] = new JsonArray(),
+                    ["total"] = 0,
+                    ["trackedTotal"] = 0,
+                    ["scannedCount"] = 0,
+                    ["scanComplete"] = true,
+                },
                 "scopes.list" => _scopeResults.Dequeue(),
                 "objects.listChildren" => (JsonObject)ObjectChildren.DeepClone(),
                 "classes.describe" => (JsonObject)ClassDescription.DeepClone(),

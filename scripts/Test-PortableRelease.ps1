@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory)]
     [string]$ReleaseDirectory,
-    [string]$ExpectedVersion = "26.7.11",
+    [string]$ExpectedVersion = "26.7.12",
     [string]$ExpectedProductName = "PyMonitor",
     [string]$ExpectedCompanyName = "박영문",
     [string]$PythonExecutable = $(if ($env:PYTHON_EXECUTABLE) { $env:PYTHON_EXECUTABLE } else { "python" })
@@ -17,6 +17,7 @@ $requiredFiles = @(
     "agent\pyruntime_inspector_agent\__init__.py",
     "agent\pyruntime_inspector_agent\server.py",
     "agent\pyruntime_inspector_agent\modules.py",
+    "agent\pyruntime_inspector_agent\console_namespaces.py",
     "agent\pyruntime_inspector_agent\gc_objects.py",
     "agent\pyruntime_inspector_agent\runtime_search.py",
     "samples\target_sample.py",
@@ -25,6 +26,7 @@ $requiredFiles = @(
     "docs\release.md",
     "docs\security.md",
     "docs\quick-attach.md",
+    "docs\console-namespaces.md",
     "docs\phase8-gc-objects.md"
 )
 

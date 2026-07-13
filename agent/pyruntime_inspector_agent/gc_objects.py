@@ -1,6 +1,6 @@
-import gc
 import time
 
+from .console_namespaces import _gc_objects_snapshot
 from .runtime_info import timestamp
 from .safe_metadata import type_module, type_name
 from .safe_objects import _page
@@ -20,7 +20,7 @@ def list_objects(inspector, query="", offset=0, page_size=100, max_objects=DEFAU
         raise ValueError(f"maxObjects must be between 1 and {MAX_OBJECTS}.")
 
     started = time.perf_counter()
-    objects = gc.get_objects()
+    objects = _gc_objects_snapshot()
     tracked_total = len(objects)
     scanned_count = min(tracked_total, max_objects)
     folded_query = query.casefold()

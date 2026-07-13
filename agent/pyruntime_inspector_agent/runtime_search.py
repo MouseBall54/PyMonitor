@@ -1,11 +1,18 @@
-import gc
 import time
 import types
 from collections import deque
 
-from . import classes, frames, modules
+from . import classes, console_namespaces, frames, modules
 from .runtime_info import timestamp
-from .safe_metadata import bounded_text, type_module, type_name, type_qualified_name
+from .safe_metadata import (
+    bounded_text,
+    exact_dict_value,
+    is_class_object,
+    is_dict_object,
+    type_module,
+    type_name,
+    type_qualified_name,
+)
 from .safe_objects import _safe_instance_dict
 
 
@@ -29,7 +36,10 @@ def search_runtime(
     max_objects=DEFAULT_MAX_OBJECTS,
     max_depth=DEFAULT_MAX_DEPTH,
 ):
-    roots = _runtime_roots(handles, agent_thread_id)
+    _validate(query, max_results, max_objects, max_depth)
+    started = time.perf_counter()
+    console_discovery = console_namespaces.list_namespaces(handles)
+    roots, root_metadata = _runtime_roots(handles, agent_thread_id, console_discovery)
     graph_budget = max(1, int(max_objects * 0.8))
     graph_result = search_roots(
         inspector,
@@ -47,7 +57,7 @@ def search_runtime(
         graph_result["objectLimitReached"] = remaining_objects <= 0
         graph_result["maxResults"] = max_results
         graph_result["maxObjects"] = max_objects
-        return graph_result
+        return _finalize_runtime_result(graph_result, root_metadata, started)
 
     gc_result = search_roots(
         inspector,
@@ -57,7 +67,8 @@ def search_runtime(
         remaining_objects,
         max_depth,
     )
-    return _combine_results(graph_result, gc_result, max_results, max_objects, max_depth)
+    combined = _combine_results(graph_result, gc_result, max_results, max_objects, max_depth)
+    return _finalize_runtime_result(combined, root_metadata, started)
 
 
 def search_roots(
@@ -111,6 +122,8 @@ def search_roots(
             "moduleName": root.get("moduleName"),
             "frameHandle": root.get("frameHandle"),
             "scopeType": root.get("scopeType"),
+            "consoleHandle": root.get("consoleHandle"),
+            "consoleAttributeName": root.get("consoleAttributeName"),
             "rootName": root_name if root_name is not None else root.get("rootName"),
             "classMember": class_member,
             "value": inspector.summarize(value) if value is not None else None,
@@ -121,6 +134,7 @@ def search_roots(
 
     pending = deque()
     expanded_by_root = []
+    root_iterators = deque()
     for root_index, root in enumerate(roots):
         if result_limit_reached:
             break
@@ -138,12 +152,33 @@ def search_roots(
             root_kind = {
                 "module": "module",
                 "frame": "frame",
+                "console": "console",
             }.get(root.get("sourceKind"), "source")
             if not add_result(root_kind, root.get("name", root_location), root_location, root_fields, root, root_value, root_location):
                 break
-        for name, value in root["entries"]():
-            path = _append_path(root_location, name)
+        try:
+            entries = iter(root["entries"]())
+        except RuntimeError:
+            children_truncated = True
+            continue
+        root_iterators.append((root_index, root, entries))
+
+    while root_iterators and len(pending) < max_objects:
+        root_index, root, entries = root_iterators.popleft()
+        try:
+            name, value = next(entries)
+        except StopIteration:
+            continue
+        except RuntimeError:
+            children_truncated = True
+            continue
+        else:
+            path = _append_path(root["location"], name)
             pending.append((root_index, root, name, value, path, 0, (id(value),), name))
+            root_iterators.append((root_index, root, entries))
+
+    if root_iterators:
+        object_limit_reached = True
 
     while pending and objects_scanned < max_objects and not result_limit_reached:
         root_index, root, name, value, path, depth, ancestry, root_name = pending.popleft()
@@ -155,7 +190,7 @@ def search_roots(
             if not add_result(kind, name, path, fields, root, value, path, depth=depth, root_name=root_name):
                 break
 
-        cls = value if isinstance(value, type) else type(value)
+        cls = value if is_class_object(value) else type(value)
         class_id = id(cls)
         matches = class_matches.get(class_id)
         if matches is None and classes_scanned < MAX_CLASSES:
@@ -207,6 +242,9 @@ def search_roots(
             child_identity = id(child)
             if child_identity in ancestry:
                 continue
+            if objects_scanned + len(pending) >= max_objects:
+                object_limit_reached = True
+                break
             child_path = _append_path(path, child_name)
             pending.append((
                 root_index, root, child_name, child, child_path, depth + 1,
@@ -255,8 +293,10 @@ def _validate(query, max_results, max_objects, max_depth):
     return tuple(part.casefold() for part in query.split() if part)
 
 
-def _runtime_roots(handles, agent_thread_id):
-    roots = []
+def _runtime_roots(handles, agent_thread_id, console_discovery=None):
+    if console_discovery is None:
+        console_discovery = console_namespaces.list_namespaces(handles)
+    roots = _console_roots(handles, console_discovery)
     registry = modules._module_registry()
     if registry is not None:
         for module_name, module in modules._module_entries(registry):
@@ -272,13 +312,21 @@ def _runtime_roots(handles, agent_thread_id):
             })
 
     snapshot = frames._current_frames_snapshot()
-    for thread_id, top in dict.items(snapshot):
+    thread_entries = list(dict.items(snapshot))
+    frame_rows = 0
+    frame_limit_reached = False
+    for thread_index, (thread_id, top) in enumerate(thread_entries):
         if thread_id == agent_thread_id:
             continue
         frame = top
         frame_count = 0
-        while frame is not None and frame_count < 100:
+        while (
+            frame is not None
+            and frame_count < frames._MAX_FRAMES_PER_THREAD
+            and frame_rows < frames._MAX_FRAME_ROWS
+        ):
             frame_count += 1
+            frame_rows += 1
             code = frame.f_code
             frame_handle = handles.put(frame)
             frame_name = bounded_text(getattr(code, "co_qualname", code.co_name), "<unnamed>", 512)
@@ -299,11 +347,47 @@ def _runtime_roots(handles, agent_thread_id):
                     "entries": lambda mapping=mapping: _namespace_entries(mapping),
                 })
             frame = frame.f_back
+        if frame is not None:
+            frame_limit_reached = True
+        if frame_rows >= frames._MAX_FRAME_ROWS:
+            if thread_index + 1 < len(thread_entries):
+                frame_limit_reached = True
+            break
+    return roots, {
+        "consoleDiscovery": console_discovery,
+        "frameRootsIncluded": frame_rows,
+        "frameRootLimitReached": frame_limit_reached,
+    }
+
+
+def _console_roots(handles, discovered=None):
+    if discovered is None:
+        discovered = console_namespaces.list_namespaces(handles)
+    roots = []
+    for row in discovered["items"]:
+        owner = handles.get(row["consoleHandle"])
+        state = _safe_instance_dict(owner)
+        namespace = exact_dict_value(state, row["attributeName"])
+        if type(namespace) is not dict:
+            continue
+        roots.append({
+            "sourceKind": "console",
+            "name": row["displayName"],
+            "location": (
+                f"Console namespaces / {row['displayName']} "
+                f"@{row['ownerAddressHex']}"
+            ),
+            "scopeType": "console",
+            "consoleHandle": row["consoleHandle"],
+            "consoleAttributeName": row["attributeName"],
+            "value": None,
+            "entries": lambda namespace=namespace: _namespace_entries(namespace),
+        })
     return roots
 
 
 def _gc_root(limit=DEFAULT_MAX_OBJECTS):
-    objects = gc.get_objects()
+    objects = console_namespaces._gc_objects_snapshot()
     tracked_total = len(objects)
     if tracked_total > limit:
         objects = objects[:limit]
@@ -348,18 +432,36 @@ def _combine_results(first, second, max_results, max_objects, max_depth):
     return combined
 
 
+def _finalize_runtime_result(result, root_metadata, started):
+    discovery = root_metadata["consoleDiscovery"]
+    console_complete = discovery.get("scanComplete") is True
+    frame_limit_reached = root_metadata["frameRootLimitReached"]
+    result.update({
+        "consoleDiscoveryComplete": console_complete,
+        "consoleNamespacesReturned": len(discovery.get("items", ())),
+        "consoleDiscoveryScannedCount": discovery.get("scannedCount", 0),
+        "consoleDiscoveryTrackedTotal": discovery.get("trackedTotal", 0),
+        "consoleDiscoveryTruncated": discovery.get("truncated") is True,
+        "consoleNamespaceLimitReached": discovery.get("namespaceLimitReached") is True,
+        "frameRootsIncluded": root_metadata["frameRootsIncluded"],
+        "frameRootLimitReached": frame_limit_reached,
+    })
+    result["scanComplete"] = result["scanComplete"] and console_complete and not frame_limit_reached
+    result["durationMilliseconds"] = round((time.perf_counter() - started) * 1000.0, 3)
+    result["snapshotTimestamp"] = timestamp()
+    return result
+
+
 def _namespace_entries(mapping):
-    if isinstance(mapping, dict):
+    if is_dict_object(mapping):
         entries = dict.items(mapping)
     else:
         entries = frames._frame_locals_proxy_items(mapping)
     if entries is None:
-        return []
-    return [
-        (bounded_text(name, "<unnamed>", 512), value)
-        for name, value in entries
-        if type(name) is str
-    ]
+        return
+    for name, value in entries:
+        if type(name) is str:
+            yield bounded_text(name, "<unnamed>", 512), value
 
 
 def _static_children(inspector, value):

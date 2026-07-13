@@ -20,7 +20,7 @@ _PY_TPFLAGS_HEAPTYPE = 1 << 9
 _MISSING = object()
 
 _PYOBJECT_GENERIC_GET_DICT = ctypes.pythonapi.PyObject_GenericGetDict
-_PYOBJECT_GENERIC_GET_DICT.argtypes = (ctypes.py_object, ctypes.c_void_p)
+_PYOBJECT_GENERIC_GET_DICT.argtypes = (ctypes.c_void_p, ctypes.c_void_p)
 _PYOBJECT_GENERIC_GET_DICT.restype = ctypes.py_object
 
 
@@ -677,7 +677,7 @@ def _extension_descriptor_base(mro, module_name, class_name):
 
 def _safe_instance_dict(value):
     try:
-        mapping = _PYOBJECT_GENERIC_GET_DICT(value, None)
+        mapping = _PYOBJECT_GENERIC_GET_DICT(id(value), None)
     except (AttributeError, TypeError):
         return None
     return mapping if type(mapping) is dict else None

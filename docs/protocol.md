@@ -15,7 +15,8 @@ The WPF client validates the Agent version and bootstrap ABI before sending any
 inspection request and reports a mismatch as `INCOMPATIBLE_AGENT`. The supported
 Phase 0 methods are `session.detach`, `runtime.getInfo`, `threads.list`,
 `frames.list`, `scopes.list`, `objects.describe`, `objects.listChildren`,
-`modules.list`, `modules.listNamespace`, `gc.listObjects`, `runtime.search`,
+`modules.list`, `modules.listNamespace`, `consoles.list`,
+`consoles.listNamespace`, `gc.listObjects`, `runtime.search`,
 `objects.release`, `classes.describe`, `arrays.describe`, `arrays.preview`,
 `arrays.tile`, `arrays.histogram`, `arrays.pixel`, `dataframes.describe`,
 `dataframes.preview`, `figures.describe`, `figures.preview`, `memory.status`,
@@ -26,7 +27,7 @@ Phase 0 methods are `session.detach`, `runtime.getInfo`, `threads.list`,
 and `pageSize`. The default is 100. Scope, module-namespace, object-child, and
 GC pages that create value handles are capped at 200 rows. Metadata-only module
 listing and execution-event methods retain their method-specific limits up to
-1,000 rows.
+1,000 rows. Console discovery returns at most 100 namespace sources.
 
 The fresh Quick/Live Attach bootstrap may answer the pending hello directly
 with `STALE_AGENT` when the target has an incompatible or partial cached Agent
@@ -58,6 +59,18 @@ user Python frame is active. Scope and module namespace results report
 mutation is retried once; repeated mutation returns a structured retry error so
 the client does not apply a partial total as a complete comparison snapshot.
 
+`consoles.list` takes an optional `maxObjects` (default 100,000, hard limit
+1,000,000) and discovers same-process embedded console owners without forcing a
+collection. It recognizes already-loaded `code.InteractiveInterpreter` /
+`InteractiveConsole` types, the direct `_user_ns` backing field of an
+already-loaded IPython `InteractiveShell`, bounded custom-console naming and
+field conventions, plus namespaces explicitly registered through the Agent API.
+Each row reports `consoleHandle`, `attributeName`, display/owner metadata,
+`entryCount`, kind, scan counts and completion flags. `consoles.listNamespace`
+takes that handle and field with `offset`/`pageSize`, resolves the owner's
+current exact dictionary, and applies the same safe summaries, 200-row cap,
+mutation retry and snapshot metadata as other variable scopes.
+
 `objects.listChildren` accepts `offset`, `pageSize`, the current navigation
 `depth`, and up to 32 `ancestorIdentityTokens`. It reads only exact built-in
 container entries or a statically available instance dictionary. Each child
@@ -81,9 +94,19 @@ object handles and safe previews. GC pages are capped at 200 rows so every
 returned handle fits in the bounded session handle store.
 
 `runtime.search` performs a read-only breadth-first integrated search beginning
-at every loaded exact module namespace and current frame locals/globals/built-ins,
-then uses the remaining scan budget for GC-tracked objects that may not be
-reachable from those namespaces.
+at each detected console namespace, every loaded exact module namespace and
+current frame locals/globals/built-ins, then uses the remaining scan budget for
+GC-tracked objects that may not be reachable from those namespaces. Console
+matches include `consoleHandle` and `consoleAttributeName` so the client can
+open the direct variable source rather than a coincidental GC object path.
+Console-owner detection has a separate fixed budget of 100,000 GC-tracked
+owners and at most 100 returned namespaces; it is not deducted from the
+`maxObjects` traversal budget. Frame roots are capped at 200 frames. The total
+duration includes root discovery. `consoleDiscoveryComplete`,
+`consoleDiscoveryScannedCount`, `consoleDiscoveryTrackedTotal`,
+`consoleDiscoveryTruncated`, `consoleNamespaceLimitReached`,
+`frameRootsIncluded`, and `frameRootLimitReached` expose these root bounds, and
+either incomplete root source forces the overall `scanComplete` value to false.
 It matches whitespace-separated query terms across variable/object names, paths,
 safe previews, type metadata and address, plus statically classified class,
 method, property, descriptor and class-attribute metadata. Recursive traversal

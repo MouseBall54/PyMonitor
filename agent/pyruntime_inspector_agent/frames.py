@@ -3,7 +3,7 @@ import threading
 import types
 
 from .runtime_info import timestamp
-from .safe_metadata import bounded_text
+from .safe_metadata import bounded_text, exact_dict_string_values, exact_dict_value, is_dict_object
 from .safe_objects import MAX_VALUE_PAGE_SIZE, _page, _safe_instance_dict
 
 _MAX_SCAN_ATTEMPTS = 2
@@ -21,14 +21,18 @@ def list_threads(agent_thread_id):
         state = _safe_instance_dict(thread)
         if type(state) is not dict:
             continue
-        thread_id = dict.get(state, "_ident")
+        thread_state = exact_dict_string_values(
+            state,
+            ("_ident", "_name", "_daemonic", "_is_stopped", "_started"),
+        )
+        thread_id = thread_state.get("_ident")
         if type(thread_id) is not int or thread_id == agent_thread_id:
             continue
-        name = dict.get(state, "_name")
-        daemon = dict.get(state, "_daemonic")
-        stopped = dict.get(state, "_is_stopped")
-        started_state = _safe_instance_dict(dict.get(state, "_started"))
-        started = dict.get(started_state, "_flag") if type(started_state) is dict else None
+        name = thread_state.get("_name")
+        daemon = thread_state.get("_daemonic")
+        stopped = thread_state.get("_is_stopped")
+        started_state = _safe_instance_dict(thread_state.get("_started"))
+        started = exact_dict_value(started_state, "_flag")
         alive = started and not stopped if type(started) is bool and type(stopped) is bool else thread_id in current
         result.append({
             "threadId": thread_id,
@@ -67,7 +71,7 @@ def list_frames(handles, agent_thread_id):
             code = frame.f_code
             raw_filename = code.co_filename
             filename = bounded_text(raw_filename, "<unknown>", 1024)
-            module_name = dict.get(frame.f_globals, "__name__")
+            module_name = exact_dict_value(frame.f_globals, "__name__")
             rows.append({
                 "frameHandle": frame_handles[id(frame)],
                 "threadId": thread_id,
@@ -130,7 +134,7 @@ def list_scope(handles, inspector, frame_handle, scope_type, offset=0, page_size
 
 
 def _namespace_entries(mapping):
-    if isinstance(mapping, dict):
+    if is_dict_object(mapping):
         entries = dict.items(mapping)
     else:
         entries = _frame_locals_proxy_items(mapping)
@@ -171,7 +175,7 @@ def _frame_locals_proxy_items(mapping):
 
 def _current_frames_snapshot():
     namespace = types.ModuleType.__getattribute__(sys, "__dict__")
-    function = dict.get(namespace, "_current_frames")
+    function = exact_dict_value(namespace, "_current_frames")
     if (
         type(function) is not types.BuiltinFunctionType
         or getattr(function, "__self__", None) is not sys
@@ -183,7 +187,10 @@ def _current_frames_snapshot():
 
 def _thread_snapshot():
     namespace = types.ModuleType.__getattribute__(threading, "__dict__")
-    registries = (dict.get(namespace, "_active"), dict.get(namespace, "_limbo"))
+    registries = (
+        exact_dict_value(namespace, "_active"),
+        exact_dict_value(namespace, "_limbo"),
+    )
     threads = []
     seen = set()
     truncated = False

@@ -632,7 +632,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     }
     public bool ShowVariableListEmpty => !IsScopeLoading && !IsSearchPending && FilteredVariables.Count == 0;
     public string VariableListStatusMessage => _currentScope is null
-        ? "Select a frame, module, or GC source to load variables."
+        ? "Select a frame, module, console namespace, or GC source to load variables."
         : Variables.Count == 0
             ? "No variables are available in this scope."
             : "No variables match the current search and filters.";
@@ -924,7 +924,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
     public async Task SelectTreeNodeAsync(RuntimeTreeNode? node)
     {
-        if (node?.Kind is RuntimeNodeKind.Scope or RuntimeNodeKind.Module or RuntimeNodeKind.GcObjects)
+        if (node?.Kind is RuntimeNodeKind.Scope or RuntimeNodeKind.Module or RuntimeNodeKind.ConsoleNamespace or RuntimeNodeKind.GcObjects)
             await LoadScopeAsync(node, resetPage: true);
         else if (node?.Kind == RuntimeNodeKind.Frame)
         {
@@ -938,8 +938,11 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     {
         var isModule = node.Kind == RuntimeNodeKind.Module && node.ModuleName is not null;
         var isFrameScope = node.Kind == RuntimeNodeKind.Scope && node.FrameHandle is not null && node.ScopeType is not null;
+        var isConsoleNamespace = node.Kind == RuntimeNodeKind.ConsoleNamespace
+            && node.ConsoleHandle is not null
+            && node.ConsoleAttributeName is not null;
         var isGcObjects = node.Kind == RuntimeNodeKind.GcObjects;
-        if (!IsConnected || (!isModule && !isFrameScope && !isGcObjects))
+        if (!IsConnected || (!isModule && !isFrameScope && !isConsoleNamespace && !isGcObjects))
             return;
         if (resetPage)
             _pageOffset = 0;
@@ -956,7 +959,11 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         IsScopeLoading = showLoadingOverlay;
         Breadcrumb = isGcObjects
             ? "GC-tracked objects"
-            : isModule ? $"Modules / {node.ModuleName}" : $"Threads / {node.Label}";
+            : isModule
+                ? $"Modules / {node.ModuleName}"
+                : isConsoleNamespace
+                    ? $"Console namespaces / {node.Label}"
+                    : $"Threads / {node.Label}";
         try
         {
             var parameters = isGcObjects
@@ -974,6 +981,14 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                     ["offset"] = _pageOffset,
                     ["pageSize"] = PageSize,
                 }
+                : isConsoleNamespace
+                ? new JsonObject
+                {
+                    ["consoleHandle"] = node.ConsoleHandle,
+                    ["attributeName"] = node.ConsoleAttributeName,
+                    ["offset"] = _pageOffset,
+                    ["pageSize"] = PageSize,
+                }
                 : new JsonObject
                 {
                     ["frameHandle"] = node.FrameHandle,
@@ -981,7 +996,13 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                     ["offset"] = _pageOffset,
                     ["pageSize"] = PageSize,
             };
-            var method = isGcObjects ? "gc.listObjects" : isModule ? "modules.listNamespace" : "scopes.list";
+            var method = isGcObjects
+                ? "gc.listObjects"
+                : isModule
+                    ? "modules.listNamespace"
+                    : isConsoleNamespace
+                        ? "consoles.listNamespace"
+                        : "scopes.list";
             using var handleResponse = await RequestHandleResponseAsync(method, parameters, token);
             var frame = handleResponse.Frame;
             if (generation != _selectionGeneration || token.IsCancellationRequested)
@@ -1773,6 +1794,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         GlobalSearchStatus = $"Searching the connected runtime recursively for “{query}”…";
         SelectedGlobalSearchResult = null;
         GlobalSearchResults.Clear();
+        RefreshObjectHandleReferences();
         try
         {
             using var response = await RequestHandleResponseAsync("runtime.search", new JsonObject
@@ -1842,6 +1864,22 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             SelectedWorkspaceTabIndex = 0;
             return;
         }
+        if (result.Kind == "console" && result.ConsoleHandle is not null && result.ConsoleAttributeName is not null)
+        {
+            var consoleNode = EnumerateRuntimeNodes().FirstOrDefault(node =>
+                node.Kind == RuntimeNodeKind.ConsoleNamespace
+                && string.Equals(node.ConsoleHandle, result.ConsoleHandle, StringComparison.Ordinal)
+                && string.Equals(node.ConsoleAttributeName, result.ConsoleAttributeName, StringComparison.Ordinal));
+            consoleNode ??= new RuntimeTreeNode(result.Location, RuntimeNodeKind.ConsoleNamespace)
+            {
+                ConsoleHandle = result.ConsoleHandle,
+                ConsoleAttributeName = result.ConsoleAttributeName,
+                ScopeType = "console",
+            };
+            await LoadScopeAsync(consoleNode, resetPage: true);
+            SelectedWorkspaceTabIndex = 0;
+            return;
+        }
         if (result.Value is null)
             return;
 
@@ -1878,9 +1916,13 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             ["offset"] = 0,
             ["pageSize"] = 1000,
         }, token);
+        using var consolesResponse = await RequestHandleResponseAsync("consoles.list", null, token);
+        var consolesFrame = consolesResponse.Frame;
         var threads = threadsFrame.Header["result"]!["items"]!.AsArray();
         var frames = framesFrame.Header["result"]!["items"]!.AsArray();
         var modules = modulesFrame.Header["result"]!["items"]!.AsArray();
+        var consolesResult = consolesFrame.Header["result"]!.AsObject();
+        var consoles = consolesResult["items"]!.AsArray();
         var processRoot = new RuntimeTreeNode($"Process  PID {TargetPid}");
         processRoot.Children.Add(new RuntimeTreeNode($"Private bytes  {PrivateBytes}", RuntimeNodeKind.Placeholder));
         var interpreterRoot = new RuntimeTreeNode("Interpreter");
@@ -1903,6 +1945,37 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             }
             threadsRoot.Children.Add(threadNode);
         }
+        var consolesRoot = new RuntimeTreeNode($"Console namespaces  ({consoles.Count})");
+        foreach (var console in consoles)
+        {
+            var displayName = console!["displayName"]!.GetValue<string>();
+            var address = console["ownerAddressHex"]!.GetValue<string>();
+            var count = console["entryCount"]?.GetValue<int>() ?? 0;
+            consolesRoot.Children.Add(new RuntimeTreeNode(
+                $"{displayName}  @{address}  ({count} variables)",
+                RuntimeNodeKind.ConsoleNamespace)
+            {
+                ConsoleHandle = console["consoleHandle"]!.GetValue<string>(),
+                ConsoleAttributeName = console["attributeName"]!.GetValue<string>(),
+                ScopeType = "console",
+            });
+        }
+        if (consoles.Count == 0)
+            consolesRoot.Children.Add(new RuntimeTreeNode("No in-process console namespaces detected.", RuntimeNodeKind.Placeholder));
+        if (consolesResult["truncated"]?.GetValue<bool>() == true)
+        {
+            var scanned = consolesResult["scannedCount"]?.GetValue<int>() ?? 0;
+            var tracked = consolesResult["trackedTotal"]?.GetValue<int>() ?? 0;
+            consolesRoot.Children.Add(new RuntimeTreeNode(
+                $"Detection scan limited to {scanned:N0} of {tracked:N0} GC-tracked objects.",
+                RuntimeNodeKind.Placeholder));
+        }
+        if (consolesResult["namespaceLimitReached"]?.GetValue<bool>() == true)
+        {
+            consolesRoot.Children.Add(new RuntimeTreeNode(
+                $"Detection result limited to {consoles.Count:N0} console namespaces.",
+                RuntimeNodeKind.Placeholder));
+        }
         var modulesRoot = new RuntimeTreeNode("Modules");
         RuntimeTreeNode? mainModuleNode = null;
         foreach (var module in modules)
@@ -1923,10 +1996,12 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             processRoot,
             interpreterRoot,
             threadsRoot,
+            consolesRoot,
             modulesRoot,
             PlaceholderRoot("Classes", "Select a variable to inspect its class."),
             new RuntimeTreeNode("GC-tracked objects", RuntimeNodeKind.GcObjects),
         ]);
+        RefreshObjectHandleReferences();
         await RefreshMemoryAsync(token);
         await RefreshExecutionStatusAsync(token);
         if (ExecutionMonitoringActive)
@@ -1956,13 +2031,18 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private void ApplyScopeResult(JsonObject result, RuntimeTreeNode node)
     {
         var isGcObjects = node.Kind == RuntimeNodeKind.GcObjects;
+        var isConsoleNamespace = node.Kind == RuntimeNodeKind.ConsoleNamespace;
         _pageTotal = result["total"]!.GetValue<int>();
         var scopeLabel = isGcObjects
             ? "gc-tracked"
-            : node.ModuleName is null ? node.ScopeType! : $"module:{node.ModuleName}";
+            : isConsoleNamespace
+                ? $"console:{node.ConsoleAttributeName}"
+                : node.ModuleName is null ? node.ScopeType! : $"module:{node.ModuleName}";
         var scopeKey = isGcObjects
             ? "gc-tracked"
-            : node.ModuleName is null ? $"{node.FrameHandle}:{node.ScopeType}" : $"module:{node.ModuleName}";
+            : isConsoleNamespace
+                ? $"console:{node.ConsoleHandle}:{node.ConsoleAttributeName}"
+                : node.ModuleName is null ? $"{node.FrameHandle}:{node.ScopeType}" : $"module:{node.ModuleName}";
         var snapshotKey = $"{scopeKey}|page:{_pageOffset}|query:{(isGcObjects ? SearchText.Trim() : "")}";
         var now = DateTime.Now;
         ScopeSnapshot? priorSnapshot = null;
@@ -3716,7 +3796,13 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         foreach (var row in Variables.Where(row => !row.IsRemoved))
             AddHandle(referenced, row.HandleId);
         foreach (var result in GlobalSearchResults)
+        {
             AddHandle(referenced, result.Value?.HandleId);
+            AddHandle(referenced, result.ConsoleHandle);
+        }
+        foreach (var node in EnumerateRuntimeNodes())
+            AddHandle(referenced, node.ConsoleHandle);
+        AddHandle(referenced, _currentScope?.ConsoleHandle);
         if (SelectedVariable is { IsRemoved: false } selected)
             AddHandle(referenced, selected.HandleId);
         AddContextHandles(referenced, _currentObject);
@@ -3952,7 +4038,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         {
             foreach (var property in value)
             {
-                if (property.Key == "handleId"
+                if (property.Key is "handleId" or "consoleHandle"
                     && property.Value is JsonValue handleValue
                     && handleValue.TryGetValue<string>(out var handle)
                     && !string.IsNullOrWhiteSpace(handle))
@@ -5155,6 +5241,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     {
         if (node.Kind == RuntimeNodeKind.GcObjects)
             return "gc-tracked";
+        if (node.Kind == RuntimeNodeKind.ConsoleNamespace)
+            return $"console:{node.ConsoleHandle}:{node.ConsoleAttributeName}";
         if (node.ModuleName is not null)
             return $"module:{node.ModuleName}";
         return $"{node.FrameHandle}:{node.ScopeType}";
@@ -5191,6 +5279,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             ModuleName = item["moduleName"]?.GetValue<string>(),
             FrameHandle = item["frameHandle"]?.GetValue<string>(),
             ScopeType = item["scopeType"]?.GetValue<string>(),
+            ConsoleHandle = item["consoleHandle"]?.GetValue<string>(),
+            ConsoleAttributeName = item["consoleAttributeName"]?.GetValue<string>(),
             RootName = item["rootName"]?.GetValue<string>(),
             Depth = item["depth"]?.GetValue<int>() ?? 0,
             Value = value is null
@@ -5217,6 +5307,22 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             limits.Add($"depth limit {result["maxDepth"]?.GetValue<int>() ?? 0:N0}");
         if (result["childrenTruncated"]?.GetValue<bool>() == true)
             limits.Add("large child collection limit");
+        if (result["consoleDiscoveryTruncated"]?.GetValue<bool>() == true)
+        {
+            var scanned = result["consoleDiscoveryScannedCount"]?.GetValue<int>() ?? 0;
+            var tracked = result["consoleDiscoveryTrackedTotal"]?.GetValue<int>() ?? 0;
+            limits.Add($"console discovery object limit ({scanned:N0}/{tracked:N0})");
+        }
+        if (result["consoleNamespaceLimitReached"]?.GetValue<bool>() == true)
+        {
+            var returned = result["consoleNamespacesReturned"]?.GetValue<int>() ?? 0;
+            limits.Add($"console namespace limit ({returned:N0} returned)");
+        }
+        if (result["frameRootLimitReached"]?.GetValue<bool>() == true)
+        {
+            var included = result["frameRootsIncluded"]?.GetValue<int>() ?? 0;
+            limits.Add($"frame root limit ({included:N0} frames)");
+        }
         if (result["responseTruncated"]?.GetValue<bool>() == true)
             limits.Add("response size limit");
         return limits.Count == 0 ? "class scan safety limit reached" : string.Join(", ", limits) + " reached";

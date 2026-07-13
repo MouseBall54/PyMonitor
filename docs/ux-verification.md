@@ -1,6 +1,6 @@
 # PyMonitor UX verification checklist
 
-Use this checklist for an interactive release candidate of PyMonitor `26.7.11`
+Use this checklist for an interactive release candidate of PyMonitor `26.7.12`
 on Windows 10 or 11 x64. Run the packaged `PyMonitor.exe` and a real local
 CPython target together; do not substitute a ViewModel-only test for the items
 that exercise selection, focus, scaling, or process attachment.
@@ -21,7 +21,7 @@ integration, App, packaging, and stability evidence.
   maximizing, closing, and reopening restores the saved settings.
 - [ ] A malformed `%LOCALAPPDATA%\PyMonitor\settings.json` falls back to usable
   defaults without preventing startup.
-- [x] About shows PyMonitor, version `26.7.11`, developer 박영문, Windows x64,
+- [x] About shows PyMonitor, version `26.7.12`, developer 박영문, Windows x64,
   and the read-only inspection boundary.
 - [x] The title-bar and shell icons use the EXE's 11-frame 16–256px ICO, while
   the 30px header and 66px About marks use the transparent 1254px PNG master
@@ -117,8 +117,8 @@ sales = pd.DataFrame(
   state cleanly, and GC scanning occurs only through an explicit Search / Scan
   or refresh action for that source.
 - [x] The portable artifact is
-  `PyMonitor-26.7.11-win-x64.zip`; the installer is
-  `PyMonitor-26.7.11-win-x64.msi`; installed shortcuts launch `PyMonitor.exe`
+  `PyMonitor-26.7.12-win-x64.zip`; the installer is
+  `PyMonitor-26.7.12-win-x64.msi`; installed shortcuts launch `PyMonitor.exe`
   and Windows Apps & Features identifies PyMonitor and developer 박영문.
 
 ## Execution record — 2026-07-11

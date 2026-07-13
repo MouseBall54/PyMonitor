@@ -32,6 +32,16 @@
   module/frame traversal receives a protected share of that budget and unused
   capacity flows to GC-tracked objects. The UI labels any limit-hit response as
   a bounded scan.
+- Embedded-console discovery is same-process and scans at most 100,000
+  GC-tracked owners on connection or explicit Runtime refresh. A console beyond
+  that bound can be absent while the tree reports an incomplete scan. Periodic
+  Variables refresh does not rescan GC. Arbitrary `exec` dictionaries have no
+  reliable runtime marker and must be registered with `register_namespace`;
+  registration keeps the exact dictionary alive until explicit unregister.
+- Automatic custom-console detection requires a console-like leaf class name
+  and a supported direct exact-dictionary field. Separate subprocesses,
+  subinterpreters, mapping subclasses and property-only namespace APIs are not
+  included.
 - Frame and module namespace pages retain only the requested rows while
   scanning the direct dictionary. Pages follow dictionary insertion order
   rather than an alphabetical full-copy sort; target mutations can therefore

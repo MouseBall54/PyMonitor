@@ -15,6 +15,7 @@ public sealed class HelpViewModelTests
         "vscode-debugging",
         "managed-launch",
         "inspect-variables",
+        "console-namespaces",
         "objects-classes",
         "global-runtime-search",
         "arrays-images",
@@ -36,6 +37,7 @@ public sealed class HelpViewModelTests
         "vscode-debugging",
         "managed-launch",
         "inspect-variables",
+        "console-namespaces",
         "objects-classes",
         "global-runtime-search",
         "arrays-images",
@@ -77,6 +79,7 @@ public sealed class HelpViewModelTests
     [InlineData("F1", "shortcuts-safety")]
     [InlineData("설치", "installation")]
     [InlineData("전체 런타임 통합검색", "global-runtime-search")]
+    [InlineData("내부 터미널", "console-namespaces")]
     public void SearchFindsEnglishKoreanAndArticleBodyKeywords(string query, string expectedTopicId)
     {
         var matches = HelpCatalog.Search(query);

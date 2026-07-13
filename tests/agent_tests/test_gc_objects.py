@@ -1,3 +1,4 @@
+import gc
 import unittest
 from unittest import mock
 
@@ -13,7 +14,7 @@ class GcObjectTests(unittest.TestCase):
 
     def test_lists_sorted_gc_tracked_objects_with_pagination(self):
         values = [Zulu(), Alpha(), Dangerous()]
-        with mock.patch.object(gc_objects.gc, "get_objects", return_value=values):
+        with mock.patch.object(gc_objects, "_gc_objects_snapshot", return_value=values):
             first = gc_objects.list_objects(self.inspector, page_size=2)
             second = gc_objects.list_objects(self.inspector, offset=2, page_size=2)
 
@@ -28,7 +29,7 @@ class GcObjectTests(unittest.TestCase):
     def test_searches_type_module_and_address_without_executing_user_code(self):
         danger = Dangerous()
         address = hex(id(danger))
-        with mock.patch.object(gc_objects.gc, "get_objects", return_value=[Alpha(), danger]):
+        with mock.patch.object(gc_objects, "_gc_objects_snapshot", return_value=[Alpha(), danger]):
             by_type = gc_objects.list_objects(self.inspector, query="dangerous")
             by_module = gc_objects.list_objects(self.inspector, query=__name__)
             by_address = gc_objects.list_objects(self.inspector, query=address)
@@ -56,7 +57,7 @@ class GcObjectTests(unittest.TestCase):
 
         Host.__module__ = HostileText()
         value = Host()
-        with mock.patch.object(gc_objects.gc, "get_objects", return_value=[value]):
+        with mock.patch.object(gc_objects, "_gc_objects_snapshot", return_value=[value]):
             result = gc_objects.list_objects(self.inspector, query="<unknown>.host")
 
         self.assertEqual(1, result["total"])
@@ -65,8 +66,8 @@ class GcObjectTests(unittest.TestCase):
 
     def test_reports_scan_truncation_without_forcing_collection(self):
         values = [Alpha(), Zulu(), Dangerous()]
-        with mock.patch.object(gc_objects.gc, "get_objects", return_value=values), \
-                mock.patch.object(gc_objects.gc, "collect") as collect:
+        with mock.patch.object(gc_objects, "_gc_objects_snapshot", return_value=values), \
+                mock.patch.object(gc, "collect") as collect:
             result = gc_objects.list_objects(self.inspector, max_objects=2)
 
         self.assertEqual(3, result["trackedTotal"])

@@ -116,6 +116,14 @@ verified after authentication. Once connected, the client lists
 already-loaded modules and automatically opens the direct `__main__` namespace;
 this keeps idle REPL globals visible without requiring an active frame.
 
+The same runtime-tree load performs bounded discovery of same-process embedded
+console owners. Standard `InteractiveConsole.locals`, IPython's direct
+`_user_ns`, convention-based custom owners, and explicitly registered exact
+dictionaries become first-class variable scopes. Selection resolves the
+owner's current dictionary through an opaque session handle, so normal
+Variables snapshot comparison can observe declarations made after the command
+frame has returned. Periodic scope refresh does not repeat GC discovery.
+
 A byte-identical detached Agent can therefore reconnect after PyMonitor moves
 to another folder. A runtime-source mismatch or partial/mixed package cache is
 reported immediately as `STALE_AGENT`; an already-active Agent with different

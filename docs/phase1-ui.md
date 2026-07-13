@@ -18,7 +18,8 @@ section.
 
 Inspect is a master-detail workflow with three linked regions:
 
-1. Choose a frame scope, loaded module namespace, or GC-tracked object source
+1. Choose a frame scope, loaded module namespace, embedded console namespace,
+   or GC-tracked object source
    in **Runtime Tree**.
 2. Search, filter, and select a row in **Variables**.
 3. Inspect that same selected object in **Overview**, **Object Tree**,
@@ -62,7 +63,9 @@ existed before the search, including after a detail refresh.
 For ordinary frame and module scopes, filtering operates on the current
 snapshot. GC-tracked object search is different: the query is sent only after
 an explicit **Search / Scan**, because each request can examine up to 100,000
-GC-tracked objects. Periodic refresh deliberately skips GC scans.
+GC-tracked objects. Periodic refresh deliberately skips GC scans. A selected
+console namespace participates in normal periodic refresh without repeating its
+bounded owner-discovery scan.
 
 Each ordinary scope snapshot is compared with its preceding snapshot. Changed
 rows remain highlighted for a default 12-second window, ensuring at least ten
@@ -198,7 +201,7 @@ Light is the default theme; Dark remains optional. PyMonitor persists the
 theme, refresh interval, window dimensions and maximized state, and left/right
 pane widths in `%LOCALAPPDATA%\PyMonitor\settings.json`. Missing, malformed, or
 out-of-range settings fall back to bounded defaults. About identifies
-PyMonitor `26.7.11`, developer 박영문, the Windows x64 target, and the read-only
+PyMonitor `26.7.12`, developer 박영문, the Windows x64 target, and the read-only
 inspection model.
 
 - `Ctrl+F` switches to Inspect and focuses Variables search.

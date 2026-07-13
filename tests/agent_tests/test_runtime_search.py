@@ -1,7 +1,15 @@
 import unittest
+from unittest import mock
 
+from pyruntime_inspector_agent import console_namespaces, frames, modules
+from pyruntime_inspector_agent.console_namespaces import register_namespace, unregister_namespace
 from pyruntime_inspector_agent.handles import HandleStore
-from pyruntime_inspector_agent.runtime_search import _gc_root, search_roots
+from pyruntime_inspector_agent.runtime_search import (
+    _console_roots,
+    _gc_root,
+    search_roots,
+    search_runtime,
+)
 from pyruntime_inspector_agent.safe_objects import SafeObjectInspector
 
 
@@ -94,6 +102,15 @@ class RuntimeSearchTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             search_roots(self.inspector, self.root(object()), "needle", max_depth=33)
 
+    def test_invalid_runtime_query_is_rejected_before_console_discovery(self):
+        with mock.patch.object(
+            console_namespaces,
+            "_gc_objects_snapshot",
+            side_effect=AssertionError("console discovery must not run"),
+        ):
+            with self.assertRaises(ValueError):
+                search_runtime(self.inspector, self.handles, -1, "   ")
+
     def test_breadth_first_search_reaches_a_shallow_later_root_before_deep_expansion(self):
         roots = [
             {
@@ -122,6 +139,62 @@ class RuntimeSearchTests(unittest.TestCase):
         self.assertEqual("Modules / user_module / shallow_needle", match["location"])
         self.assertEqual(2, result["rootsScanned"])
 
+    def test_root_namespaces_are_sampled_round_robin_within_object_budget(self):
+        pulls = {"large": 0, "later": 0}
+
+        def entries(source, values):
+            for item in values:
+                pulls[source] += 1
+                yield item
+
+        roots = [
+            {
+                "sourceKind": "module",
+                "name": "large",
+                "location": "Modules / large",
+                "moduleName": "large",
+                "scopeType": "module",
+                "value": None,
+                "entries": lambda: entries("large", ((f"item_{index}", index) for index in range(100))),
+            },
+            {
+                "sourceKind": "module",
+                "name": "later",
+                "location": "Modules / later",
+                "moduleName": "later",
+                "scopeType": "module",
+                "value": None,
+                "entries": lambda: entries("later", [("later_needle", 42)]),
+            },
+        ]
+
+        result = search_roots(self.inspector, roots, "later_needle", max_objects=2)
+
+        self.assertTrue(any(item["name"] == "later_needle" for item in result["items"]))
+        self.assertEqual({"large": 1, "later": 1}, pulls)
+        self.assertTrue(result["objectLimitReached"])
+
+    def test_runtime_search_reports_incomplete_console_discovery(self):
+        discovery = {
+            "items": [],
+            "scanComplete": False,
+            "scannedCount": 10,
+            "trackedTotal": 20,
+            "truncated": True,
+            "namespaceLimitReached": False,
+        }
+        with mock.patch.object(console_namespaces, "list_namespaces", return_value=discovery), \
+                mock.patch.object(console_namespaces, "_gc_objects_snapshot", return_value=[]), \
+                mock.patch.object(modules, "_module_registry", return_value=None), \
+                mock.patch.object(frames, "_current_frames_snapshot", return_value={}):
+            result = search_runtime(self.inspector, self.handles, -1, "missing")
+
+        self.assertFalse(result["scanComplete"])
+        self.assertFalse(result["consoleDiscoveryComplete"])
+        self.assertTrue(result["consoleDiscoveryTruncated"])
+        self.assertEqual(10, result["consoleDiscoveryScannedCount"])
+        self.assertEqual(20, result["consoleDiscoveryTrackedTotal"])
+
     def test_gc_root_exposes_tracked_objects_as_an_explicit_runtime_location(self):
         target = _NestedTarget()
         target.cycle = target
@@ -132,6 +205,39 @@ class RuntimeSearchTests(unittest.TestCase):
         self.assertEqual("gc", root["sourceKind"])
         self.assertEqual("GC-tracked objects", root["location"])
         self.assertTrue(any(value is target for _, value in entries))
+
+    def test_console_namespace_is_a_direct_search_root_with_variable_location(self):
+        namespace = {"console_search_needle": 2468}
+        registration_id = register_namespace("Embedded exec console", namespace)
+        self.addCleanup(unregister_namespace, registration_id)
+
+        with mock.patch.object(console_namespaces, "_gc_objects_snapshot", return_value=[]):
+            roots = _console_roots(self.handles)
+        result = search_roots(self.inspector, roots, "console_search_needle")
+
+        match = next(item for item in result["items"] if item["name"] == "console_search_needle")
+        self.assertEqual("variable", match["kind"])
+        self.assertEqual("console", match["sourceKind"])
+        self.assertEqual("console", match["scopeType"])
+        self.assertIsNotNone(match["consoleHandle"])
+        self.assertEqual("namespace", match["consoleAttributeName"])
+        self.assertTrue(match["location"].startswith("Console namespaces / Embedded exec console @0x"))
+
+    def test_console_value_does_not_execute_spoofed_class_property(self):
+        class HostileValue:
+            @property
+            def __class__(self):
+                raise AssertionError("runtime search must not read target __class__")
+
+        namespace = {"hostile_console_value": HostileValue()}
+        registration_id = register_namespace("Hostile console", namespace)
+        self.addCleanup(unregister_namespace, registration_id)
+
+        with mock.patch.object(console_namespaces, "_gc_objects_snapshot", return_value=[]):
+            roots = _console_roots(self.handles)
+        result = search_roots(self.inspector, roots, "hostile_console_value")
+
+        self.assertTrue(any(item["name"] == "hostile_console_value" for item in result["items"]))
 
 
 if __name__ == "__main__":

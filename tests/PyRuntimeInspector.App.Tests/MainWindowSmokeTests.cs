@@ -544,7 +544,7 @@ public sealed class MainWindowSmokeTests
                 var updateStatus = LogicalDescendants<TextBlock>(aboutWindow)
                     .Single(text => AutomationProperties.GetLiveSetting(text) == AutomationLiveSetting.Polite);
                 Assert.Equal(updateStatus.Text, AutomationProperties.GetName(updateStatus));
-                Assert.Contains("26.7.12", updateStatus.Text, StringComparison.Ordinal);
+                Assert.Contains("26.7.13", updateStatus.Text, StringComparison.Ordinal);
                 Assert.True(LogicalDescendants<Button>(aboutWindow)
                     .Single(button => AutomationProperties.GetName(button)
                         == "Download and install available PyMonitor update")
@@ -837,8 +837,8 @@ public sealed class MainWindowSmokeTests
 
     private sealed class AvailableUpdateService : IGitHubUpdateService
     {
-        private static readonly SemanticVersion CurrentVersion = SemanticVersion.Parse("26.7.11");
-        private static readonly SemanticVersion LatestVersion = SemanticVersion.Parse("26.7.12");
+        private static readonly SemanticVersion CurrentVersion = SemanticVersion.Parse("26.7.12");
+        private static readonly SemanticVersion LatestVersion = SemanticVersion.Parse("26.7.13");
         private static readonly string InstallerName = $"PyMonitor-{LatestVersion}-win-x64.msi";
         private static readonly GitHubUpdateRelease Release = new(
             LatestVersion,

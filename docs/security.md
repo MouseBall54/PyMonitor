@@ -34,6 +34,28 @@
   Filtering reads exact type metadata and addresses only; arbitrary previews
   are created only for the requested page.
 
+## Embedded console namespaces
+
+- Runtime-tree load performs a separate bounded console-owner detection scan of
+  at most 100,000 objects. It never calls `gc.collect()` and periodic Variables
+  refresh reuses the selected owner handle instead of repeating the GC scan.
+- Detection reads only exact loaded type identities, safe type metadata, the
+  direct CPython instance dictionary, and exact built-in dictionaries. IPython
+  `_user_ns` is read as a backing field; its `user_ns` property is not invoked.
+- Exact-string fields are found by iterating direct dictionaries and ignoring
+  non-string target keys, so colliding key equality hooks are not invoked.
+- GC snapshots use the genuine loaded CPython built-in and reject a replaced
+  `gc.get_objects` callable instead of executing it.
+- Custom automatic detection requires a console-like leaf class name and one of
+  a fixed set of direct namespace fields. It does not infer arbitrary mappings
+  from `__builtins__` or execute `getattr`, properties, descriptors, callables,
+  `repr`, or `str`.
+- `register_namespace` accepts only an exact dictionary, rejects duplicate
+  identity, and retains at most 100 registrations. Registration intentionally
+  keeps a strong reference until `unregister_namespace` is called.
+- Console owner handles use the same opaque session, TTL, LRU, reference
+  tracking, release and detach rules as inspected object handles.
+
 ## Deep object and class inspection
 
 - Object Tree reads only exact built-in container entries or the direct
@@ -61,7 +83,7 @@
 ## Global runtime search
 
 - Integrated search starts only on an explicit user action and breadth-first
-  scans loaded module dictionaries and current frame namespaces without
+  scans detected console namespaces, loaded module dictionaries and current frame namespaces without
   importing anything, then scans a bounded `gc.get_objects()` snapshot with
   the remaining request budget without forcing a collection.
 - Recursive edges are limited to exact built-in containers and direct instance
@@ -73,6 +95,13 @@
 - Results, visited objects, children per object, class scans and depth all have
   hard bounds. Every response reports whether those bounds made the search
   incomplete, and only matching rows receive object handles.
+- Root namespaces are consumed round-robin and the pending breadth-first
+  frontier never exceeds the request object budget. Console discovery and the
+  200-frame root cap are reported independently and participate in the overall
+  completion status.
+- The production Agent's 2,048-entry TTL/LRU handle store leaves room for a
+  maximum 500-result search while the bounded frame, console and current UI
+  source handles remain navigable.
 
 ## Quick Attach bootstrap
 

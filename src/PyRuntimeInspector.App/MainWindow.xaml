@@ -4,7 +4,7 @@
         xmlns:controls="clr-namespace:PyRuntimeInspector.App.Controls"
         xmlns:local="clr-namespace:PyRuntimeInspector.App"
         xmlns:vm="clr-namespace:PyRuntimeInspector.App.ViewModels"
-        Title="PyMonitor 26.7.11"
+        Title="PyMonitor 26.7.12"
         Width="1500"
         Height="920"
         MinWidth="960"

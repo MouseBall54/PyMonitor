@@ -32,6 +32,35 @@ public sealed class CooperativeAgentTests
 
         var globals = await ScopeAsync(client, frameHandle, "globals");
         Assert.Equal("123", FindValue(globals, "GLOBAL_NUMBER")["safePreview"]!.GetValue<string>());
+
+        var consoles = Result(await client.RequestAsync("consoles.list", new JsonObject
+        {
+            ["maxObjects"] = 100000,
+        }));
+        var embeddedConsole = consoles["items"]!.AsArray().Single(item =>
+            item!["ownerType"]!.GetValue<string>() == "code.InteractiveConsole"
+            && item["attributeName"]!.GetValue<string>() == "locals")!;
+        var consoleScope = Result(await client.RequestAsync("consoles.listNamespace", new JsonObject
+        {
+            ["consoleHandle"] = embeddedConsole["consoleHandle"]!.GetValue<string>(),
+            ["attributeName"] = embeddedConsole["attributeName"]!.GetValue<string>(),
+            ["pageSize"] = 200,
+        }))["items"]!.AsArray();
+        Assert.Equal("2468", FindValue(consoleScope, "terminal_only_value")["safePreview"]!.GetValue<string>());
+
+        var consoleSearch = Result(await client.RequestAsync("runtime.search", new JsonObject
+        {
+            ["query"] = "terminal_only_value",
+            ["maxResults"] = 50,
+            ["maxObjects"] = 10000,
+            ["maxDepth"] = 8,
+        }));
+        var consoleVariable = consoleSearch["items"]!.AsArray().Single(item =>
+            item!["kind"]!.GetValue<string>() == "variable"
+            && item["name"]!.GetValue<string>() == "terminal_only_value"
+            && item["sourceKind"]!.GetValue<string>() == "console")!;
+        Assert.StartsWith("Console namespaces / code.InteractiveConsole.locals @0x", consoleVariable["location"]!.GetValue<string>());
+
         var detector = FindValue(globals, "detector");
         var classDescription = Result(await client.RequestAsync("classes.describe", new JsonObject { ["handleId"] = detector["handleId"]!.GetValue<string>() }));
         var members = classDescription["members"]!.AsArray();

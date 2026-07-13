@@ -1,3 +1,4 @@
+import code
 import time
 
 import numpy as np
@@ -11,6 +12,8 @@ GLOBAL_FLOAT_IMAGE = np.linspace(-1.0, 1.0, 100, dtype=np.float32).reshape(10, 1
 GLOBAL_FLOAT_IMAGE[0, 0] = np.nan
 GLOBAL_FLOAT_IMAGE[0, 1] = np.inf
 GLOBAL_LABELS = np.arange(100, dtype=np.int32).reshape(10, 10) % 7
+EMBEDDED_CONSOLE = code.InteractiveConsole()
+EMBEDDED_CONSOLE.push("terminal_only_value = 2468")
 
 
 class Detector:

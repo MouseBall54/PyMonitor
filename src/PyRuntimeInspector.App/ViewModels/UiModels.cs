@@ -12,6 +12,7 @@ public enum RuntimeNodeKind
     Frame,
     Scope,
     Module,
+    ConsoleNamespace,
     GcObjects,
     Placeholder,
 }
@@ -23,6 +24,8 @@ public sealed class RuntimeTreeNode(string label, RuntimeNodeKind kind = Runtime
     public string? FrameHandle { get; init; }
     public string? ScopeType { get; init; }
     public string? ModuleName { get; init; }
+    public string? ConsoleHandle { get; init; }
+    public string? ConsoleAttributeName { get; init; }
     public ObservableCollection<RuntimeTreeNode> Children { get; } = [];
 }
 
@@ -149,12 +152,14 @@ public sealed class GlobalSearchResultRow
     public string? ModuleName { get; init; }
     public string? FrameHandle { get; init; }
     public string? ScopeType { get; init; }
+    public string? ConsoleHandle { get; init; }
+    public string? ConsoleAttributeName { get; init; }
     public string? RootName { get; init; }
     public required int Depth { get; init; }
     public VariableRow? Value { get; init; }
     public string TypeName => Value?.TypeName ?? "—";
     public string SafePreview => Value?.SafePreview ?? "";
-    public bool CanOpen => Value is not null || SourceKind is "module" or "frame";
+    public bool CanOpen => Value is not null || SourceKind is "module" or "frame" or "console";
 }
 
 public enum VariableChangeKind

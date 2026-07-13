@@ -6,7 +6,7 @@ import types
 
 from . import arrays, dataframes, matplotlib_figures
 from .runtime_info import timestamp
-from .safe_metadata import bounded_text, type_module, type_name, type_qualified_name
+from .safe_metadata import bounded_text, is_class_object, type_module, type_name, type_qualified_name
 
 _CONTAINER_TYPES = (list, tuple, set, frozenset, dict)
 _KNOWN_SIZE_TYPES = (type(None), bool, int, float, complex, str, bytes, bytearray, list, tuple, set, frozenset, dict)
@@ -20,7 +20,7 @@ _MAX_ARRAY_TOKEN_WINDOWS = 16
 _MAX_DIRECT_INT_BITS = 4096
 
 _PYOBJECT_GENERIC_GET_DICT = ctypes.pythonapi.PyObject_GenericGetDict
-_PYOBJECT_GENERIC_GET_DICT.argtypes = (ctypes.py_object, ctypes.c_void_p)
+_PYOBJECT_GENERIC_GET_DICT.argtypes = (ctypes.c_void_p, ctypes.c_void_p)
 _PYOBJECT_GENERIC_GET_DICT.restype = ctypes.py_object
 
 
@@ -186,7 +186,7 @@ class SafeObjectInspector:
         if exact is types.FunctionType:
             name = types.FunctionType.__getattribute__(value, "__qualname__")
             return f"function {bounded_text(name, '<unnamed>')}"
-        if isinstance(value, type):
+        if is_class_object(value):
             return f"class {type_qualified_name(value)}"
         if exact in _CONTAINER_TYPES:
             if id(value) in seen:
@@ -334,7 +334,7 @@ def _relation_kind(origin):
 
 def _safe_instance_dict(value):
     try:
-        mapping = _PYOBJECT_GENERIC_GET_DICT(value, None)
+        mapping = _PYOBJECT_GENERIC_GET_DICT(id(value), None)
     except (AttributeError, TypeError):
         return None
     return mapping if type(mapping) is dict else None
