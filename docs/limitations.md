@@ -25,24 +25,24 @@
   and does not traverse cycle markers. Opaque handles are session-scoped and
   can expire through the five-minute TTL or 512-entry LRU bound; refresh the
   source scope and reselect the current value after an expired state.
-- Global Search is a bounded graph search, not a mathematical enumeration of
-  every reference path. It evaluates aliases as separate result locations but
-  expands a shared object's children once per runtime root. Defaults are 200
-  results, 100,000 visited objects and depth 16, with 5,000 children per object;
-  module/frame traversal receives a protected share of that budget and unused
-  capacity flows to GC-tracked objects. The UI labels any limit-hit response as
-  a bounded scan.
+- The WPF Global Search uses exhaustive traversal without fixed object, depth,
+  child, edge, root-source, or duration budgets. It evaluates aliases as
+  separate result locations but expands a shared object's children once per
+  runtime root and stops cyclic ancestry. Result count and protocol response
+  size remain bounded, and a concurrently mutating namespace can still make
+  the returned result list incomplete. Large runtimes can therefore take a
+  long time to scan.
 - Exact address search accepts only the current connected CPython object's
   hexadecimal `id()` value. It does not dereference arbitrary pointers and
   does not search native or NumPy buffer address ranges. It compares identity
-  across runtime roots and a bounded scan of safe static owner
+  across runtime roots and an exhaustive scan of safe static owner
   edges; unsupported descriptors, slots and arbitrary container subclasses can
   therefore hide a reference. A repeated search of the same numeric address is
   a new snapshot and is not automatically rebound to an expired handle.
 - Address search never calls `gc.get_referrers()` or forces collection. Its
   fallback uses genuine `gc.get_objects()`, whose initial tracked-object list
-  allocation is heap-sized even though subsequent owner, edge, depth, result
-  and time limits are reported as a bounded scan.
+  allocation is heap-sized. The WPF exhaustive mode has no traversal deadline,
+  so it can materially load the attached process until the scan completes.
 - CPython emits interpreter-wide audit events for `gc.get_objects()` and
   `sys._current_frames()`. A target-installed audit hook can therefore observe,
   delay, or reject address and global-search snapshot operations even though

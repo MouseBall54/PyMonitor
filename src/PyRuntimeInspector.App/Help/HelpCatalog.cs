@@ -290,7 +290,7 @@ public static class HelpCatalog
                 "Search runtime을 누르고 Kind, Name, Relation, Address, Exact runtime location, Matched in과 Safe value를 확인합니다.",
                 "결과를 두 번 클릭하거나 Open location을 눌러 해당 객체를 Inspect에서 엽니다.",
                 "class/method/property 결과는 소유 객체를 연 뒤 Class and Methods의 해당 이름까지 자동으로 검색합니다.",
-                "상태가 bounded scan이면 표시된 object, result, depth, child, edge, root/module/namespace 또는 time 한도 때문에 전체 그래프를 끝까지 검사하지 못한 것이므로 결과를 완전한 참조 목록으로 해석하지 않습니다.",
+                "앱 검색은 고정 객체 수, 깊이, child, edge 또는 시간 한도 없이 순환 참조를 제외한 정적 그래프를 끝까지 검사합니다. 결과 표시 한도, 실행 중 namespace 변경 또는 응답 크기 제한이 상태에 표시되면 결과 목록은 완전하지 않을 수 있습니다. 큰 runtime에서는 오래 걸릴 수 있으므로 필요하면 Cancel을 누릅니다.",
             ],
             """
             예: detector predict

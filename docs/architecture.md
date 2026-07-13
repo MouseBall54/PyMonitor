@@ -50,8 +50,10 @@ Overview and Object Tree have independent name searches: Object Tree searches
 only already-loaded nodes, temporarily expands matching ancestry, and restores
 the pre-search expansion state when cleared. Displayed text and DataGrid cells
 can be copied from their right-click menus. Object navigation keeps bounded
-history and parent context, while cycle/depth markers prevent unbounded tree
-expansion. Pins and history protect referenced handles from eager release for
+history and parent context and preserves the selected detail tab across child,
+breadcrumb, Back, Forward, Parent, and pinned-object navigation. Cycle/depth
+markers prevent unbounded tree expansion. Pins and history protect referenced
+handles from eager release for
 that connection. Weak-referenceable targets can still disappear, while
 non-weak-referenceable targets may remain strongly held until the reference is
 evicted/unpinned, the session detaches, or the Agent TTL/LRU expires; this is not

@@ -181,6 +181,7 @@ class InspectorAgent:
                 params.get("maxResults", runtime_search.DEFAULT_MAX_RESULTS),
                 params.get("maxObjects", runtime_search.DEFAULT_MAX_OBJECTS),
                 params.get("maxDepth", runtime_search.DEFAULT_MAX_DEPTH),
+                params.get("exhaustive", False),
             ), b"", False
         if method == "runtime.findAddress":
             return address_search.find_address(
@@ -193,6 +194,7 @@ class InspectorAgent:
                 params.get("maxDepth", runtime_search.DEFAULT_MAX_DEPTH),
                 params.get("maxEdges", address_search.DEFAULT_MAX_EDGES),
                 params.get("maxDurationMilliseconds", address_search.DEFAULT_MAX_DURATION_MS),
+                params.get("exhaustive", False),
             ), b"", False
         if method == "objects.describe":
             return self._objects.describe(params["handleId"]), b"", False

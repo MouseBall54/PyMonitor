@@ -64,6 +64,7 @@ public sealed class MainViewModelTests
         await viewModel.SearchRuntimeCommand.ExecuteAsync();
 
         var result = Assert.Single(viewModel.GlobalSearchResults);
+        Assert.True(session.LastSearchExhaustive);
         Assert.Equal("method", result.Kind);
         Assert.Equal("calculate_needle_total", result.Name);
         Assert.Equal("Modules / __main__ / engine / Class demo.Engine / instance method calculate_needle_total", result.Location);
@@ -74,6 +75,14 @@ public sealed class MainViewModelTests
         Assert.Equal(0, viewModel.SelectedWorkspaceTabIndex);
         Assert.Equal(2, viewModel.SelectedObjectDetailTabIndex);
         Assert.Equal("calculate_needle_total", viewModel.ClassTreeSearchText);
+        Assert.Equal("Modules / __main__ / engine", viewModel.SelectedObjectPath);
+
+        await viewModel.LoadScopeAsync(
+            new RuntimeTreeNode("__main__", RuntimeNodeKind.Module) { ModuleName = "__main__" },
+            showLoadingOverlay: false,
+            preserveSelectionAcrossScopeChange: true);
+
+        Assert.True(viewModel.HasSelectedObject);
         Assert.Equal("Modules / __main__ / engine", viewModel.SelectedObjectPath);
     }
 
@@ -108,6 +117,7 @@ public sealed class MainViewModelTests
         await viewModel.SearchRuntimeCommand.ExecuteAsync();
 
         Assert.Equal("runtime.findAddress", session.LastSearchMethod);
+        Assert.True(session.LastSearchExhaustive);
         Assert.Equal("0x1234", session.LastAddressSearch);
         Assert.Equal(4, viewModel.GlobalSearchResults.Count);
         Assert.All(viewModel.GlobalSearchResults, row => Assert.Equal("0x1234", row.Address));
@@ -177,7 +187,7 @@ public sealed class MainViewModelTests
 
         await viewModel.SearchRuntimeCommand.ExecuteAsync();
 
-        Assert.Contains("bounded scan", viewModel.GlobalSearchStatus);
+        Assert.Contains("incomplete results", viewModel.GlobalSearchStatus);
         Assert.Contains("root scan budget", viewModel.GlobalSearchStatus);
         Assert.Contains("module root limit (2 included)", viewModel.GlobalSearchStatus);
         Assert.Contains("module registry mutation", viewModel.GlobalSearchStatus);
@@ -739,6 +749,7 @@ public sealed class MainViewModelTests
         public bool ReturnBoundedAddressSearch { get; init; }
         public string? LastSearchMethod { get; private set; }
         public string? LastAddressSearch { get; private set; }
+        public bool LastSearchExhaustive { get; private set; }
         private readonly TaskCompletionSource _addressSearchStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task AddressSearchStarted => _addressSearchStarted.Task;
         public Task FirstArrayPreviewStarted => _firstArrayPreviewStarted.Task;
@@ -852,6 +863,7 @@ public sealed class MainViewModelTests
             if (method == "runtime.search")
             {
                 LastSearchMethod = method;
+                LastSearchExhaustive = parameters?["exhaustive"]?.GetValue<bool>() == true;
                 if (ReturnConsoleSearchRoot)
                     return Frame(new JsonObject
                     {
@@ -906,6 +918,7 @@ public sealed class MainViewModelTests
             {
                 LastSearchMethod = method;
                 LastAddressSearch = parameters?["address"]?.GetValue<string>();
+                LastSearchExhaustive = parameters?["exhaustive"]?.GetValue<bool>() == true;
                 if (LastAddressSearch == "0xZZ")
                     throw new InvalidOperationException("address must use hexadecimal digits");
                 if (DelayAddressSearch)

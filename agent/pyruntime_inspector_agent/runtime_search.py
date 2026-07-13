@@ -36,11 +36,35 @@ def search_runtime(
     max_results=DEFAULT_MAX_RESULTS,
     max_objects=DEFAULT_MAX_OBJECTS,
     max_depth=DEFAULT_MAX_DEPTH,
+    exhaustive=False,
 ):
     _validate(query, max_results, max_objects, max_depth)
+    if type(exhaustive) is not bool:
+        raise ValueError("exhaustive must be a boolean.")
     started = time.perf_counter()
-    console_discovery = console_namespaces.list_namespaces(handles)
-    roots, root_metadata = _runtime_roots(handles, agent_thread_id, console_discovery)
+    console_discovery = console_namespaces.list_namespaces(
+        handles,
+        None if exhaustive else console_namespaces.DEFAULT_MAX_OBJECTS,
+        _max_namespaces=None if exhaustive else console_namespaces.MAX_NAMESPACES,
+    )
+    roots, root_metadata = _runtime_roots(
+        handles,
+        agent_thread_id,
+        console_discovery,
+        exhaustive=exhaustive,
+    )
+    if exhaustive:
+        roots.append(_gc_root(None))
+        result = search_roots(
+            inspector,
+            roots,
+            query,
+            max_results,
+            max_objects,
+            max_depth,
+            exhaustive=True,
+        )
+        return _finalize_runtime_result(result, root_metadata, started)
     graph_budget = max(1, int(max_objects * 0.8))
     graph_result = search_roots(
         inspector,
@@ -79,8 +103,13 @@ def search_roots(
     max_results=DEFAULT_MAX_RESULTS,
     max_objects=DEFAULT_MAX_OBJECTS,
     max_depth=DEFAULT_MAX_DEPTH,
+    exhaustive=False,
 ):
     terms = _validate(query, max_results, max_objects, max_depth)
+    if type(exhaustive) is not bool:
+        raise ValueError("exhaustive must be a boolean.")
+    object_limit = None if exhaustive else max_objects
+    depth_limit = None if exhaustive else max_depth
     started = time.perf_counter()
     results = []
     result_keys = set()
@@ -111,7 +140,7 @@ def search_roots(
             return True
         if len(results) >= max_results:
             result_limit_reached = True
-            return False
+            return exhaustive
         row = {
             "kind": kind,
             "name": bounded_text(name, "<unnamed>", 512),
@@ -137,7 +166,7 @@ def search_roots(
     expanded_by_root = []
     root_iterators = deque()
     for root_index, root in enumerate(roots):
-        if result_limit_reached:
+        if result_limit_reached and not exhaustive:
             break
         roots_scanned += 1
         object_limit_reached = object_limit_reached or root.get("entriesTruncated", False)
@@ -164,8 +193,15 @@ def search_roots(
             continue
         root_iterators.append((root_index, root, entries))
 
-    while root_iterators and len(pending) < max_objects:
+    initial_root_pulls = len(root_iterators) if exhaustive else None
+    while (
+        root_iterators
+        and (object_limit is None or len(pending) < object_limit)
+        and (initial_root_pulls is None or initial_root_pulls > 0)
+    ):
         root_index, root, entries = root_iterators.popleft()
+        if initial_root_pulls is not None:
+            initial_root_pulls -= 1
         try:
             name, value = next(entries)
         except StopIteration:
@@ -178,10 +214,37 @@ def search_roots(
             pending.append((root_index, root, name, value, path, 0, (id(value),), name))
             root_iterators.append((root_index, root, entries))
 
-    if root_iterators:
+    if root_iterators and not exhaustive:
         object_limit_reached = True
 
-    while pending and objects_scanned < max_objects and not result_limit_reached:
+    while (
+        (pending or (exhaustive and root_iterators))
+        and (object_limit is None or objects_scanned < object_limit)
+        and (exhaustive or not result_limit_reached)
+    ):
+        if exhaustive and root_iterators:
+            root_index, root, entries = root_iterators.popleft()
+            try:
+                name, value = next(entries)
+            except StopIteration:
+                pass
+            except RuntimeError:
+                children_truncated = True
+            else:
+                path = _append_path(root["location"], name)
+                pending.append((
+                    root_index,
+                    root,
+                    name,
+                    value,
+                    path,
+                    0,
+                    (id(value),),
+                    name,
+                ))
+                root_iterators.append((root_index, root, entries))
+        if not pending:
+            continue
         root_index, root, name, value, path, depth, ancestry, root_name = pending.popleft()
         objects_scanned += 1
         metadata = _value_metadata(inspector, name, value, path)
@@ -194,7 +257,7 @@ def search_roots(
         cls = value if is_class_object(value) else type(value)
         class_id = id(cls)
         matches = class_matches.get(class_id)
-        if matches is None and classes_scanned < MAX_CLASSES:
+        if matches is None and (exhaustive or classes_scanned < MAX_CLASSES):
             matches = _search_class(inspector, cls, terms)
             class_matches[class_id] = matches
             classes_scanned += 1
@@ -224,7 +287,7 @@ def search_roots(
                         root_name,
                     ):
                         break
-        if result_limit_reached:
+        if result_limit_reached and not exhaustive:
             break
 
         value_identity = id(value)
@@ -232,18 +295,18 @@ def search_roots(
         if value_identity in expanded:
             continue
         expanded.add(value_identity)
-        children, was_truncated = _static_children(inspector, value)
+        children, was_truncated = _static_children(inspector, value, exhaustive=exhaustive)
         children_truncated = children_truncated or was_truncated
         if not children:
             continue
-        if depth >= max_depth:
+        if depth_limit is not None and depth >= depth_limit:
             depth_limit_reached = True
             continue
         for child_name, child in children:
             child_identity = id(child)
             if child_identity in ancestry:
                 continue
-            if objects_scanned + len(pending) >= max_objects:
+            if object_limit is not None and objects_scanned + len(pending) >= object_limit:
                 object_limit_reached = True
                 break
             child_path = _append_path(path, child_name)
@@ -252,7 +315,7 @@ def search_roots(
                 ancestry + (child_identity,), root_name,
             ))
 
-    if pending and objects_scanned >= max_objects:
+    if pending and object_limit is not None and objects_scanned >= object_limit:
         object_limit_reached = True
 
     scan_complete = not (
@@ -260,7 +323,7 @@ def search_roots(
         or result_limit_reached
         or depth_limit_reached
         or children_truncated
-        or classes_scanned >= MAX_CLASSES
+        or (not exhaustive and classes_scanned >= MAX_CLASSES)
     )
     return {
         "query": query.strip(),
@@ -275,8 +338,9 @@ def search_roots(
         "depthLimitReached": depth_limit_reached,
         "childrenTruncated": children_truncated,
         "maxResults": max_results,
-        "maxObjects": max_objects,
-        "maxDepth": max_depth,
+        "maxObjects": object_limit,
+        "maxDepth": depth_limit,
+        "exhaustive": exhaustive,
         "durationMilliseconds": round((time.perf_counter() - started) * 1000.0, 3),
         "snapshotTimestamp": timestamp(),
     }
@@ -302,6 +366,7 @@ def _runtime_roots(
     module_root_limit=None,
     deadline=None,
     namespace_raw_limit=None,
+    exhaustive=False,
 ):
     if console_discovery is None:
         console_discovery = console_namespaces.list_namespaces(handles)
@@ -342,8 +407,8 @@ def _runtime_roots(
         frame_count = 0
         while (
             frame is not None
-            and frame_count < frames._MAX_FRAMES_PER_THREAD
-            and frame_rows < frames._MAX_FRAME_ROWS
+            and (exhaustive or frame_count < frames._MAX_FRAMES_PER_THREAD)
+            and (exhaustive or frame_rows < frames._MAX_FRAME_ROWS)
         ):
             frame_count += 1
             frame_rows += 1
@@ -372,9 +437,9 @@ def _runtime_roots(
                     ),
                 })
             frame = frame.f_back
-        if frame is not None:
+        if frame is not None and not exhaustive:
             frame_limit_reached = True
-        if frame_rows >= frames._MAX_FRAME_ROWS:
+        if not exhaustive and frame_rows >= frames._MAX_FRAME_ROWS:
             if thread_index + 1 < len(thread_entries):
                 frame_limit_reached = True
             break
@@ -562,14 +627,14 @@ def _address_root_sequence(main_root, normal_roots, priority_roots):
 def _gc_root(limit=DEFAULT_MAX_OBJECTS):
     objects = console_namespaces._gc_objects_snapshot()
     tracked_total = len(objects)
-    if tracked_total > limit:
+    if limit is not None and tracked_total > limit:
         objects = objects[:limit]
     return {
         "sourceKind": "gc",
         "name": "GC-tracked objects",
         "location": "GC-tracked objects",
         "scopeType": "gc-tracked",
-        "entriesTruncated": tracked_total > limit,
+        "entriesTruncated": limit is not None and tracked_total > limit,
         "value": None,
         "entries": lambda: (
             (
@@ -656,23 +721,23 @@ def _namespace_entries(mapping, raw_limit=None, deadline=None, metadata=None):
         metadata["namespaceMutationDetected"] = True
 
 
-def _static_children(inspector, value):
+def _static_children(inspector, value, exhaustive=False):
     exact = type(value)
     rows = []
     truncated = False
     if exact in (list, tuple):
-        limit = min(len(value), MAX_CHILDREN_PER_OBJECT)
+        limit = len(value) if exhaustive else min(len(value), MAX_CHILDREN_PER_OBJECT)
         rows = [(f"[{index}]", value[index]) for index in range(limit)]
         truncated = len(value) > limit
     elif exact in (set, frozenset):
         for index, child in enumerate(value):
-            if index >= MAX_CHILDREN_PER_OBJECT:
+            if not exhaustive and index >= MAX_CHILDREN_PER_OBJECT:
                 truncated = True
                 break
             rows.append((f"[{index}]", child))
     elif exact is dict:
         for index, (key, child) in enumerate(dict.items(value)):
-            if index >= MAX_CHILDREN_PER_OBJECT:
+            if not exhaustive and index >= MAX_CHILDREN_PER_OBJECT:
                 truncated = True
                 break
             rows.append((inspector._key_name(key, index), child))
@@ -680,7 +745,7 @@ def _static_children(inspector, value):
         namespace = _safe_instance_dict(value)
         if type(namespace) is dict:
             for index, (name, child) in enumerate(dict.items(namespace)):
-                if index >= MAX_CHILDREN_PER_OBJECT:
+                if not exhaustive and index >= MAX_CHILDREN_PER_OBJECT:
                     truncated = True
                     break
                 label = bounded_text(name, "<unnamed>", 512) if type(name) is str else inspector._key_name(name, index)

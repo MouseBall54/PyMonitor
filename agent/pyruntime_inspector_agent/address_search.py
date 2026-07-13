@@ -43,6 +43,7 @@ def find_address(
     max_depth=DEFAULT_MAX_DEPTH,
     max_edges=DEFAULT_MAX_EDGES,
     max_duration_ms=DEFAULT_MAX_DURATION_MS,
+    exhaustive=False,
 ):
     """Find live objects and safe owner edges for an exact CPython identity address."""
     target_address, address_hex = _validate(
@@ -52,9 +53,16 @@ def find_address(
         max_depth,
         max_edges,
         max_duration_ms,
+        exhaustive,
     )
     started = time.perf_counter()
-    discovery_deadline = started + (max_duration_ms / 1_000.0)
+    object_limit = None if exhaustive else max_objects
+    depth_limit = None if exhaustive else max_depth
+    edge_limit = None if exhaustive else max_edges
+    duration_limit = None if exhaustive else max_duration_ms
+    discovery_deadline = (
+        None if duration_limit is None else started + (duration_limit / 1_000.0)
+    )
 
     # Capture the genuine CPython GC snapshot before building roots or result
     # structures so the scan does not primarily rediscover its own bookkeeping.
@@ -62,7 +70,9 @@ def find_address(
     if type(gc_snapshot) is not list:
         raise ValueError("The CPython GC snapshot is invalid.")
     gc_tracked_total = len(gc_snapshot)
-    discovery_deadline_reached = time.perf_counter() >= discovery_deadline
+    discovery_deadline_reached = (
+        discovery_deadline is not None and time.perf_counter() >= discovery_deadline
+    )
 
     state = {
         "items": [],
@@ -74,7 +84,7 @@ def find_address(
         "gcObjectsScanned": 0,
         "rootsScanned": 0,
         "edgesScanned": 0,
-        "maxEdges": max_edges,
+        "maxEdges": edge_limit,
         "deadline": discovery_deadline,
         "rootDeadline": None,
         "rootEdgeLimit": None,
@@ -85,6 +95,7 @@ def find_address(
         "edgeLimitReached": False,
         "deadlineReached": False,
         "rootBudgetReached": False,
+        "exhaustive": exhaustive,
     }
 
     if discovery_deadline_reached:
@@ -92,34 +103,45 @@ def find_address(
     else:
         console_discovery = console_namespaces.list_namespaces(
             handles,
-            max_objects,
+            object_limit,
             _objects_snapshot=gc_snapshot,
-            _raw_entry_limit=MAX_CHILDREN_PER_OBJECT,
+            _raw_entry_limit=None if exhaustive else MAX_CHILDREN_PER_OBJECT,
             _deadline=discovery_deadline,
+            _max_namespaces=None if exhaustive else console_namespaces.MAX_NAMESPACES,
         )
         discovery_deadline_reached = (
             console_discovery.get("deadlineReached") is True
-            or time.perf_counter() >= discovery_deadline
+            or (
+                discovery_deadline is not None
+                and time.perf_counter() >= discovery_deadline
+            )
         )
 
-    gc_budget = min(gc_tracked_total, max_objects // 2)
-    graph_budget = max(1, max_objects - gc_budget)
+    if exhaustive:
+        graph_budget = None
+    else:
+        gc_budget = min(gc_tracked_total, max_objects // 2)
+        graph_budget = max(1, max_objects - gc_budget)
     scan_started = time.perf_counter()
-    state["deadline"] = scan_started + (max_duration_ms / 1_000.0)
-    state["rootDeadline"] = (
-        scan_started + (max_duration_ms / 1_000.0) * _ROOT_PHASE_FRACTION
-        if gc_tracked_total
-        else state["deadline"]
-    )
-    gc_edge_reserve = max_edges // 4 if gc_tracked_total and max_edges > 1 else 0
-    state["rootEdgeLimit"] = max_edges - gc_edge_reserve
+    if exhaustive:
+        state["deadline"] = None
+    else:
+        state["deadline"] = scan_started + (max_duration_ms / 1_000.0)
+        state["rootDeadline"] = (
+            scan_started + (max_duration_ms / 1_000.0) * _ROOT_PHASE_FRACTION
+            if gc_tracked_total
+            else state["deadline"]
+        )
+        gc_edge_reserve = max_edges // 4 if gc_tracked_total and max_edges > 1 else 0
+        state["rootEdgeLimit"] = max_edges - gc_edge_reserve
     roots, root_metadata = runtime_search._runtime_roots(
         handles,
         agent_thread_id,
         console_discovery,
         module_root_limit=graph_budget,
         deadline=state["deadline"],
-        namespace_raw_limit=MAX_CHILDREN_PER_OBJECT,
+        namespace_raw_limit=None if exhaustive else MAX_CHILDREN_PER_OBJECT,
+        exhaustive=exhaustive,
     )
     root_metadata["consoleDiscovery"] = console_discovery
     excluded_gc_identities = _handle_store_internal_ids(handles)
@@ -136,7 +158,7 @@ def find_address(
         target_address,
         max_results,
         graph_budget,
-        max_depth,
+        depth_limit,
         state,
     )
     state["rootDeadline"] = None
@@ -144,15 +166,15 @@ def find_address(
     _check_deadline(state, force=True)
 
     gc_scan_complete = False
-    if not state["resultLimitReached"] and not state["deadlineReached"]:
+    if (exhaustive or not state["resultLimitReached"]) and not state["deadlineReached"]:
         gc_scan_complete = _search_gc_snapshot(
             inspector,
             gc_snapshot,
             excluded_gc_identities,
             target_address,
             max_results,
-            max_objects,
-            max_depth,
+            object_limit,
+            depth_limit,
             state,
         )
         _check_deadline(state, force=True)
@@ -217,10 +239,11 @@ def find_address(
         "deadlineReached": deadline_reached,
         "rootBudgetReached": state["rootBudgetReached"],
         "maxResults": max_results,
-        "maxObjects": max_objects,
-        "maxDepth": max_depth,
-        "maxEdges": max_edges,
-        "maxDurationMilliseconds": max_duration_ms,
+        "maxObjects": object_limit,
+        "maxDepth": depth_limit,
+        "maxEdges": edge_limit,
+        "maxDurationMilliseconds": duration_limit,
+        "exhaustive": exhaustive,
         "snapshotAllocationBounded": False,
         "consoleDiscoveryComplete": console_complete,
         "consoleNamespacesReturned": len(discovery.get("items", ())),
@@ -245,7 +268,15 @@ def find_address(
     }
 
 
-def _validate(address, max_results, max_objects, max_depth, max_edges, max_duration_ms):
+def _validate(
+    address,
+    max_results,
+    max_objects,
+    max_depth,
+    max_edges,
+    max_duration_ms,
+    exhaustive,
+):
     if type(address) is not str:
         raise ValueError("address must be a hexadecimal CPython object address.")
     candidate = address.strip()
@@ -272,6 +303,8 @@ def _validate(address, max_results, max_objects, max_depth, max_edges, max_durat
         raise ValueError(f"maxEdges must be between 1 and {MAX_EDGES}.")
     if type(max_duration_ms) is not int or not 1 <= max_duration_ms <= MAX_DURATION_MS:
         raise ValueError(f"maxDurationMilliseconds must be between 1 and {MAX_DURATION_MS}.")
+    if type(exhaustive) is not bool:
+        raise ValueError("exhaustive must be a boolean.")
     return value, hex(value)
 
 
@@ -378,7 +411,7 @@ def _search_runtime_roots(
         if cycle_edge:
             return True
 
-        if depth >= max_depth:
+        if max_depth is not None and depth >= max_depth:
             if _has_static_edges(value):
                 state["depthLimitReached"] = True
             return True
@@ -414,7 +447,10 @@ def _search_runtime_roots(
                     return False
             if is_cycle:
                 continue
-            if state["rootObjectsScanned"] + len(pending) >= max_objects:
+            if (
+                max_objects is not None
+                and state["rootObjectsScanned"] + len(pending) >= max_objects
+            ):
                 state["objectLimitReached"] = True
                 root_entries_incomplete = True
                 break
@@ -438,7 +474,7 @@ def _search_runtime_roots(
         or root_iterators
         or pending
         or (not root_source_exhausted and not root_pulls_blocked)
-    ) and state["rootObjectsScanned"] < max_objects:
+    ) and (max_objects is None or state["rootObjectsScanned"] < max_objects):
         made_progress = False
 
         if not priority_root_iterators and not root_iterators:
@@ -502,7 +538,7 @@ def _search_runtime_roots(
                 if not process_node(root_node):
                     break
 
-        if pending and state["rootObjectsScanned"] < max_objects:
+        if pending and (max_objects is None or state["rootObjectsScanned"] < max_objects):
             made_progress = True
             if not process_node(pending.popleft()):
                 break
@@ -510,7 +546,7 @@ def _search_runtime_roots(
         if (
             not root_source_exhausted
             and not root_pulls_blocked
-            and state["rootObjectsScanned"] < max_objects
+            and (max_objects is None or state["rootObjectsScanned"] < max_objects)
         ):
             made_progress = pull_root() or made_progress
 
@@ -527,6 +563,7 @@ def _search_runtime_roots(
         and not state["resultLimitReached"]
         and not state["deadlineReached"]
         and not state["rootBudgetReached"]
+        and max_objects is not None
         and state["rootObjectsScanned"] >= max_objects
     ):
         state["objectLimitReached"] = True
@@ -563,7 +600,7 @@ def _search_gc_snapshot(
         ):
             complete = False
             break
-        if state["objectsScanned"] >= max_objects:
+        if max_objects is not None and state["objectsScanned"] >= max_objects:
             state["objectLimitReached"] = True
             complete = False
             break
@@ -602,7 +639,7 @@ def _search_gc_snapshot(
         if state["edgeLimitReached"]:
             complete = False
             continue
-        if max_depth <= 0:
+        if max_depth is not None and max_depth <= 0:
             if _has_static_edges(owner):
                 state["depthLimitReached"] = True
                 complete = False
@@ -634,7 +671,8 @@ def _search_gc_snapshot(
                 break
         if state["resultLimitReached"]:
             complete = False
-            break
+            if not state.get("exhaustive", False):
+                break
     return complete and not state["edgeLimitReached"] and not state["deadlineReached"]
 
 
@@ -667,7 +705,7 @@ def _add_result(
         return True
     if len(state["items"]) >= max_results:
         state["resultLimitReached"] = True
-        return False
+        return state.get("exhaustive", False)
     if state["targetSummary"] is None:
         state["targetSummary"] = inspector.summarize(target)
     owner_type_name = _owner_type_name(owner) if owner is not None else None
@@ -726,7 +764,7 @@ def _allow_edge(state):
         force=state["edgesScanned"] % _DEADLINE_CHECK_INTERVAL == 0,
     ):
         return False
-    if state["edgesScanned"] >= state["maxEdges"]:
+    if state["maxEdges"] is not None and state["edgesScanned"] >= state["maxEdges"]:
         state["edgeLimitReached"] = True
         return False
     root_edge_limit = state.get("rootEdgeLimit")
@@ -740,7 +778,11 @@ def _allow_edge(state):
 def _check_deadline(state, force=False):
     if state["deadlineReached"]:
         return True
-    if force and time.perf_counter() >= state["deadline"]:
+    if (
+        force
+        and state["deadline"] is not None
+        and time.perf_counter() >= state["deadline"]
+    ):
         state["deadlineReached"] = True
     return state["deadlineReached"]
 
@@ -779,11 +821,12 @@ def _static_edges(inspector, value, state):
     exact = type(value)
     rows = []
     truncated = False
+    child_limit = None if state.get("exhaustive", False) else MAX_CHILDREN_PER_OBJECT
 
     if exact in (list, tuple):
         relation = "listItem" if exact is list else "tupleItem"
         count = len(value)
-        limit = min(count, MAX_CHILDREN_PER_OBJECT)
+        limit = count if child_limit is None else min(count, child_limit)
         for index in range(limit):
             if not _allow_edge(state):
                 break
@@ -798,7 +841,7 @@ def _static_edges(inspector, value, state):
         relation = "setItem" if exact is set else "frozensetItem"
         try:
             for index, child in enumerate(value):
-                if index >= MAX_CHILDREN_PER_OBJECT:
+                if child_limit is not None and index >= child_limit:
                     truncated = True
                     break
                 if not _allow_edge(state):
@@ -811,7 +854,7 @@ def _static_edges(inspector, value, state):
     if exact is dict:
         try:
             for index, (key, child) in enumerate(dict.items(value)):
-                if len(rows) + 2 > MAX_CHILDREN_PER_OBJECT:
+                if child_limit is not None and len(rows) + 2 > child_limit:
                     truncated = True
                     break
                 if not _allow_edge(state):
@@ -829,7 +872,7 @@ def _static_edges(inspector, value, state):
         namespace = types.ModuleType.__getattribute__(value, "__dict__")
         try:
             for index, (name, child) in enumerate(dict.items(namespace)):
-                if index >= MAX_CHILDREN_PER_OBJECT:
+                if child_limit is not None and index >= child_limit:
                     truncated = True
                     break
                 if type(name) is str:
@@ -844,7 +887,7 @@ def _static_edges(inspector, value, state):
         namespace = type.__getattribute__(value, "__dict__")
         try:
             for index, (name, child) in enumerate(namespace.items()):
-                if index >= MAX_CHILDREN_PER_OBJECT:
+                if child_limit is not None and index >= child_limit:
                     truncated = True
                     break
                 if type(name) is str:
@@ -859,7 +902,7 @@ def _static_edges(inspector, value, state):
     if type(namespace) is dict:
         try:
             for index, (name, child) in enumerate(dict.items(namespace)):
-                if index >= MAX_CHILDREN_PER_OBJECT:
+                if child_limit is not None and index >= child_limit:
                     truncated = True
                     break
                 if not _allow_edge(state):

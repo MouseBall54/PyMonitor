@@ -46,9 +46,11 @@ public sealed class VariablesCenteredUxTests
             .Where(node => node.Kind == ObjectNodeKind.Group)
             .SelectMany(group => group.Children)
             .Single(node => node.Value?.Name == "child");
+        viewModel.SelectedObjectDetailTabIndex = 1;
         await viewModel.SelectObjectNodeAsync(child);
 
         Assert.Equal("child", viewModel.SelectedObjectName);
+        Assert.Equal(1, viewModel.SelectedObjectDetailTabIndex);
         Assert.Collection(viewModel.ObjectBreadcrumbs,
             ancestor =>
             {
@@ -82,12 +84,14 @@ public sealed class VariablesCenteredUxTests
 
         await viewModel.NavigateBackCommand.ExecuteAsync();
         Assert.Equal("child", viewModel.SelectedObjectName);
+        Assert.Equal(1, viewModel.SelectedObjectDetailTabIndex);
         Assert.Equal("History 2 / 3", viewModel.NavigationHistoryLabel);
         Assert.Contains("selected", viewModel.ForwardNavigationLabel);
         Assert.Contains("Alt+Right", viewModel.ForwardNavigationToolTip);
 
         await viewModel.NavigateForwardCommand.ExecuteAsync();
         Assert.Equal("selected", viewModel.SelectedObjectName);
+        Assert.Equal(1, viewModel.SelectedObjectDetailTabIndex);
         Assert.Equal("History 3 / 3", viewModel.NavigationHistoryLabel);
         Assert.DoesNotContain("root-handle", ReleasedHandles(session));
         Assert.DoesNotContain("child-handle", ReleasedHandles(session));

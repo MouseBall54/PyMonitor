@@ -85,9 +85,16 @@ def list_namespaces(
     _objects_snapshot=None,
     _raw_entry_limit=None,
     _deadline=None,
+    _max_namespaces=MAX_NAMESPACES,
 ):
-    if type(max_objects) is not int or not 1 <= max_objects <= MAX_OBJECTS:
+    if max_objects is not None and (
+        type(max_objects) is not int or not 1 <= max_objects <= MAX_OBJECTS
+    ):
         raise ValueError(f"maxObjects must be between 1 and {MAX_OBJECTS}.")
+    if _max_namespaces is not None and (
+        type(_max_namespaces) is not int or _max_namespaces < 1
+    ):
+        raise ValueError("The console namespace limit must be a positive integer.")
 
     started = time.perf_counter()
     if _objects_snapshot is None:
@@ -100,7 +107,7 @@ def list_namespaces(
     bounded = _raw_entry_limit is not None
     if bounded and (type(_raw_entry_limit) is not int or _raw_entry_limit < 1):
         raise ValueError("The raw console entry limit must be a positive integer.")
-    scan_target = min(tracked_total, max_objects)
+    scan_target = tracked_total if max_objects is None else min(tracked_total, max_objects)
     status = {
         "rawEntryLimitReached": False,
         "deadlineReached": False,
@@ -190,7 +197,7 @@ def list_namespaces(
                 if priority < existing[0]:
                     candidates[namespace_id] = candidate
                 continue
-            if len(candidates) >= MAX_NAMESPACES:
+            if _max_namespaces is not None and len(candidates) >= _max_namespaces:
                 namespace_limit_reached = True
                 worst_key, worst = max(candidates.items(), key=lambda item: item[1][0])
                 if priority >= worst[0]:

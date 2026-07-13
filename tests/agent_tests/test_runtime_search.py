@@ -1,7 +1,7 @@
 import unittest
 from unittest import mock
 
-from pyruntime_inspector_agent import console_namespaces, frames, modules
+from pyruntime_inspector_agent import console_namespaces, frames, modules, runtime_search
 from pyruntime_inspector_agent.console_namespaces import register_namespace, unregister_namespace
 from pyruntime_inspector_agent.handles import HandleStore
 from pyruntime_inspector_agent.runtime_search import (
@@ -11,6 +11,7 @@ from pyruntime_inspector_agent.runtime_search import (
     search_runtime,
 )
 from pyruntime_inspector_agent.safe_objects import SafeObjectInspector
+from pyruntime_inspector_agent.server import InspectorAgent
 
 
 class _NestedTarget:
@@ -174,6 +175,35 @@ class RuntimeSearchTests(unittest.TestCase):
         self.assertEqual({"large": 1, "later": 1}, pulls)
         self.assertTrue(result["objectLimitReached"])
 
+    def test_exhaustive_search_ignores_object_depth_and_child_limits(self):
+        target = {"exhaustive_needle": 42}
+        roots = self.root([object(), target])
+
+        with mock.patch(
+            "pyruntime_inspector_agent.runtime_search.MAX_CHILDREN_PER_OBJECT",
+            1,
+        ):
+            result = search_roots(
+                self.inspector,
+                roots,
+                "exhaustive_needle",
+                max_objects=1,
+                max_depth=0,
+                exhaustive=True,
+            )
+
+        self.assertTrue(any(
+            item["name"].endswith("'exhaustive_needle'")
+            for item in result["items"]
+        ))
+        self.assertTrue(result["exhaustive"])
+        self.assertIsNone(result["maxObjects"])
+        self.assertIsNone(result["maxDepth"])
+        self.assertTrue(result["scanComplete"])
+        self.assertFalse(result["objectLimitReached"])
+        self.assertFalse(result["depthLimitReached"])
+        self.assertFalse(result["childrenTruncated"])
+
     def test_runtime_search_reports_incomplete_console_discovery(self):
         discovery = {
             "items": [],
@@ -238,6 +268,33 @@ class RuntimeSearchTests(unittest.TestCase):
         result = search_roots(self.inspector, roots, "hostile_console_value")
 
         self.assertTrue(any(item["name"] == "hostile_console_value" for item in result["items"]))
+
+    def test_server_dispatches_exhaustive_runtime_search(self):
+        agent = InspectorAgent("127.0.0.1", 1, "a" * 64, "cooperative")
+        expected = {"items": []}
+
+        with mock.patch.object(runtime_search, "search_runtime", return_value=expected) as search:
+            result, binary, detach = agent._dispatch("runtime.search", {
+                "query": "needle",
+                "maxResults": 11,
+                "maxObjects": 22,
+                "maxDepth": 3,
+                "exhaustive": True,
+            })
+
+        self.assertIs(expected, result)
+        self.assertEqual(b"", binary)
+        self.assertFalse(detach)
+        search.assert_called_once_with(
+            agent._objects,
+            agent._handles,
+            agent._thread.ident,
+            "needle",
+            11,
+            22,
+            3,
+            True,
+        )
 
 
 if __name__ == "__main__":

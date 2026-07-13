@@ -747,6 +747,32 @@ class AddressSearchTests(unittest.TestCase):
         self.assertEqual(1, result["edgesScanned"])
         self.assertEqual(1, result["maxEdges"])
 
+    def test_exhaustive_address_search_ignores_all_traversal_budgets(self):
+        target = _Target()
+
+        with mock.patch.object(address_search, "MAX_CHILDREN_PER_OBJECT", 1):
+            result = self.find(
+                target,
+                [("root", [object(), target])],
+                max_objects=1,
+                max_depth=0,
+                max_edges=1,
+                max_duration_ms=1,
+                exhaustive=True,
+            )
+
+        self.assertTrue(result["targetFound"])
+        self.assertTrue(result["exhaustive"])
+        self.assertIsNone(result["maxObjects"])
+        self.assertIsNone(result["maxDepth"])
+        self.assertIsNone(result["maxEdges"])
+        self.assertIsNone(result["maxDurationMilliseconds"])
+        self.assertTrue(result["scanComplete"])
+        self.assertFalse(result["objectLimitReached"])
+        self.assertFalse(result["edgeLimitReached"])
+        self.assertFalse(result["deadlineReached"])
+        self.assertFalse(result["childrenTruncated"])
+
     def test_expired_discovery_deadline_still_scans_direct_main_roots(self):
         target = _Target()
         direct_roots = [
@@ -1168,6 +1194,7 @@ class AddressSearchTests(unittest.TestCase):
                 "maxDepth": 3,
                 "maxEdges": 33,
                 "maxDurationMilliseconds": 44,
+                "exhaustive": True,
             })
 
         self.assertIs(expected, result)
@@ -1183,6 +1210,7 @@ class AddressSearchTests(unittest.TestCase):
             3,
             33,
             44,
+            True,
         )
 
 

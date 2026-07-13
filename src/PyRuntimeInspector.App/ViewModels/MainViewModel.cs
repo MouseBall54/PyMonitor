@@ -934,7 +934,11 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
-    public async Task LoadScopeAsync(RuntimeTreeNode node, bool resetPage = false, bool showLoadingOverlay = true)
+    public async Task LoadScopeAsync(
+        RuntimeTreeNode node,
+        bool resetPage = false,
+        bool showLoadingOverlay = true,
+        bool preserveSelectionAcrossScopeChange = false)
     {
         var isModule = node.Kind == RuntimeNodeKind.Module && node.ModuleName is not null;
         var isFrameScope = node.Kind == RuntimeNodeKind.Scope && node.FrameHandle is not null && node.ScopeType is not null;
@@ -1009,7 +1013,10 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                 return;
             try
             {
-                ApplyScopeResult(frame.Header["result"]!.AsObject(), node);
+                ApplyScopeResult(
+                    frame.Header["result"]!.AsObject(),
+                    node,
+                    preserveSelectionAcrossScopeChange);
                 if (!showLoadingOverlay)
                     await RefreshSelectedDetailInBackgroundAsync(token);
             }
@@ -1452,7 +1459,10 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             if (_currentScope is not null)
                 await LoadScopeAsync(_currentScope);
             if (_currentObject is not null)
-                await LoadObjectContextAsync(_currentObject, preserveSearches: true);
+                await LoadObjectContextAsync(
+                    _currentObject,
+                    preserveSearches: true,
+                    preserveDetailTab: true);
         }
         catch (Exception exception)
         {
@@ -1805,6 +1815,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             var parameters = new JsonObject
             {
                 [isAddressSearch ? "address" : "query"] = query,
+                ["exhaustive"] = true,
             };
             using var response = await RequestHandleResponseAsync(method, parameters, token);
             if (!ReferenceEquals(_runtimeSearchCts, searchCts) || token.IsCancellationRequested)
@@ -1832,14 +1843,14 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                             ? $"{referenceCount:N0} {noun} for {address} · {scanned:N0} objects in {roots:N0} runtime roots · {duration:N0} ms"
                             : $"Object {address} found; no structural references located · {scanned:N0} objects scanned · {duration:N0} ms"
                         : $"No live object or references found for {address} · {scanned:N0} objects scanned · {duration:N0} ms"
-                    : $"{referenceCount:N0} {noun} for {address} (bounded scan) · {scanned:N0} objects in {roots:N0} runtime roots · "
+                    : $"{referenceCount:N0} {noun} for {address} (incomplete results) · {scanned:N0} objects in {roots:N0} runtime roots · "
                         + BuildGlobalSearchLimitSummary(result);
             }
             else
             {
                 GlobalSearchStatus = complete
                     ? $"{rows.Length:N0} results · {scanned:N0} objects in {roots:N0} runtime roots · {duration:N0} ms"
-                    : $"{rows.Length:N0} results (bounded scan) · {scanned:N0} objects in {roots:N0} runtime roots · "
+                    : $"{rows.Length:N0} results (incomplete) · {scanned:N0} objects in {roots:N0} runtime roots · "
                         + BuildGlobalSearchLimitSummary(result);
             }
         }
@@ -2066,7 +2077,10 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         RefreshProcessMemory();
     }
 
-    private void ApplyScopeResult(JsonObject result, RuntimeTreeNode node)
+    private void ApplyScopeResult(
+        JsonObject result,
+        RuntimeTreeNode node,
+        bool preserveSelectionAcrossScopeChange)
     {
         var isGcObjects = node.Kind == RuntimeNodeKind.GcObjects;
         var isConsoleNamespace = node.Kind == RuntimeNodeKind.ConsoleNamespace;
@@ -2194,7 +2208,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
         var selectedScopeChanged = selectedContext is not null
             && !string.Equals(selectedContext.RootScopeKey, scopeKey, StringComparison.Ordinal);
-        if (selectedScopeChanged)
+        if (selectedScopeChanged && !preserveSelectionAcrossScopeChange)
         {
             ClearSelectedObject();
         }
@@ -2233,7 +2247,12 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         UpdateCommandStates();
     }
 
-    private async Task NavigateToObjectAsync(VariableRow row, string path, NavigationContext? parent, bool addHistory)
+    private async Task NavigateToObjectAsync(
+        VariableRow row,
+        string path,
+        NavigationContext? parent,
+        bool addHistory,
+        bool preserveDetailTab = false)
     {
         var ancestors = parent is null
             ? new HashSet<string>(StringComparer.OrdinalIgnoreCase) { row.Address }
@@ -2257,7 +2276,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             _navigationHistory[_navigationIndex] = context;
         }
         RefreshObjectHandleReferences();
-        await LoadObjectContextAsync(context);
+        await LoadObjectContextAsync(context, preserveDetailTab: preserveDetailTab);
     }
 
     private void TrimNavigationHistory()
@@ -2269,7 +2288,10 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _navigationIndex = Math.Max(-1, _navigationIndex - overflow);
     }
 
-    private async Task LoadObjectContextAsync(NavigationContext context, bool preserveSearches = false)
+    private async Task LoadObjectContextAsync(
+        NavigationContext context,
+        bool preserveSearches = false,
+        bool preserveDetailTab = false)
     {
         _detailCts?.Cancel();
         _detailCts?.Dispose();
@@ -2288,13 +2310,16 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         HasArraySelection = row.AdapterKind == "numpy.ndarray";
         HasDataFrameSelection = row.AdapterKind == "pandas.DataFrame";
         HasMatplotlibSelection = row.AdapterKind is "matplotlib.Figure" or "matplotlib.Axes";
-        SelectedObjectDetailTabIndex = HasDataFrameSelection
-            ? 3
-            : HasMatplotlibSelection
-                ? 4
-                : HasArraySelection
-                    ? 5
-                    : 0;
+        if (!preserveDetailTab)
+        {
+            SelectedObjectDetailTabIndex = HasDataFrameSelection
+                ? 3
+                : HasMatplotlibSelection
+                    ? 4
+                    : HasArraySelection
+                        ? 5
+                        : 0;
+        }
         InspectorState = InspectorPaneState.Loading;
         SelectedObjectName = row.Name;
         SelectedObjectPath = context.Path;
@@ -2476,7 +2501,12 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         if (!node.CanNavigate || node.Value is null || _currentObject is null)
             return;
         var parent = BuildNavigationParent(node);
-        await NavigateToObjectAsync(node.Value, node.Path, parent, addHistory: true);
+        await NavigateToObjectAsync(
+            node.Value,
+            node.Path,
+            parent,
+            addHistory: true,
+            preserveDetailTab: true);
     }
 
     public async Task NavigateBreadcrumbAsync(ObjectBreadcrumbItem? item)
@@ -2494,7 +2524,12 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
-        await NavigateToObjectAsync(target.Row, target.Path, target.Parent, addHistory: true);
+        await NavigateToObjectAsync(
+            target.Row,
+            target.Path,
+            target.Parent,
+            addHistory: true,
+            preserveDetailTab: true);
     }
 
     public async Task ExpandObjectNodeAsync(ObjectTreeNode? node)
@@ -2777,7 +2812,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         if (_navigationIndex <= 0)
             return;
         _navigationIndex--;
-        await LoadObjectContextAsync(_navigationHistory[_navigationIndex]);
+        await LoadObjectContextAsync(_navigationHistory[_navigationIndex], preserveDetailTab: true);
     }
 
     private async Task NavigateForwardAsync()
@@ -2785,21 +2820,31 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         if (_navigationIndex < 0 || _navigationIndex >= _navigationHistory.Count - 1)
             return;
         _navigationIndex++;
-        await LoadObjectContextAsync(_navigationHistory[_navigationIndex]);
+        await LoadObjectContextAsync(_navigationHistory[_navigationIndex], preserveDetailTab: true);
     }
 
     private async Task NavigateParentAsync()
     {
         if (_currentObject?.Parent is not NavigationContext parent)
             return;
-        await NavigateToObjectAsync(parent.Row, parent.Path, parent.Parent, addHistory: true);
+        await NavigateToObjectAsync(
+            parent.Row,
+            parent.Path,
+            parent.Parent,
+            addHistory: true,
+            preserveDetailTab: true);
     }
 
     private async Task NavigatePinnedAsync()
     {
         if (SelectedPinnedObject is null || !_pinnedContexts.TryGetValue(SelectedPinnedObject.StableKey, out var context))
             return;
-        await NavigateToObjectAsync(context.Row, context.Path, context.Parent, addHistory: true);
+        await NavigateToObjectAsync(
+            context.Row,
+            context.Path,
+            context.Parent,
+            addHistory: true,
+            preserveDetailTab: true);
     }
 
     private void UpdateObjectNavigationPresentation(NavigationContext context)
@@ -3696,7 +3741,10 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                 await Task.Delay(TimeSpan.FromSeconds(RefreshIntervalSeconds), token);
                 NotifySnapshotState();
                 if (AutoRefreshEnabled && _currentScope is not null && _currentScope.Kind != RuntimeNodeKind.GcObjects)
-                    await LoadScopeAsync(_currentScope, showLoadingOverlay: false);
+                    await LoadScopeAsync(
+                        _currentScope,
+                        showLoadingOverlay: false,
+                        preserveSelectionAcrossScopeChange: true);
                 else if (IsConnected)
                     await RequestAsync("runtime.getInfo", cancellationToken: token);
                 await RefreshMemoryAsync(token);

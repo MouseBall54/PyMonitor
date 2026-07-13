@@ -117,7 +117,10 @@ user callable. Results report `kind`, `name`, the complete `location`, root sour
 metadata and an optional safe value handle so the WPF client can open the exact
 object. The default bounds are 200 results, 100,000 visited objects and depth 16;
 hard limits are 500, 200,000 and 32. `scanComplete` and the individual limit flags
-make a bounded/incomplete result explicit.
+make a bounded/incomplete result explicit. The optional boolean `exhaustive`
+keeps the result-count and response-size limits but disables the object, depth,
+per-object child, console-owner, console-namespace, class, and frame-root limits.
+The WPF Global Search client sets `exhaustive: true`.
 
 `runtime.findAddress` performs an exact CPython object-identity lookup. Its
 required `address` parameter is a non-zero, pointer-width hexadecimal string in
@@ -129,7 +132,11 @@ and `maxDurationMilliseconds` (default 1,500, hard limit 10,000). The address
 must be the live object's CPython identity address, such as an `id(obj)` value
 shown by the Variables or Object Tree Address field. NumPy data-buffer
 addresses and arbitrary native pointers are not object identities and are not
-supported.
+supported. The optional boolean `exhaustive` disables the object, depth, edge,
+child, root-source, and duration limits while retaining cycle detection, the
+result count limit, and protocol response-size protection. The WPF client uses
+this mode so a not-found address result is not caused by the former
+100,000-object or 1,500-millisecond traversal budgets.
 
 The response reports `mode: address`, the normalized `addressHex`,
 `targetFound`, `total`, and result `items`. Each item retains the
