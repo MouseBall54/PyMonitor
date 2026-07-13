@@ -15,7 +15,7 @@ The WPF client validates the Agent version and bootstrap ABI before sending any
 inspection request and reports a mismatch as `INCOMPATIBLE_AGENT`. The supported
 Phase 0 methods are `session.detach`, `runtime.getInfo`, `threads.list`,
 `frames.list`, `scopes.list`, `objects.describe`, `objects.listChildren`,
-`modules.list`, `modules.listNamespace`, `gc.listObjects`,
+`modules.list`, `modules.listNamespace`, `gc.listObjects`, `runtime.search`,
 `objects.release`, `classes.describe`, `arrays.describe`, `arrays.preview`,
 `arrays.tile`, `arrays.histogram`, `arrays.pixel`, `dataframes.describe`,
 `dataframes.preview`, `figures.describe`, `figures.preview`, `memory.status`,
@@ -79,6 +79,21 @@ hard-capped at 1,000,000. Results report `trackedTotal`, `scannedCount`,
 `truncated`, scan duration, and snapshot time. Only the returned page receives
 object handles and safe previews. GC pages are capped at 200 rows so every
 returned handle fits in the bounded session handle store.
+
+`runtime.search` performs a read-only breadth-first integrated search beginning
+at every loaded exact module namespace and current frame locals/globals/built-ins,
+then uses the remaining scan budget for GC-tracked objects that may not be
+reachable from those namespaces.
+It matches whitespace-separated query terms across variable/object names, paths,
+safe previews, type metadata and address, plus statically classified class,
+method, property, descriptor and class-attribute metadata. Recursive traversal
+uses only exact built-in containers and statically available instance dictionaries;
+it does not call a property, arbitrary `repr`, `getattr`, `dir`, descriptor, or
+user callable. Results report `kind`, `name`, the complete `location`, root source
+metadata and an optional safe value handle so the WPF client can open the exact
+object. The default bounds are 200 results, 100,000 visited objects and depth 16;
+hard limits are 500, 200,000 and 32. `scanComplete` and the individual limit flags
+make a bounded/incomplete result explicit.
 
 Array preview and tile requests accept `normalization` (`AUTO`, `NONE`,
 `MINMAX`, `PERCENTILE`, or `LABEL`) plus percentile bounds. Tiles require a

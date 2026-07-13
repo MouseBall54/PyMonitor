@@ -16,6 +16,7 @@ public sealed class HelpViewModelTests
         "managed-launch",
         "inspect-variables",
         "objects-classes",
+        "global-runtime-search",
         "arrays-images",
         "dataframes",
         "matplotlib",
@@ -36,6 +37,7 @@ public sealed class HelpViewModelTests
         "managed-launch",
         "inspect-variables",
         "objects-classes",
+        "global-runtime-search",
         "arrays-images",
         "dataframes",
         "matplotlib",
@@ -74,6 +76,7 @@ public sealed class HelpViewModelTests
     [InlineData("Start listener Copy environment", "cooperative-attach")]
     [InlineData("F1", "shortcuts-safety")]
     [InlineData("설치", "installation")]
+    [InlineData("전체 런타임 통합검색", "global-runtime-search")]
     public void SearchFindsEnglishKoreanAndArticleBodyKeywords(string query, string expectedTopicId)
     {
         var matches = HelpCatalog.Search(query);

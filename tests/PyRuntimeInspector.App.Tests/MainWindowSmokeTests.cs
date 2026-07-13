@@ -81,6 +81,22 @@ public sealed class MainWindowSmokeTests
                 {
                     AssertElementIsVisibleAndInside(button, window, name, "minimum supported viewport");
                 }
+                var paneSplitters = Descendants<GridSplitter>(window)
+                    .Where(splitter => AutomationProperties.GetName(splitter) is
+                        "Resize Runtime and Variables panes" or "Resize Variables and object-detail panes")
+                    .ToArray();
+                Assert.Equal(2, paneSplitters.Length);
+                Assert.All(paneSplitters, splitter =>
+                {
+                    Assert.Equal(7, splitter.ActualWidth);
+                    Assert.Equal(GridResizeDirection.Columns, splitter.ResizeDirection);
+                    Assert.Equal(GridResizeBehavior.PreviousAndNext, splitter.ResizeBehavior);
+                    Assert.Equal(Cursors.SizeWE, splitter.Cursor);
+                });
+                var variablePane = Assert.IsType<ColumnDefinition>(window.FindName("VariablePaneColumn"));
+                var detailPane = Assert.IsType<ColumnDefinition>(window.FindName("DetailPaneColumn"));
+                Assert.Equal(300, variablePane.MinWidth);
+                Assert.Equal(330, detailPane.MinWidth);
 
                 var recoveryBanner = Descendants<Border>(window)
                     .Single(border => AutomationProperties.GetName(border) == "Quick Attach recovery instructions");
@@ -695,6 +711,7 @@ public sealed class MainWindowSmokeTests
         var emphasizedName = Descendants<TextBlock>(firstRow).Single(text => text.Text == "variable_0");
         Assert.Equal(FontWeights.SemiBold, emphasizedName.FontWeight);
         Assert.Equal(Application.Current.Resources["AccentBrush"], emphasizedName.Foreground);
+        Assert.Equal(new Thickness(6, 0, 2, 0), emphasizedName.Margin);
         Assert.Equal("variable_0", emphasizedName.ToolTip);
 
         variablesGrid.SelectedIndex = 1;

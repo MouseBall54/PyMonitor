@@ -51,6 +51,32 @@ public sealed class InspectorClient(Stream stream, TimeSpan? requestTimeout = nu
         }
     }
 
+    public async Task<ProtocolFrame> RequestDrainableAsync(
+        string method,
+        JsonObject? parameters = null,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfAborted();
+        await _requestLock.WaitAsync(cancellationToken);
+        var exchangeStarted = false;
+        try
+        {
+            ThrowIfAborted();
+            cancellationToken.ThrowIfCancellationRequested();
+            // Once dispatched, the caller must be able to drain this exact response so any
+            // object handles in it can be tracked and released. Cancellation still removes
+            // requests that have not acquired the serialized transport yet.
+            exchangeStarted = true;
+            return await ExchangeAndReleaseAsync(method, parameters);
+        }
+        catch
+        {
+            if (!exchangeStarted)
+                _requestLock.Release();
+            throw;
+        }
+    }
+
     private async Task<ProtocolFrame> ExchangeAndReleaseAsync(string method, JsonObject? parameters)
     {
         try

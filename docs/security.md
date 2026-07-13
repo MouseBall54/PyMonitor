@@ -58,6 +58,22 @@
   cleared on disconnect and do not grant access to a different process or a
   later authenticated session.
 
+## Global runtime search
+
+- Integrated search starts only on an explicit user action and breadth-first
+  scans loaded module dictionaries and current frame namespaces without
+  importing anything, then scans a bounded `gc.get_objects()` snapshot with
+  the remaining request budget without forcing a collection.
+- Recursive edges are limited to exact built-in containers and direct instance
+  dictionaries. Class/member matches use static class dictionaries and code
+  metadata; property getters, descriptors and user callables are never invoked.
+- Aliased paths are still evaluated as locations, while a shared object's child
+  graph is expanded only once per runtime root. Ancestor identities prevent
+  cycles.
+- Results, visited objects, children per object, class scans and depth all have
+  hard bounds. Every response reports whether those bounds made the search
+  incomplete, and only matching rows receive object handles.
+
 ## Quick Attach bootstrap
 
 - CPython 3.10-3.13 Quick Attach copies one explicit Python line containing the

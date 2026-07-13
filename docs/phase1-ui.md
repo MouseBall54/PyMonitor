@@ -7,7 +7,8 @@ Build the Windows client from the repository root:
 ```
 
 The public executable is `PyMonitor.exe`. The application is organized into
-four top-level workspaces: **Inspect**, **Launch**, **Memory**, and **Events**.
+five top-level workspaces: **Inspect**, **Global Search**, **Launch**, **Memory**,
+and **Events**.
 The command bar keeps **Rescan**, **Quick Attach**, **Refresh**, **Detach**, and
 **About** visible. Listener configuration, explicit Live Attach, environment
 copying, automatic-refresh controls, and theme selection are in the Advanced

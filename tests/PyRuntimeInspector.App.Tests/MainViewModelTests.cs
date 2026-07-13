@@ -51,6 +51,30 @@ public sealed class MainViewModelTests
     }
 
     [Fact]
+    public async Task GlobalSearchShowsExactLocationAndOpensClassMemberOwner()
+    {
+        var session = new FakeSession();
+        await using var viewModel = new MainViewModel(session, new FakeProcessDiscovery());
+        await viewModel.AttachCommand.ExecuteAsync();
+        viewModel.GlobalSearchQuery = "calculate needle";
+
+        await viewModel.SearchRuntimeCommand.ExecuteAsync();
+
+        var result = Assert.Single(viewModel.GlobalSearchResults);
+        Assert.Equal("method", result.Kind);
+        Assert.Equal("calculate_needle_total", result.Name);
+        Assert.Equal("Modules / __main__ / engine / Class demo.Engine / instance method calculate_needle_total", result.Location);
+        Assert.Contains("1 results", viewModel.GlobalSearchStatus);
+
+        await viewModel.OpenGlobalSearchResultCommand.ExecuteAsync();
+
+        Assert.Equal(0, viewModel.SelectedWorkspaceTabIndex);
+        Assert.Equal(2, viewModel.SelectedObjectDetailTabIndex);
+        Assert.Equal("calculate_needle_total", viewModel.ClassTreeSearchText);
+        Assert.Equal("Modules / __main__ / engine", viewModel.SelectedObjectPath);
+    }
+
+    [Fact]
     public async Task TargetExitTransitionsToDisconnectedWithoutThrowing()
     {
         var session = new FakeSession();
@@ -611,6 +635,36 @@ public sealed class MainViewModelTests
                     ["scannedCount"] = 3,
                     ["truncated"] = false,
                     ["durationMilliseconds"] = 1.25,
+                });
+            }
+            if (method == "runtime.search")
+            {
+                var value = ModuleVariable("engine", "<demo.Engine object>")["value"]!.DeepClone().AsObject();
+                value["handleId"] = "global-search-engine";
+                value["typeName"] = "Engine";
+                value["moduleName"] = "demo";
+                value["qualifiedTypeName"] = "demo.Engine";
+                value["expandable"] = true;
+                return Frame(new JsonObject
+                {
+                    ["items"] = new JsonArray(new JsonObject
+                    {
+                        ["kind"] = "method",
+                        ["name"] = "calculate_needle_total",
+                        ["location"] = "Modules / __main__ / engine / Class demo.Engine / instance method calculate_needle_total",
+                        ["objectPath"] = "Modules / __main__ / engine",
+                        ["matchFields"] = new JsonArray("member", "signature"),
+                        ["depth"] = 0,
+                        ["sourceKind"] = "module",
+                        ["moduleName"] = "__main__",
+                        ["scopeType"] = "module",
+                        ["rootName"] = "engine",
+                        ["value"] = value,
+                    }),
+                    ["objectsScanned"] = 12,
+                    ["rootsScanned"] = 2,
+                    ["scanComplete"] = true,
+                    ["durationMilliseconds"] = 3.5,
                 });
             }
             if (method == "runtime.getInfo")

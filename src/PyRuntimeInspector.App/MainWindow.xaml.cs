@@ -119,6 +119,21 @@ public partial class MainWindow : Window
         await ViewModel.SelectTreeNodeAsync(e.NewValue as RuntimeTreeNode);
     }
 
+    private async void GlobalSearchBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || !ViewModel.SearchRuntimeCommand.CanExecute(null))
+            return;
+        e.Handled = true;
+        await ViewModel.SearchRuntimeCommand.ExecuteAsync();
+    }
+
+    private async void GlobalSearchResults_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (!ViewModel.OpenGlobalSearchResultCommand.CanExecute(null))
+            return;
+        await ViewModel.OpenGlobalSearchResultCommand.ExecuteAsync();
+    }
+
     private async void ObjectTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
     {
         await ViewModel.SelectObjectNodeAsync(e.NewValue as ObjectTreeNode);

@@ -3,7 +3,7 @@ import os
 import socket
 import threading
 
-from . import arrays, classes, dataframes, gc_objects, matplotlib_figures, memory, modules, monitoring
+from . import arrays, classes, dataframes, gc_objects, matplotlib_figures, memory, modules, monitoring, runtime_search
 from .frames import list_frames, list_scope, list_threads
 from .handles import HandleStore, ObjectExpiredError
 from .monitoring import MonitoringError
@@ -155,6 +155,16 @@ class InspectorAgent:
                 params.get("offset", 0),
                 params.get("pageSize", 100),
                 params.get("maxObjects", gc_objects.DEFAULT_MAX_OBJECTS),
+            ), b"", False
+        if method == "runtime.search":
+            return runtime_search.search_runtime(
+                self._objects,
+                self._handles,
+                self._thread.ident,
+                params["query"],
+                params.get("maxResults", runtime_search.DEFAULT_MAX_RESULTS),
+                params.get("maxObjects", runtime_search.DEFAULT_MAX_OBJECTS),
+                params.get("maxDepth", runtime_search.DEFAULT_MAX_DEPTH),
             ), b"", False
         if method == "objects.describe":
             return self._objects.describe(params["handleId"]), b"", False

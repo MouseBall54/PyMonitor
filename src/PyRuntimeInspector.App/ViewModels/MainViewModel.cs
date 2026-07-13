@@ -45,6 +45,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private CancellationTokenSource? _refreshCts;
     private CancellationTokenSource? _searchDebounceCts;
     private CancellationTokenSource? _classTreeSearchDebounceCts;
+    private CancellationTokenSource? _runtimeSearchCts;
     private RuntimeTreeNode? _currentScope;
     private long _selectionGeneration;
     private long _detailGeneration;
@@ -138,6 +139,10 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private DateTime? _lastSnapshotAt;
     private string _connectionMode = "Not connected";
     private string _searchText = "";
+    private string _globalSearchQuery = "";
+    private string _globalSearchStatus = "Connect to a Python runtime to search it.";
+    private bool _isGlobalSearchRunning;
+    private GlobalSearchResultRow? _selectedGlobalSearchResult;
     private string _objectChildrenSearchText = "";
     private string _objectTreeSearchText = "";
     private string _classTreeSearchText = "";
@@ -302,6 +307,12 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         PreviousPageCommand = new AsyncCommand(PreviousPageAsync, () => IsConnected && _pageOffset > 0);
         NextPageCommand = new AsyncCommand(NextPageAsync, () => IsConnected && _pageOffset + PageSize < _pageTotal);
         SearchCurrentCommand = new AsyncCommand(SearchCurrentAsync, () => IsConnected && _currentScope is not null);
+        SearchRuntimeCommand = new AsyncCommand(
+            SearchRuntimeAsync,
+            () => IsConnected && !IsGlobalSearchRunning && !string.IsNullOrWhiteSpace(GlobalSearchQuery));
+        OpenGlobalSearchResultCommand = new AsyncCommand(
+            OpenGlobalSearchResultAsync,
+            () => IsConnected && SelectedGlobalSearchResult?.CanOpen == true);
         NavigateBackCommand = new AsyncCommand(NavigateBackAsync, () => _navigationIndex > 0);
         NavigateForwardCommand = new AsyncCommand(NavigateForwardAsync, () => _navigationIndex >= 0 && _navigationIndex < _navigationHistory.Count - 1);
         NavigateParentCommand = new AsyncCommand(NavigateParentAsync, () => _currentObject?.Parent is not null);
@@ -337,6 +348,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         RestartCommand = new AsyncCommand(RestartManagedAsync, () => !IsBusy && (!IsConnected || IsManagedRunning));
         RefreshProcessesCommand = new RelayCommand(RefreshProcesses);
         ClearSearchCommand = new RelayCommand(ClearSearch);
+        ClearGlobalSearchCommand = new RelayCommand(ClearGlobalSearch);
+        CancelGlobalSearchCommand = new RelayCommand(CancelGlobalSearch, () => IsGlobalSearchRunning);
         ClearObjectChildrenSearchCommand = new RelayCommand(() => ObjectChildrenSearchText = "");
         ClearObjectTreeSearchCommand = new RelayCommand(() => ObjectTreeSearchText = "");
         ClearClassTreeSearchCommand = new RelayCommand(() => ClassTreeSearchText = "");
@@ -362,6 +375,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public ObservableCollection<RuntimeTreeNode> RuntimeRoots { get; } = [];
     public ObservableCollection<VariableRow> Variables { get; } = [];
     public ObservableCollection<VariableRow> FilteredVariables { get; } = [];
+    public ObservableCollection<GlobalSearchResultRow> GlobalSearchResults { get; } = [];
     public ObservableCollection<ObjectChildRow> ObjectChildren { get; } = [];
     public ObservableCollection<ObjectChildRow> FilteredObjectChildren { get; } = [];
     public ObservableCollection<ClassMemberRow> ClassMembers { get; } = [];
@@ -394,6 +408,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public AsyncCommand PreviousPageCommand { get; }
     public AsyncCommand NextPageCommand { get; }
     public AsyncCommand SearchCurrentCommand { get; }
+    public AsyncCommand SearchRuntimeCommand { get; }
+    public AsyncCommand OpenGlobalSearchResultCommand { get; }
     public AsyncCommand NavigateBackCommand { get; }
     public AsyncCommand NavigateForwardCommand { get; }
     public AsyncCommand NavigateParentCommand { get; }
@@ -421,6 +437,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public AsyncCommand RestartCommand { get; }
     public RelayCommand RefreshProcessesCommand { get; }
     public RelayCommand ClearSearchCommand { get; }
+    public RelayCommand ClearGlobalSearchCommand { get; }
+    public RelayCommand CancelGlobalSearchCommand { get; }
     public RelayCommand ClearObjectChildrenSearchCommand { get; }
     public RelayCommand ClearObjectTreeSearchCommand { get; }
     public RelayCommand ClearClassTreeSearchCommand { get; }
@@ -631,6 +649,40 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                 return;
             }
             ScheduleSearchFilter();
+        }
+    }
+    public string GlobalSearchQuery
+    {
+        get => _globalSearchQuery;
+        set
+        {
+            if (SetProperty(ref _globalSearchQuery, value ?? ""))
+                SearchRuntimeCommand.RaiseCanExecuteChanged();
+        }
+    }
+    public string GlobalSearchStatus
+    {
+        get => _globalSearchStatus;
+        private set => SetProperty(ref _globalSearchStatus, value);
+    }
+    public bool IsGlobalSearchRunning
+    {
+        get => _isGlobalSearchRunning;
+        private set
+        {
+            if (!SetProperty(ref _isGlobalSearchRunning, value))
+                return;
+            SearchRuntimeCommand.RaiseCanExecuteChanged();
+            CancelGlobalSearchCommand.RaiseCanExecuteChanged();
+        }
+    }
+    public GlobalSearchResultRow? SelectedGlobalSearchResult
+    {
+        get => _selectedGlobalSearchResult;
+        set
+        {
+            if (SetProperty(ref _selectedGlobalSearchResult, value))
+                OpenGlobalSearchResultCommand.RaiseCanExecuteChanged();
         }
     }
     public string ObjectChildrenSearchText
@@ -1706,6 +1758,116 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             ApplyFilter();
     }
 
+    private async Task SearchRuntimeAsync()
+    {
+        var query = GlobalSearchQuery.Trim();
+        if (!IsConnected || string.IsNullOrEmpty(query))
+            return;
+
+        _runtimeSearchCts?.Cancel();
+        _runtimeSearchCts?.Dispose();
+        _runtimeSearchCts = CancellationTokenSource.CreateLinkedTokenSource(
+            _connectionCts?.Token ?? CancellationToken.None);
+        var token = _runtimeSearchCts.Token;
+        IsGlobalSearchRunning = true;
+        GlobalSearchStatus = $"Searching the connected runtime recursively for “{query}”…";
+        SelectedGlobalSearchResult = null;
+        GlobalSearchResults.Clear();
+        try
+        {
+            using var response = await RequestHandleResponseAsync("runtime.search", new JsonObject
+            {
+                ["query"] = query,
+            }, token);
+            var result = response.Frame.Header["result"]!.AsObject();
+            var rows = result["items"]!.AsArray()
+                .Select(item => CreateGlobalSearchResult(item!.AsObject()))
+                .ToArray();
+            Replace(GlobalSearchResults, rows);
+            SelectedGlobalSearchResult = GlobalSearchResults.FirstOrDefault();
+            var complete = result["scanComplete"]?.GetValue<bool>() == true
+                && result["responseTruncated"]?.GetValue<bool>() != true;
+            var scanned = result["objectsScanned"]?.GetValue<int>() ?? 0;
+            var roots = result["rootsScanned"]?.GetValue<int>() ?? 0;
+            var duration = result["durationMilliseconds"]?.GetValue<double>() ?? 0;
+            GlobalSearchStatus = complete
+                ? $"{rows.Length:N0} results · {scanned:N0} objects in {roots:N0} runtime roots · {duration:N0} ms"
+                : $"{rows.Length:N0} results (bounded scan) · {scanned:N0} objects in {roots:N0} runtime roots · "
+                    + BuildGlobalSearchLimitSummary(result);
+        }
+        catch (OperationCanceledException)
+        {
+            GlobalSearchStatus = "Runtime search canceled. No partial results were applied.";
+        }
+        catch (Exception exception)
+        {
+            GlobalSearchStatus = $"Runtime search failed: {exception.Message}";
+            SetError(exception);
+        }
+        finally
+        {
+            IsGlobalSearchRunning = false;
+            RefreshObjectHandleReferences();
+        }
+    }
+
+    private async Task OpenGlobalSearchResultAsync()
+    {
+        var result = SelectedGlobalSearchResult;
+        if (!IsConnected || result is null)
+            return;
+
+        if (result.Kind == "module" && result.ModuleName is not null)
+        {
+            var moduleNode = EnumerateRuntimeNodes().FirstOrDefault(node =>
+                node.Kind == RuntimeNodeKind.Module
+                && string.Equals(node.ModuleName, result.ModuleName, StringComparison.Ordinal));
+            if (moduleNode is not null)
+                await LoadScopeAsync(moduleNode, resetPage: true);
+            SelectedWorkspaceTabIndex = 0;
+            return;
+        }
+        if (result.Kind == "frame" && result.FrameHandle is not null && result.ScopeType is not null)
+        {
+            var scopeNode = EnumerateRuntimeNodes().FirstOrDefault(node =>
+                node.Kind == RuntimeNodeKind.Scope
+                && string.Equals(node.FrameHandle, result.FrameHandle, StringComparison.Ordinal)
+                && string.Equals(node.ScopeType, result.ScopeType, StringComparison.Ordinal));
+            scopeNode ??= new RuntimeTreeNode(result.Location, RuntimeNodeKind.Scope)
+            {
+                FrameHandle = result.FrameHandle,
+                ScopeType = result.ScopeType,
+            };
+            await LoadScopeAsync(scopeNode, resetPage: true);
+            SelectedWorkspaceTabIndex = 0;
+            return;
+        }
+        if (result.Value is null)
+            return;
+
+        await NavigateToObjectAsync(result.Value, result.ObjectPath, null, addHistory: true);
+        SelectedWorkspaceTabIndex = 0;
+        if (result.Kind is "class" or "method" or "property" or "class attribute")
+        {
+            SelectedObjectDetailTabIndex = 2;
+            ClassTreeSearchText = result.Name;
+        }
+    }
+
+    private void CancelGlobalSearch() => _runtimeSearchCts?.Cancel();
+
+    private void ClearGlobalSearch()
+    {
+        CancelGlobalSearch();
+        GlobalSearchQuery = "";
+        GlobalSearchResults.Clear();
+        SelectedGlobalSearchResult = null;
+        GlobalSearchStatus = IsConnected
+            ? "Enter a name, value, type, class, method, property, or path to search the complete runtime."
+            : "Connect to a Python runtime to search it.";
+        RefreshObjectHandleReferences();
+    }
+
     private async Task LoadRuntimeTreeAsync(CancellationToken token, bool autoSelectMain = false)
     {
         RefreshProcessMemory();
@@ -1787,6 +1949,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         PythonVersion = runtime["version"]!.GetValue<string>().Split('\n')[0];
         Architecture = runtime["processArchitecture"]?.GetValue<string>() ?? "—";
         Executable = runtime["executable"]?.GetValue<string>() ?? "—";
+        GlobalSearchStatus = "Enter a name, value, type, class, method, property, or path to search the complete runtime.";
         RefreshProcessMemory();
     }
 
@@ -3453,7 +3616,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         {
             // Transport cancellation would discard a response that may contain newly-created
             // strong handles. Keep draining it, while allowing the UI operation to cancel.
-            requestTask = RequestAsync(method, parameters, CancellationToken.None);
+            requestTask = RequestDrainableAsync(method, parameters, cancellationToken);
             try
             {
                 var frame = await requestTask.WaitAsync(cancellationToken);
@@ -3552,6 +3715,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         var referenced = new HashSet<string>(StringComparer.Ordinal);
         foreach (var row in Variables.Where(row => !row.IsRemoved))
             AddHandle(referenced, row.HandleId);
+        foreach (var result in GlobalSearchResults)
+            AddHandle(referenced, result.Value?.HandleId);
         if (SelectedVariable is { IsRemoved: false } selected)
             AddHandle(referenced, selected.HandleId);
         AddContextHandles(referenced, _currentObject);
@@ -3834,6 +3999,23 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         try
         {
             return await _session.RequestAsync(method, parameters, cancellationToken);
+        }
+        finally
+        {
+            stopwatch.Stop();
+            LastLatency = $"{stopwatch.Elapsed.TotalMilliseconds:F1} ms";
+        }
+    }
+
+    private async Task<ProtocolFrame> RequestDrainableAsync(
+        string method,
+        JsonObject? parameters,
+        CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            return await _session.RequestDrainableAsync(method, parameters, cancellationToken);
         }
         finally
         {
@@ -4475,6 +4657,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _selectionCts?.Cancel();
         _detailCts?.Cancel();
         _refreshCts?.Cancel();
+        _runtimeSearchCts?.Cancel();
         CancelSearchDebounce();
         IsConnected = false;
         IsBusy = false;
@@ -4484,6 +4667,10 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         RuntimeRoots.Clear();
         Variables.Clear();
         FilteredVariables.Clear();
+        GlobalSearchResults.Clear();
+        SelectedGlobalSearchResult = null;
+        GlobalSearchStatus = "Connect to a Python runtime to search it.";
+        IsGlobalSearchRunning = false;
         ObjectChildren.Clear();
         FilteredObjectChildren.Clear();
         ObjectRoots.Clear();
@@ -4973,6 +5160,68 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         return $"{node.FrameHandle}:{node.ScopeType}";
     }
 
+    private IEnumerable<RuntimeTreeNode> EnumerateRuntimeNodes()
+    {
+        var pending = new Stack<RuntimeTreeNode>(RuntimeRoots.Reverse());
+        while (pending.Count > 0)
+        {
+            var node = pending.Pop();
+            yield return node;
+            for (var index = node.Children.Count - 1; index >= 0; index--)
+                pending.Push(node.Children[index]);
+        }
+    }
+
+    private static GlobalSearchResultRow CreateGlobalSearchResult(JsonObject item)
+    {
+        var name = item["name"]?.GetValue<string>() ?? "<unnamed>";
+        var location = item["location"]?.GetValue<string>() ?? "<unknown>";
+        var sourceKind = item["sourceKind"]?.GetValue<string>() ?? "unknown";
+        var value = item["value"] as JsonObject;
+        return new GlobalSearchResultRow
+        {
+            Kind = item["kind"]?.GetValue<string>() ?? "object",
+            Name = name,
+            Location = location,
+            ObjectPath = item["objectPath"]?.GetValue<string>() ?? location,
+            MatchFields = item["matchFields"] is JsonArray fields
+                ? string.Join(", ", fields.Select(field => field?.GetValue<string>() ?? ""))
+                : "",
+            SourceKind = sourceKind,
+            ModuleName = item["moduleName"]?.GetValue<string>(),
+            FrameHandle = item["frameHandle"]?.GetValue<string>(),
+            ScopeType = item["scopeType"]?.GetValue<string>(),
+            RootName = item["rootName"]?.GetValue<string>(),
+            Depth = item["depth"]?.GetValue<int>() ?? 0,
+            Value = value is null
+                ? null
+                : CreateVariableRow(
+                    name,
+                    $"global-search:{sourceKind}",
+                    value,
+                    VariableChangeKind.Unchanged,
+                    null,
+                    false,
+                    $"global-search:{location}"),
+        };
+    }
+
+    private static string BuildGlobalSearchLimitSummary(JsonObject result)
+    {
+        var limits = new List<string>();
+        if (result["resultLimitReached"]?.GetValue<bool>() == true)
+            limits.Add($"result limit {result["maxResults"]?.GetValue<int>() ?? 0:N0}");
+        if (result["objectLimitReached"]?.GetValue<bool>() == true)
+            limits.Add($"object limit {result["maxObjects"]?.GetValue<int>() ?? 0:N0}");
+        if (result["depthLimitReached"]?.GetValue<bool>() == true)
+            limits.Add($"depth limit {result["maxDepth"]?.GetValue<int>() ?? 0:N0}");
+        if (result["childrenTruncated"]?.GetValue<bool>() == true)
+            limits.Add("large child collection limit");
+        if (result["responseTruncated"]?.GetValue<bool>() == true)
+            limits.Add("response size limit");
+        return limits.Count == 0 ? "class scan safety limit reached" : string.Join(", ", limits) + " reached";
+    }
+
     private static JsonArray ToJsonArray(IEnumerable<string> values)
     {
         var result = new JsonArray();
@@ -5059,6 +5308,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         PreviousPageCommand?.RaiseCanExecuteChanged();
         NextPageCommand?.RaiseCanExecuteChanged();
         SearchCurrentCommand?.RaiseCanExecuteChanged();
+        SearchRuntimeCommand?.RaiseCanExecuteChanged();
+        OpenGlobalSearchResultCommand?.RaiseCanExecuteChanged();
         NavigateBackCommand?.RaiseCanExecuteChanged();
         NavigateForwardCommand?.RaiseCanExecuteChanged();
         NavigateParentCommand?.RaiseCanExecuteChanged();
@@ -5219,6 +5470,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _refreshCts?.Cancel();
         _selectionCts?.Cancel();
         _detailCts?.Cancel();
+        _runtimeSearchCts?.Cancel();
         CancelSearchDebounce();
         CancelClassTreeSearchDebounce();
         await ReleaseKnownHandlesBeforeDetachAsync();

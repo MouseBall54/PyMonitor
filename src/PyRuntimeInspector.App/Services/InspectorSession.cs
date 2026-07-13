@@ -93,6 +93,33 @@ public sealed class InspectorSession(TimeSpan? requestTimeout = null) : IInspect
         }
     }
 
+    public async Task<ProtocolFrame> RequestDrainableAsync(
+        string method,
+        JsonObject? parameters = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (!IsConnected || _client is null)
+            throw new InvalidOperationException("The inspector is not connected.");
+        try
+        {
+            return await _client.RequestDrainableAsync(method, parameters, cancellationToken);
+        }
+        catch (RemoteInspectionException)
+        {
+            throw;
+        }
+        catch (TimeoutException)
+        {
+            MarkDisconnected("Target request timed out.");
+            throw;
+        }
+        catch (Exception exception) when (exception is IOException or SocketException or ObjectDisposedException or ProtocolException)
+        {
+            MarkDisconnected("Target connection closed.");
+            throw;
+        }
+    }
+
     public async Task DetachAsync()
     {
         var client = _client;

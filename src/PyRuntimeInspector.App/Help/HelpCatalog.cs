@@ -250,6 +250,33 @@ public static class HelpCatalog
                 "순환 참조, 최대 깊이, pagination과 handle 만료 상태를 명시적으로 표시합니다.",
             ]),
         new(
+            "global-runtime-search",
+            "검사",
+            "전체 런타임 통합검색",
+            "모듈과 frame에서 시작해 변수, 재귀 객체 경로, instance, class, method와 property를 한 번에 찾습니다.",
+            "global runtime search 통합검색 전체 검색 recursive 재귀 variable 변수 instance class method property path location 위치",
+            "Global Search는 현재 Variables 표만 거르는 검색이 아닙니다. 연결된 Python의 module namespace, frame scope와 GC-tracked objects를 시작점으로 exact built-in container와 정적으로 읽을 수 있는 instance field를 재귀 탐색합니다. 각 객체의 이름, type, module, qualified type, 안전한 preview, 주소와 전체 경로뿐 아니라 class와 정적 method/property/member 정보도 함께 검색합니다.",
+            [
+                "Python 대상에 연결한 뒤 Global Search 탭을 엽니다.",
+                "찾을 이름, type, class, method, property, 값 일부 또는 경로를 입력합니다. 공백으로 나눈 모든 단어가 결과 정보 어딘가에 포함되어야 합니다.",
+                "Search runtime을 누르고 Kind, Name, Exact runtime location, Matched in과 Safe value를 확인합니다.",
+                "결과를 두 번 클릭하거나 Open location을 눌러 해당 객체를 Inspect에서 엽니다.",
+                "class/method/property 결과는 소유 객체를 연 뒤 Class and Methods의 해당 이름까지 자동으로 검색합니다.",
+                "상태가 bounded scan이면 표시된 object, depth, result 또는 child 한도 때문에 전체 그래프를 끝까지 검사하지 못한 것이므로 더 구체적인 검색어로 다시 검색합니다.",
+            ],
+            """
+            예: detector predict
+            - Modules / __main__ / detector / Class __main__.Detector / instance method predict
+
+            예: ultimate_needle
+            - Modules / __main__ / application / state[0] 'branch'[0] 'ultimate_needle'
+            """,
+            [
+                "property getter, arbitrary repr/getattr/dir 또는 사용자 callable은 실행하지 않습니다.",
+                "너비 우선으로 얕은 사용자 변수부터 찾고, 동일 객체의 하위 그래프는 runtime root마다 한 번만 확장합니다.",
+                "순환 참조와 공유 객체 그래프의 폭증을 막기 위해 결과 수, 객체 수, 자식 수와 깊이에 안전 한도가 있습니다.",
+            ]),
+        new(
             "arrays-images",
             "데이터 보기",
             "NumPy와 OpenCV 이미지 보기",

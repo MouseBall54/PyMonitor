@@ -73,6 +73,46 @@ public sealed class ProtocolFramingTests
     }
 
     [Fact]
+    public async Task DrainableRequestCancellationRemovesARequestThatHasNotBeenSent()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var clientSocket = new TcpClient();
+        var acceptTask = listener.AcceptTcpClientAsync();
+        await clientSocket.ConnectAsync((IPEndPoint)listener.LocalEndpoint);
+        using var serverSocket = await acceptTask;
+        listener.Stop();
+
+        var firstReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var serverTask = Task.Run(async () =>
+        {
+            var stream = serverSocket.GetStream();
+            var first = await ProtocolFraming.ReadAsync(stream);
+            firstReceived.SetResult();
+            await releaseFirst.Task;
+            await WriteSuccessAsync(stream, first, "first-result");
+            var next = await ProtocolFraming.ReadAsync(stream);
+            Assert.Equal("latest", next.Header["method"]!.GetValue<string>());
+            await WriteSuccessAsync(stream, next, "latest-result");
+        });
+
+        var inspector = new InspectorClient(clientSocket.GetStream());
+        var firstRequest = inspector.RequestDrainableAsync("first");
+        await firstReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        using var cancellation = new CancellationTokenSource();
+        var staleQueuedRequest = inspector.RequestDrainableAsync("stale", cancellationToken: cancellation.Token);
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await staleQueuedRequest);
+
+        var latestRequest = inspector.RequestDrainableAsync("latest");
+        releaseFirst.SetResult();
+        Assert.Equal("first-result", (await firstRequest).Header["result"]!["value"]!.GetValue<string>());
+        Assert.Equal("latest-result", (await latestRequest).Header["result"]!["value"]!.GetValue<string>());
+        await serverTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
     public async Task AbortUnblocksCanceledRequestAndQueuedDetachWhenTargetNeverResponds()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);

@@ -15,7 +15,7 @@ integration, App, packaging, and stability evidence.
 - [x] First launch uses the Light theme and keeps the shell, search and filter
   controls, object navigation, empty state, disabled commands, and status bar
   readable at 100%, 125%, 150%, and 200% Windows scaling.
-- [x] The four top-level tabs are Inspect, Launch, Memory, and Events; primary
+- [x] The five top-level tabs are Inspect, Global Search, Launch, Memory, and Events; primary
   connection actions remain visible while advanced controls stay grouped.
 - [ ] Switching Light/Dark, changing refresh interval, resizing panes/window,
   maximizing, closing, and reopening restores the saved settings.

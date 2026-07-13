@@ -38,6 +38,23 @@ public sealed class CooperativeAgentTests
         Assert.Equal("property", members.Single(node => node!["name"]!.GetValue<string>() == "dangerous_property")!["kind"]!.GetValue<string>());
         Assert.Equal("(self, image: numpy.ndarray) -> list", members.Single(node => node!["name"]!.GetValue<string>() == "predict")!["signature"]!.GetValue<string>());
 
+        var runtimeSearch = Result(await client.RequestAsync("runtime.search", new JsonObject
+        {
+            ["query"] = "dangerous_property",
+            ["maxResults"] = 50,
+            ["maxObjects"] = 10000,
+            ["maxDepth"] = 8,
+        }));
+        var propertyResult = runtimeSearch["items"]!.AsArray().FirstOrDefault(item =>
+            item!["kind"]!.GetValue<string>() == "property"
+            && item["name"]!.GetValue<string>() == "dangerous_property"
+            && item["rootName"]!.GetValue<string>() == "detector");
+        Assert.True(propertyResult is not null, runtimeSearch.ToJsonString());
+        Assert.Contains("Modules / __main__ / detector / Class __main__.Detector", propertyResult["location"]!.GetValue<string>());
+        Assert.Equal("detector", propertyResult["rootName"]!.GetValue<string>());
+        Assert.Equal("Detector", propertyResult["value"]!["typeName"]!.GetValue<string>());
+        Assert.InRange(runtimeSearch["objectsScanned"]!.GetValue<int>(), 1, 10000);
+
         var gcObjects = Result(await client.RequestAsync("gc.listObjects", new JsonObject
         {
             ["query"] = "__main__.Detector",

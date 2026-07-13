@@ -138,6 +138,25 @@ public sealed class VariableRow : ObservableObject
     }
 }
 
+public sealed class GlobalSearchResultRow
+{
+    public required string Kind { get; init; }
+    public required string Name { get; init; }
+    public required string Location { get; init; }
+    public required string ObjectPath { get; init; }
+    public required string MatchFields { get; init; }
+    public required string SourceKind { get; init; }
+    public string? ModuleName { get; init; }
+    public string? FrameHandle { get; init; }
+    public string? ScopeType { get; init; }
+    public string? RootName { get; init; }
+    public required int Depth { get; init; }
+    public VariableRow? Value { get; init; }
+    public string TypeName => Value?.TypeName ?? "—";
+    public string SafePreview => Value?.SafePreview ?? "";
+    public bool CanOpen => Value is not null || SourceKind is "module" or "frame";
+}
+
 public enum VariableChangeKind
 {
     Unchanged,

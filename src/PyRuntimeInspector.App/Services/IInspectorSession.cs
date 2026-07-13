@@ -9,5 +9,10 @@ public interface IInspectorSession : IAsyncDisposable
     bool IsConnected { get; }
     Task<JsonObject> AttachAsync(int port, string token, int? expectedPid, CancellationToken cancellationToken);
     Task<ProtocolFrame> RequestAsync(string method, JsonObject? parameters = null, CancellationToken cancellationToken = default);
+    Task<ProtocolFrame> RequestDrainableAsync(
+        string method,
+        JsonObject? parameters = null,
+        CancellationToken cancellationToken = default) =>
+        RequestAsync(method, parameters, cancellationToken);
     Task DetachAsync();
 }

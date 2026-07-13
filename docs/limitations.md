@@ -25,6 +25,13 @@
   and does not traverse cycle markers. Opaque handles are session-scoped and
   can expire through the five-minute TTL or 512-entry LRU bound; refresh the
   source scope and reselect the current value after an expired state.
+- Global Search is a bounded graph search, not a mathematical enumeration of
+  every reference path. It evaluates aliases as separate result locations but
+  expands a shared object's children once per runtime root. Defaults are 200
+  results, 100,000 visited objects and depth 16, with 5,000 children per object;
+  module/frame traversal receives a protected share of that budget and unused
+  capacity flows to GC-tracked objects. The UI labels any limit-hit response as
+  a bounded scan.
 - Frame and module namespace pages retain only the requested rows while
   scanning the direct dictionary. Pages follow dictionary insertion order
   rather than an alphabetical full-copy sort; target mutations can therefore
